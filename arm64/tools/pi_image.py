@@ -25,6 +25,7 @@ def main():
     parser.add_argument('efi', type=Path)
     parser.add_argument('output', type=Path)
     parser.add_argument('--firmware', type=Path)
+    parser.add_argument('--replace-generated', action='store_true')
     args = parser.parse_args()
     firmware = args.firmware or args.output.parent / f'RPi3_UEFI_Firmware_v{FIRMWARE_VERSION}.zip'
     if not firmware.exists():
@@ -39,7 +40,16 @@ def main():
         if shutil.which(tool) is None:
             raise SystemExit('Required image tool missing: ' + tool)
     if args.output.exists():
-        raise SystemExit('Refusing to overwrite existing Pi image: ' + str(args.output))
+        manifest_path = args.output.with_suffix('.json')
+        try:
+            manifest = json.loads(manifest_path.read_text())
+        except (OSError, ValueError):
+            manifest = {}
+        if (not args.replace_generated or
+                manifest.get('target') != 'Raspberry Pi 3B / 3B+' or
+                manifest.get('firmware_url') != FIRMWARE_URL or
+                manifest.get('sha256') != hashlib.sha256(args.output.read_bytes()).hexdigest()):
+            raise SystemExit('Preserving unrecognized or modified Pi image: ' + str(args.output))
     with tempfile.TemporaryDirectory(prefix='pi3-', dir=args.output.parent) as temporary:
         source = Path(temporary)
         with zipfile.ZipFile(firmware) as archive:
@@ -51,6 +61,10 @@ def main():
         boot_dir = source / 'EFI/BOOT'
         boot_dir.mkdir(parents=True)
         shutil.copyfile(args.efi, boot_dir / 'BOOTAA64.EFI')
+        shutil.copyfile(args.efi.parent / 'NATIVE.EXE', source / 'NATIVE.EXE')
+        shutil.copyfile(Path(__file__).parent.parent.parent / 'LICENSE', source / 'DOS-MIT.TXT')
+        for name in ['SCRIPT.BAT', 'CHILD.BAT']:
+            shutil.copyfile(Path(__file__).parent.parent / 'fixtures' / name, source / name)
         (source / 'ARMTEST.TXT').write_bytes(b'ARM64 FAT read\r\n')
         (source / 'ARMDOS.TXT').write_bytes(
             b'Native AArch64 MS-DOS 4.0 port development runtime.\r\n'
@@ -71,23 +85,26 @@ def main():
                          0, b'\xfe\xff\xff', 0x0c, b'\xfe\xff\xff',
                          START, TOTAL_SECTORS - START)
         mbr[510:512] = b'\x55\xaa'
-        with args.output.open('xb') as image:
+        generated = source / 'disk.img'
+        with generated.open('xb') as image:
             image.write(mbr)
             image.truncate(TOTAL_SECTORS * 512)
         try:
             subprocess.run(['mkfs.fat', '--invariant', '-F', '32', '-s', '1',
                             '-n', 'ARMDOS', '--offset', str(START),
-                            str(args.output)], check=True)
-            disk = str(args.output) + '@@' + str(START * 512)
+                            str(generated)], check=True)
+            disk = str(generated) + '@@' + str(START * 512)
             # Avoid mtools' host-time metadata by preserving fixed source times.
             for item in source.rglob('*'):
                 os.utime(item, (1749168000, 1749168000))
             for item in sorted(source.iterdir()):
+                if item == generated:
+                    continue
                 subprocess.run(['mcopy', '-m', '-s', '-i', disk, str(item), '::/'],
                                check=True)
         except BaseException:
-            args.output.unlink(missing_ok=True)
             raise
+        os.replace(generated, args.output)
     digest = hashlib.sha256(args.output.read_bytes()).hexdigest()
     args.output.with_suffix('.img.sha256').write_text(f'{digest}  {args.output.name}\n')
     args.output.with_suffix('.json').write_text(json.dumps({

@@ -1,5 +1,150 @@
 // SPDX-License-Identifier: MIT
 .section .text
+shell_execute:
+    frame
+    stp x19, x20, [sp, #-16]!
+    stp x21, x22, [sp, #-16]!
+    sub sp, sp, #128
+    mov x19, x0
+    mov x1, sp
+    bl redirect_begin
+    cbnz x1, shell_redirect_failed
+    mov x0, x19
+    bl next_word
+    mov x19, x0
+    mov x20, x1
+    mov x2, x19
+1:
+    ldrb w3, [x2]
+    cbz w3, 2f
+    cmp w3, #'a'
+    b.lo 3f
+    cmp w3, #'z'
+    b.hi 3f
+    sub w3, w3, #32
+    strb w3, [x2]
+3:
+    add x2, x2, #1
+    b 1b
+2:
+    ldrb w2, [x19]
+    cbz w2, shell_execute_done
+    cmp w2, #':'
+    b.eq shell_execute_done
+    address x21, commands
+4:
+    ldrsw x1, [x21]
+    cbz x1, 5f
+    add x1, x21, x1
+    mov x0, x19
+    bl strcmp
+    cbz x0, 6f
+    add x21, x21, #8
+    b 4b
+5:
+    mov x0, x19
+    mov x1, x20
+    bl shell_external
+    b shell_execute_done
+6:
+    ldrsw x2, [x21, #4]
+    add x2, x21, x2
+    mov x0, x20
+    blr x2
+shell_execute_done:
+    mov x0, sp
+    bl redirect_end
+    b shell_execute_return
+shell_redirect_failed:
+    mov x0, sp
+    bl redirect_end
+    address x0, file_error
+    bl puts
+shell_execute_return:
+    add sp, sp, #128
+    ldp x21, x22, [sp], #16
+    ldp x19, x20, [sp], #16
+    unframe
+
+shell_external:
+    frame
+    stp x19, x20, [sp, #-16]!
+    stp x21, x22, [sp, #-16]!
+    mov x19, x0
+    mov x20, x1
+    mov x2, #0
+1:
+    ldrb w3, [x19, x2]
+    cbz w3, 2f
+    add x2, x2, #1
+    cmp x2, #251
+    b.hi external_error
+    b 1b
+2:
+    cmp x2, #4
+    b.lo 3f
+    add x0, x19, x2
+    sub x0, x0, #4
+    address x1, bat_suffix
+    bl strcasecmp
+    cbnz x0, 3f
+    mov x0, x19
+    mov x1, x20
+    bl batch_run
+    cbnz x1, external_error
+    b external_return
+3:
+    mov x0, x19
+    mov x1, x20
+    bl dos_exec
+    cbz x1, external_success
+    cmp x0, #2
+    b.ne external_error
+    mov x0, x19
+    address x1, external_path
+    bl copy_cstring
+    address x21, external_path
+    mov x22, #0
+1:
+    ldrb w2, [x21, x22]
+    cbz w2, 2f
+    add x22, x22, #1
+    b 1b
+2:
+    cmp x22, #251
+    b.hi external_error
+    address x0, exe_suffix
+    add x1, x21, x22
+    bl copy_cstring
+    mov x0, x21
+    mov x1, x20
+    bl dos_exec
+    cbz x1, external_success
+    cmp x0, #2
+    b.ne external_error
+    address x0, bat_suffix
+    add x1, x21, x22
+    bl copy_cstring
+    mov x0, x21
+    mov x1, x20
+    bl batch_run
+    cbnz x1, external_error
+    b external_return
+external_success:
+    bl dos_get_exit_code
+    address x2, shell_errorlevel
+    str x0, [x2]
+    b external_return
+external_error:
+    mov x0, #1
+    address x2, shell_errorlevel
+    str x0, [x2]
+    address x0, unknown_message
+    bl puts
+external_return:
+    ldp x21, x22, [sp], #16
+    ldp x19, x20, [sp], #16
+    unframe
 shell_prompt:
     frame
     address x0, drive_prefix
@@ -81,7 +226,12 @@ cmd_path_call:
     ldr x19, [sp], #16
     unframe
 shell_check_error:
-    cbz x1, 1f
+    address x2, shell_errorlevel
+    cbnz x1, 2f
+    str xzr, [x2]
+    b 1f
+2:
+    str x0, [x2]
     address x0, file_error
     b puts
 1:
@@ -260,12 +410,12 @@ attrib_path:
     lsr x2, x22, x19
     tst x2, #1
     csel x0, x1, x0, ne
-    bl putc
+    bl stdout_putc
     add x19, x19, #1
     b 1b
 2:
     mov x0, #' '
-    bl putc
+    bl stdout_putc
     mov x0, x21
     bl puts
     address x0, newline
@@ -291,17 +441,46 @@ attrib_cmd_return:
 cmd_dir:
     frame
     stp x19, x20, [sp, #-16]!
+    stp x21, x22, [sp, #-16]!
     mov x20, x0
     bl dos_get_dta
     mov x19, x0
+    mov x21, x2
     address x0, shell_dta
     mov x1, #280
     bl dos_set_dta
     mov x0, x20
     bl next_word
     ldrb w2, [x0]
-    cbnz w2, 1f
+    cbnz w2, dir_check_directory
     address x0, search_all
+    b 1f
+dir_check_directory:
+    mov x20, x0
+    mov x1, #0
+    bl dos_attributes
+    cbnz x1, dir_use_argument
+    tbz x0, #4, dir_use_argument
+    mov x0, x20
+    address x1, dir_pattern
+    bl copy_cstring
+    address x22, dir_pattern
+    mov x2, #0
+dir_pattern_length:
+    ldrb w3, [x22, x2]
+    cbz w3, dir_pattern_append
+    add x2, x2, #1
+    b dir_pattern_length
+dir_pattern_append:
+    cmp x2, #253
+    b.hi dir_pattern_error
+    add x1, x22, x2
+    address x0, directory_glob_suffix
+    bl copy_cstring
+    mov x0, x22
+    b 1f
+dir_use_argument:
+    mov x0, x20
 1:
     mov x1, #0x16
     bl dos_find_first
@@ -323,21 +502,30 @@ cmd_dir:
 dir_cmd_end:
     cmp x0, #18
     b.eq 4f
+dir_pattern_error:
     address x0, file_error
     bl puts
 4:
     mov x0, x19
-    mov x1, #280
+    mov x1, x21
     bl dos_set_dta
+    ldp x21, x22, [sp], #16
     ldp x19, x20, [sp], #16
     unframe
 .section .rodata
+exe_suffix: .asciz ".EXE"
+bat_suffix: .asciz ".BAT"
 drive_prefix: .asciz "A:"
 prompt_suffix: .asciz "> "
 copy_success: .asciz "        1 file(s) copied.\r\n"
 attribute_letters: .asciz "RHSVDA"
 directory_marker: .asciz "  <DIR>"
+directory_glob_suffix: .asciz "\\*"
 .section .bss
 .balign 16
+external_path: .skip 256
+shell_errorlevel: .skip 8
+shell_exit_requested: .skip 8
 copy_source_path: .skip 256
 shell_dta: .skip 280
+dir_pattern: .skip 256

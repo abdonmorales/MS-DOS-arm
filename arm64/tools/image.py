@@ -107,6 +107,10 @@ def main():
         struct.pack_into('<H', disk, offset + 26, cluster)
         struct.pack_into('<H', disk, offset + 32 + 26, parent)
     for name, data in [
+        (b'LICENSE TXT', (Path(__file__).parent.parent.parent / 'LICENSE').read_bytes()),
+        (b'NATIVE  EXE', (args.efi.parent / 'NATIVE.EXE').read_bytes()),
+        (b'SCRIPT  BAT', (Path(__file__).parent.parent / 'fixtures/SCRIPT.BAT').read_bytes()),
+        (b'CHILD   BAT', (Path(__file__).parent.parent / 'fixtures/CHILD.BAT').read_bytes()),
         (b'ARMTEST TXT', b'ARM64 FAT read\r\n'),
         (b'README  TXT', b'MS-DOS 4.0 AArch64 development runtime.\r\n'
          b'This is a partial native port, not the full MS-DOS system.\r\n'

@@ -6,13 +6,17 @@ search_init:
     address x0, default_dta
     address x1, current_dta
     str x0, [x1]
+    address x0, current_dta_capacity
+    mov x1, #280
+    str x1, [x0]
     ret
 dos_set_dta:
     cbz x0, dta_invalid
-    cmp x1, #280
-    b.lo dta_invalid
+    cbz x1, dta_invalid
     address x2, current_dta
     str x0, [x2]
+    address x2, current_dta_capacity
+    str x1, [x2]
     mov x1, #0
     ret
 dta_invalid:
@@ -23,10 +27,15 @@ dos_get_dta:
     address x0, current_dta
     ldr x0, [x0]
     mov x1, #0
-    mov x2, #280
+    address x2, current_dta_capacity
+    ldr x2, [x2]
     ret
 
 dos_find_first:
+    address x2, current_dta_capacity
+    ldr x2, [x2]
+    cmp x2, #280
+    b.lo dta_invalid
     frame
     stp x19, x20, [sp, #-16]!
     stp x21, x22, [sp, #-16]!
@@ -62,6 +71,9 @@ find_slot_install:
     str xzr, [x19]
     str xzr, [x19, #8]
     str x20, [x19, #16]
+    address x0, active_owner
+    ldr x0, [x0]
+    str x0, [x19, #280]
     // Separate last component from the already normalized absolute parent.
     mov x9, x21
     mov x20, x21
@@ -118,6 +130,10 @@ find_first_return:
     unframe
 
 dos_find_next:
+    address x2, current_dta_capacity
+    ldr x2, [x2]
+    cmp x2, #280
+    b.lo dta_invalid
     address x0, current_dta
     ldr x0, [x0]
     address x2, search_slots
@@ -214,6 +230,28 @@ search_close_slot:
     str xzr, [x19]
     str xzr, [x19, #8]
     ldr x19, [sp], #16
+    unframe
+
+search_release_owner:
+    frame
+    stp x19, x20, [sp, #-16]!
+    address x19, search_slots
+    mov x20, #16
+1:
+    ldr x0, [x19]
+    cbz x0, 2f
+    address x1, active_owner
+    ldr x1, [x1]
+    ldr x2, [x19, #280]
+    cmp x1, x2
+    b.ne 2f
+    mov x0, x19
+    bl search_close_slot
+2:
+    add x19, x19, #288
+    subs x20, x20, #1
+    b.ne 1b
+    ldp x19, x20, [sp], #16
     unframe
 
 utf16_to_ascii:
@@ -325,6 +363,7 @@ search_all: .asciz "*"
 .section .bss
 .balign 16
 current_dta: .skip 8
+current_dta_capacity: .skip 8
 default_dta: .skip 280
 search_slots: .skip 4608
 search_name: .skip 256

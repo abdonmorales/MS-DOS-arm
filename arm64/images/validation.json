@@ -1,0 +1,28 @@
+{
+  "architecture": "AArch64",
+  "complete_msdos_port": false,
+  "native_apple_tested": false,
+  "physical_pi_tested": false,
+  "images": {
+    "msdos-arm64": {
+      "sha256": "697b7028c73c07fe6685319405a5a1fad6dbd0097e38060115f086124815f8d8",
+      "bytes": 67108864,
+      "filesystem_check": "pass",
+      "payload_check": "pass",
+      "aarch64_uefi_qemu_boot": "pass",
+      "console_checks": 120,
+      "smoke_log_sha256": "2bb3e12cc122e5876776d7e10c6d7ba2cadad61c4414f5c82d5b7401959486c0"
+    },
+    "msdos-arm64-pi3": {
+      "sha256": "1cc8ebf7c05af3a42e4a77a6ac5567d22de40cde82ca4e1572c7aa06b686aa8f",
+      "bytes": 134217728,
+      "filesystem_check": "pass",
+      "payload_check": "pass",
+      "aarch64_uefi_qemu_boot": "pass",
+      "console_checks": 120,
+      "smoke_log_sha256": "ef9099eacf2a2b42ca5fdedff87361b006e17d34301343f734c6a0938c0ab1de"
+    }
+  },
+  "source_files_sha256": "705763e6ef3a5df6fbf0c0a5b66824979ca856c6857ad533e90f54ea0692dd6b",
+  "boot_application_sha256": "4e887584ecab58487853f245b7a262ed26f975867ea25715aee728d50eeca4a2"
+}

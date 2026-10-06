@@ -31,3 +31,8 @@ The `arm` branch adds a partial native ARM64 development runtime and UEFI disk
 image tooling under [arm64](arm64/README.md). The complete MS-DOS 4.0 port and
 all-model native Apple Silicon support remain unfinished; see that document for
 implemented services, tested boot paths, Raspberry Pi packaging, and limitations.
+
+Compressed development images are in [arm64/images](arm64/images/README.md).
+Raspberry Pi images include third-party firmware under its own upstream licenses;
+those notices are preserved inside the disk image and apply to the bundled
+firmware. The new DOS assembly remains MIT licensed.

@@ -46,7 +46,12 @@ def main():
                 if expected in cleaned:
                     return cleaned
                 if b'Synchronous Exception' in cleaned or b'SELFTEST FAIL' in cleaned:
-                    raise RuntimeError('Native runtime faulted')
+                    drain_until = time.monotonic() + 0.3
+                    while time.monotonic() < drain_until:
+                        for key, _ in selector.select(timeout=0.03):
+                            output.extend(os.read(key.fileobj.fileno(), 8192))
+                    raise RuntimeError('Native runtime faulted: ' +
+                                       output[-400:].decode(errors='replace'))
             raise RuntimeError('Timed out waiting for ' + repr(expected))
 
         checks = 0
@@ -69,12 +74,62 @@ def main():
             command('type ARMTEST.TXT', b'ARM64 FAT read')
             command('echo native-arm64-ok', b'\nnative-arm64-ok\n')
             command('selftest', b'SELFTEST PASS')
+            command('native.exe nested', b'Native AArch64 program OK')
+            process.stdin.write(b'native input\r')
+            process.stdin.flush()
+            until(b'INPUT> ')
+            process.stdin.write(b'ab\bcd\r')
+            process.stdin.flush()
+            edited = until(b'A:\\> ')
+            if b'Native AArch64 program OK' not in edited:
+                raise RuntimeError('Buffered DOS console input/editing failed')
+            checks += 1
+            command('native exit7', b'Native AArch64 program OK')
+            command('echo code:%ERRORLEVEL%', b'code:7')
+            batch = command('script first second', b'script-finished')
+            for expected in [b'parameter:first all:first second', b'exit-code-ok',
+                             b'below-eight-ok', b'existing-file-ok', b'missing-file-ok',
+                             b'child-parameter:nested-argument', b'child-return:2',
+                             b'parent-resumed']:
+                if expected not in batch:
+                    raise RuntimeError('Batch semantics failed: ' + repr(expected))
+            if b'BAD-' in batch:
+                raise RuntimeError('Batch branching or EXIT /B failed')
+            command('echo code:%ERRORLEVEL%', b'code:3')
+            command('echo first>OUTPUT.TXT')
+            command('echo second>>OUTPUT.TXT')
+            text = command('type OUTPUT.TXT', b'first\nsecond\n')
+            command('echo >OUTPUT.TXT third')
+            text = command('type OUTPUT.TXT', b'third\n')
+            if b'first\n' in text:
+                raise RuntimeError('Output redirection failed to truncate')
+            command('native readin <ARMTEST.TXT >OUTPUT.TXT')
+            command('type OUTPUT.TXT', b'Native AArch64 program OK')
+            command('script first second >OUTPUT.TXT')
+            command('type OUTPUT.TXT', b'script-finished')
+            command('echo restored-output', b'\nrestored-output\n')
+            command('echo fail <MISSING.TXT >OUTPUT.TXT', b'File/device error.')
+            command('echo restored-after-error', b'\nrestored-after-error\n')
+            command('del OUTPUT.TXT')
+            date = command('date')
+            if not re.search(rb'\n\d\d\d\d-\d\d-\d\d\n', date):
+                raise RuntimeError('Invalid DATE output')
+            clock = command('time')
+            if not re.search(rb'\n\d\d:\d\d:\d\d\.\d\d\n', clock):
+                raise RuntimeError('Invalid TIME output')
+            # Each child deliberately leaves an allocation and file open.
+            # More launches than arena slots prove the parent reclaims them.
+            for _ in range(70):
+                command('native', b'Native AArch64 program OK')
+            command('selftest', b'SELFTEST PASS')
             command('dir', b'ARMTEST.TXT')
             command('del DOESNOT.TXT', b'File/device error.')
             command('type DOESNOT.TXT', b'File/device error.')
             command('invalidcommand', b'Bad command or unsupported port feature.')
+            command('MISSING.BAT', b'Bad command or unsupported port feature.')
             command('md "WORK DIR"')
             command('cd "WORK DIR"', prompt=b'A:\\WORK DIR> ')
+            command('selftest', b'SELFTEST PASS', prompt=b'A:\\WORK DIR> ')
             command('copy ..\\ARMTEST.TXT "COPY FILE.TXT"', b'1 file(s) copied.',
                     prompt=b'A:\\WORK DIR> ')
             command('type "COPY FILE.TXT"', b'ARM64 FAT read', prompt=b'A:\\WORK DIR> ')
@@ -87,6 +142,7 @@ def main():
             command('del RENAMED.TXT', b'File/device error.', prompt=b'A:\\WORK DIR> ')
             command('attrib -r RENAMED.TXT', prompt=b'A:\\WORK DIR> ')
             command('cd ..')
+            command('dir "WORK DIR"', b'RENAMED.TXT')
             command('rd "WORK DIR"', b'File/device error.')
             command('del "WORK DIR\\RENAMED.TXT"')
             command('rd "WORK DIR"')

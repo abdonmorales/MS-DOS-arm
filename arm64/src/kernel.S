@@ -38,6 +38,8 @@ efi_main:
     blr x4
     bl filesystem_init
     bl search_init
+    bl memory_init
+    bl clock_init
     address x0, banner
     bl puts
     bl selftest
@@ -47,32 +49,17 @@ shell_loop:
     address x0, command_buffer
     mov x1, #255
     bl read_line
-    address x19, command_buffer
-    mov x0, x19
-    bl split_command
-    mov x20, x0                 // arguments; first word uppercased
-    address x21, commands
-1:
-    ldrsw x1, [x21]
-    cbz x1, unknown_command
-    add x1, x21, x1
-    mov x0, x19
-    bl strcmp
-    cbz x0, execute_command
-    add x21, x21, #8
-    b 1b
-execute_command:
-    ldrsw x2, [x21, #4]
-    add x2, x21, x2
-    mov x0, x20
-    blr x2
-    b shell_loop
-unknown_command:
-    ldrb w0, [x19]
-    cbz w0, shell_loop
-    address x0, unknown_message
-    bl puts
-    b shell_loop
+    address x0, command_buffer
+    address x1, shell_expanded_line
+    address x2, shell_empty_parameters
+    bl batch_expand
+    cbnz x0, shell_loop
+    address x0, shell_expanded_line
+    bl shell_execute
+    address x0, shell_exit_requested
+    ldr x0, [x0]
+    cbz x0, shell_loop
+    b efi_exit
 boot_failed:
     address x0, failed_message
     bl puts
@@ -89,10 +76,66 @@ efi_return:
 // x1=1 on error, x0=error code. Unimplemented calls fail explicitly.
 .global dos_call
 dos_call:
+    cmp w8, #0x0d
+    b.eq dos_disk_reset
+    cmp w8, #0x0e
+    b.eq dos_set_drive
+    cmp w8, #0x19
+    b.eq dos_get_drive
+    cmp w8, #0x36
+    b.eq dos_free_space
+    cmp w8, #0x44
+    b.eq dos_ioctl
+    cmp w8, #0x57
+    b.eq dos_file_time
+    cmp w8, #0x5b
+    b.eq dos_create_new
+    cmp w8, #0x0f
+    b.eq dos_fcb_open
+    cmp w8, #0x10
+    b.eq dos_fcb_close
+    cmp w8, #0x13
+    b.eq dos_fcb_delete
+    cmp w8, #0x14
+    b.eq dos_fcb_seq_read
+    cmp w8, #0x15
+    b.eq dos_fcb_seq_write
+    cmp w8, #0x16
+    b.eq dos_fcb_create
+    cmp w8, #0x21
+    b.eq dos_fcb_random_read
+    cmp w8, #0x22
+    b.eq dos_fcb_random_write
+    cmp w8, #0x23
+    b.eq dos_fcb_get_length
+    cmp w8, #0x24
+    b.eq dos_fcb_get_position
+    cmp w8, #0x01
+    b.eq dos_console_input
+    cmp w8, #0x06
+    b.eq dos_console_direct
+    cmp w8, #0x07
+    b.eq dos_console_noecho
+    cmp w8, #0x08
+    b.eq dos_console_noecho
+    cmp w8, #0x0a
+    b.eq dos_console_buffer
+    cmp w8, #0x0b
+    b.eq dos_console_status
+    cmp w8, #0x0c
+    b.eq dos_console_flush
     cmp w8, #0x1a
     b.eq dos_set_dta
     cmp w8, #0x2f
     b.eq dos_get_dta
+    cmp w8, #0x2a
+    b.eq dos_get_date
+    cmp w8, #0x2b
+    b.eq dos_set_date
+    cmp w8, #0x2c
+    b.eq dos_get_time
+    cmp w8, #0x2d
+    b.eq dos_set_time
     cmp w8, #0x02
     b.eq dos_console_out
     cmp w8, #0x09
@@ -131,6 +174,14 @@ dos_call:
     b.eq dos_allocate
     cmp w8, #0x49
     b.eq dos_free
+    cmp w8, #0x4a
+    b.eq dos_resize
+    cmp w8, #0x4b
+    b.eq dos_exec
+    cmp w8, #0x4c
+    b.eq dos_terminate
+    cmp w8, #0x4d
+    b.eq dos_get_exit_code
     cmp w8, #0x4e
     b.eq dos_find_first
     cmp w8, #0x4f
@@ -154,8 +205,12 @@ dos_get_version:
 
 dos_console_out:
     frame
-    bl putc
+    str x19, [sp, #-16]!
+    and x19, x0, #255
+    bl stdout_putc
+    mov x0, x19
     mov x1, #0
+    ldr x19, [sp], #16
     unframe
 
 // CPMIO.ASM $Std_Con_String_Output, retaining DOS '$' termination.
@@ -168,40 +223,12 @@ dos_print_string:
     cmp w0, #'$'
     b.eq 2f
     cbz w0, 2f
-    bl putc
+    bl stdout_putc
     b 1b
 2:
     mov x0, #0x24
     mov x1, #0
     ldr x19, [sp], #16
-    unframe
-
-dos_allocate:
-    frame
-    mov x1, x0                  // bytes, native ABI rather than paragraphs
-    mov x0, #2                  // EfiLoaderData
-    address x2, pool_result
-    address x3, boot_services
-    ldr x3, [x3]
-    ldr x3, [x3, #64]
-    blr x3
-    cbnz x0, dos_error_frame
-    address x0, pool_result
-    ldr x0, [x0]
-    mov x1, #0
-    unframe
-dos_free:
-    frame
-    address x3, boot_services
-    ldr x3, [x3]
-    ldr x3, [x3, #72]
-    blr x3
-    cbnz x0, dos_error_frame
-    mov x1, #0
-    unframe
-dos_error_frame:
-    mov x0, #5                  // access/device error
-    mov x1, #1
     unframe
 
 // HANDLE.ASM-style native handles. Firmware protocol objects never escape
@@ -330,8 +357,6 @@ truncate_return:
     unframe
 
 file_handle:
-    cmp x0, #5
-    b.lo 1f
     cmp x0, #32
     b.hs 1f
     address x3, handles
@@ -350,7 +375,7 @@ dos_close:
     // Duplicates share the same object and position. Close it only when the
     // final native handle reference is released.
     address x3, handles
-    mov x4, #5
+    mov x4, #0
 1:
     cmp x4, x19
     b.eq 2f
@@ -361,6 +386,8 @@ dos_close:
     add x4, x4, #1
     cmp x4, #32
     b.lo 1b
+    bl parent_references_file
+    cbnz x1, close_release
     ldr x3, [x0, #16]
     blr x3
     cbnz x0, close_bad_handle
@@ -376,18 +403,42 @@ close_return:
     ldr x19, [sp], #16
     unframe
 dos_read:
+    cbnz x0, read_file_handle
+    address x3, handles
+    ldr x3, [x3]
+    cbz x3, read_console_handle
+read_file_handle:
     frame
     stp x19, x20, [sp, #-16]!
+    stp x21, x22, [sp, #-16]!
     mov x19, x1                 // destination
     mov x20, x2                 // length
     cmp x0, #32
     b.hs read_bad_handle
     address x3, handle_modes
-    ldrb w3, [x3, x0]
-    cmp w3, #1
-    b.eq read_access_error
+    ldrb w4, [x3, x0]
     bl file_handle
     cbz x0, read_bad_handle
+    cmp w4, #1
+    b.eq read_access_error
+    mov x21, x0
+    sub sp, sp, #16
+    mov x1, sp
+    ldr x3, [x0, #48]
+    blr x3
+    ldr x22, [sp]
+    add sp, sp, #16
+    cbnz x0, read_device_error
+    mov x0, x21
+    bl get_file_info
+    cbnz x0, read_device_error
+    ldr x2, [x1, #8]
+    cmp x22, x2
+    b.hs read_at_eof
+    sub x2, x2, x22
+    cmp x20, x2
+    csel x20, x20, x2, lo
+    mov x0, x21
     sub sp, sp, #16
     str x20, [sp]
     mov x1, sp
@@ -398,6 +449,10 @@ dos_read:
     add sp, sp, #16
     cbnz x0, read_device_error
     mov x0, x2
+    mov x1, #0
+    b read_return
+read_at_eof:
+    mov x0, #0
     mov x1, #0
     b read_return
 read_bad_handle:
@@ -411,6 +466,7 @@ read_access_error:
 read_error:
     mov x1, #1
 read_return:
+    ldp x21, x22, [sp], #16
     ldp x19, x20, [sp], #16
     unframe
 
@@ -421,16 +477,22 @@ dos_write:
     mov x19, x1
     mov x20, x2
     cmp x0, #1
-    b.eq write_console
+    b.eq write_standard
     cmp x0, #2
-    b.eq write_console
+    b.eq write_standard
+    b write_file_handle
+write_standard:
+    address x3, handles
+    ldr x3, [x3, x0, lsl #3]
+    cbz x3, write_console
+write_file_handle:
     cmp x0, #32
     b.hs write_bad_handle
     address x3, handle_modes
-    ldrb w3, [x3, x0]
-    cbz w3, write_access_error
+    ldrb w4, [x3, x0]
     bl file_handle
     cbz x0, write_bad_handle
+    cbz w4, write_access_error
     mov x21, x0
     cbz x20, write_truncate
     sub sp, sp, #16
@@ -562,20 +624,53 @@ putc:
     unframe
 puts:
     frame
-    str x19, [sp, #-16]!
-    mov x19, x0
+    mov x1, x0
+    mov x2, #0
 1:
-    ldrb w0, [x19], #1
-    cbz w0, 2f
-    bl putc
+    ldrb w3, [x1, x2]
+    cbz w3, 2f
+    add x2, x2, #1
     b 1b
 2:
-    ldr x19, [sp], #16
+    mov x0, #1
+    bl dos_write
+    unframe
+stdout_putc:
+    frame
+    sub sp, sp, #16
+    strb w0, [sp]
+    mov x0, #1
+    mov x1, sp
+    mov x2, #1
+    bl dos_write
+    add sp, sp, #16
     unframe
 read_key:
     frame
     stp x19, x20, [sp, #-16]!
     sub sp, sp, #32
+    address x0, handles
+    ldr x0, [x0]
+    cbz x0, read_key_pending
+    mov x0, #0
+    mov x1, sp
+    mov x2, #1
+    bl dos_read
+    cbnz x1, read_key_file_eof
+    cbz x0, read_key_file_eof
+    ldrb w0, [sp]
+    b read_key_return
+read_key_file_eof:
+    mov x0, #26
+    b read_key_return
+read_key_pending:
+    address x0, pending_key
+    ldr x1, [x0]
+    cbz x1, read_key_firmware
+    str xzr, [x0]
+    mov x0, x1
+    b read_key_return
+read_key_firmware:
     address x19, system_table
     ldr x19, [x19]
     ldr x19, [x19, #48]         // ConIn
@@ -598,6 +693,7 @@ read_key:
 2:
     ldrh w0, [sp, #2]           // UnicodeChar; ignore scan-only keys
     cbz w0, 1b
+read_key_return:
     add sp, sp, #32
     ldp x19, x20, [sp], #16
     unframe
@@ -608,8 +704,11 @@ read_line:
     mov x19, x0
     mov x20, x1
     mov x21, #0
+    mov x22, #0
 1:
     bl read_key
+    cmp w0, #26
+    b.eq read_line_eof
     cmp w0, #13
     b.eq 4f
     cmp w0, #10
@@ -626,8 +725,11 @@ read_line:
     b.hs 1b
     strb w0, [x19, x21]
     add x21, x21, #1
-    bl putc
+    bl stdout_putc
     b 1b
+read_line_eof:
+    mov x22, #1
+    b 4f
 3:
     cbz x21, 1b
     sub x21, x21, #1
@@ -639,6 +741,7 @@ read_line:
     address x0, newline
     bl puts
     mov x0, x21
+    mov x2, x22
     ldp x21, x22, [sp], #16
     ldp x19, x20, [sp], #16
     unframe
@@ -706,22 +809,6 @@ cmd_help:
 cmd_ver:
     address x0, version_message
     b puts
-cmd_echo:
-    frame
-    mov x1, x0
-    mov x2, #0
-1:
-    ldrb w3, [x1, x2]
-    cbz w3, 2f
-    add x2, x2, #1
-    b 1b
-2:
-    mov x0, #1
-    mov w8, #0x40
-    bl dos_call
-    address x0, newline
-    bl puts
-    unframe
 cmd_cls:
     frame
     address x0, system_table
@@ -731,8 +818,7 @@ cmd_cls:
     blr x1
     unframe
 cmd_exit:
-    // Drop execute_command's return address; main owns the original frame.
-    b efi_exit
+    b shell_exit
 cmd_type:
     frame
     str x19, [sp, #-16]!
@@ -787,6 +873,12 @@ cmd_del:
 selftest:
     frame
     stp x19, x20, [sp, #-16]!
+    address x0, current_directory
+    address x1, selftest_saved_cwd
+    bl copy_cstring
+    address x0, root_path
+    bl dos_chdir
+    cbnz x1, selftest_failed
     bl api_selftest
     cbnz x0, selftest_failed
     mov w8, #0x30
@@ -918,6 +1010,13 @@ selftest_failed:
     bl puts
     mov x0, #1
 selftest_return:
+    mov x20, x0
+    address x0, selftest_saved_cwd
+    bl dos_chdir
+    cbz x1, 1f
+    mov x20, #1
+1:
+    mov x0, x20
     ldp x19, x20, [sp], #16
     unframe
 
@@ -953,6 +1052,12 @@ commands:
     .long name_ren - ., cmd_ren - (. - 4)
     .long name_rename - ., cmd_ren - (. - 4)
     .long name_attrib - ., cmd_attrib - (. - 4)
+    .long name_rem - ., cmd_rem - (. - 4)
+    .long name_call - ., cmd_call - (. - 4)
+    .long name_goto - ., cmd_goto - (. - 4)
+    .long name_if - ., cmd_if - (. - 4)
+    .long name_date - ., cmd_date - (. - 4)
+    .long name_time - ., cmd_time - (. - 4)
     .long name_selftest - ., cmd_selftest - (. - 4)
     .long name_exit - ., cmd_exit - (. - 4)
     .long 0, 0
@@ -973,6 +1078,12 @@ name_copy: .asciz "COPY"
 name_ren: .asciz "REN"
 name_rename: .asciz "RENAME"
 name_attrib: .asciz "ATTRIB"
+name_rem: .asciz "REM"
+name_call: .asciz "CALL"
+name_goto: .asciz "GOTO"
+name_if: .asciz "IF"
+name_date: .asciz "DATE"
+name_time: .asciz "TIME"
 name_selftest: .asciz "SELFTEST"
 name_exit: .asciz "EXIT"
 banner: .asciz "\r\nMS-DOS 4.0 AArch64 port development runtime\r\nNative ARM64 assembly / UEFI platform backend\r\nPartial port: x86 applications and the full DOS kernel are not implemented.\r\n"
@@ -980,12 +1091,13 @@ prompt: .asciz "A:\\> "
 newline: .asciz "\r\n"
 erase_char: .asciz "\b \b"
 unknown_message: .asciz "Bad command or unsupported port feature.\r\n"
-help_message: .asciz "HELP VER ECHO CLS DIR TYPE DEL CD MD RD COPY REN ATTRIB SELFTEST EXIT\r\nA: is the boot volume. Quote paths containing spaces.\r\n"
+help_message: .asciz "HELP VER ECHO CLS DIR TYPE DEL CD MD RD COPY REN ATTRIB DATE TIME\r\nREM CALL GOTO IF SELFTEST EXIT\r\nNative ARM64 EXE and BAT files; quote paths containing spaces.\r\nRedirection: < input, > output, >> append. A: is the boot volume.\r\n"
 version_message: .asciz "MS-DOS API baseline 4.00; AArch64 development port (partial).\r\n"
-passed_message: .asciz "SELFTEST PASS: version, errors, allocation, FAT read/write/delete.\r\n"
+passed_message: .asciz "SELFTEST PASS: file/FCB APIs, directories/search, memory, clock, native processes.\r\n"
 failed_message: .asciz "SELFTEST FAIL\r\n"
 file_error: .asciz "File/device error.\r\n"
 test_filename: .asciz "\\ARMTEST.TXT"
+root_path: .asciz "\\"
 write_filename: .asciz "\\ARMCHK.TMP"
 test_contents: .ascii "ARM64 FAT read\r\n"
 dos_string_message: .asciz "DOS string service OK\r\n$"
@@ -1004,9 +1116,19 @@ command_buffer: .skip 256
 path_buffer: .skip 512
 io_buffer: .skip 528
 file_info_buffer: .skip 1024
+selftest_saved_cwd: .skip 256
 
 .include "src/files.S"
 .include "src/api_test.S"
 .include "src/search.S"
 
 .include "src/shell.S"
+
+.include "src/memory.S"
+.include "src/process.S"
+.include "src/console.S"
+.include "src/batch.S"
+.include "src/redirect.S"
+.include "src/clock.S"
+.include "src/fcb.S"
+.include "src/misc.S"

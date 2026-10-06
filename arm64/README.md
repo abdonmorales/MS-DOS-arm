@@ -52,20 +52,34 @@ and the raw disk as a writable VirtIO drive. This image requires a writable FAT
 volume for its boot self-test.
 
 Commands: `HELP`, `VER`, `ECHO`, `CLS`, `DIR`, `TYPE`, `DEL`, `CD`/`CHDIR`,
-`MD`/`MKDIR`, `RD`/`RMDIR`, `COPY`, `REN`/`RENAME`, `ATTRIB`, `SELFTEST`, `EXIT`.
-Paths support quotes, relative components, `.`/`..`, and drive `A:`. `DIR` supports
-case-insensitive `*`/`?` glob patterns (including DOS `*.*`); this is not yet the
-full DOS 8.3 wildcard algorithm. Long ASCII filenames use the firmware backend.
-Batch execution and redirection remain pending.
+`MD`/`MKDIR`, `RD`/`RMDIR`, `COPY`, `REN`/`RENAME`, `ATTRIB`, `DATE`, `TIME`,
+`REM`, `CALL`, `GOTO`, `IF`, `SELFTEST`, `EXIT`. Native AArch64 `.EXE` and `.BAT`
+files also run from the shell; `NATIVE.EXE` is a separately linked example.
 
-Each boot runs real native API tests: version and invalid-function results,
-allocation/free, reading a known disk file, creating/writing/reopening/deleting
-a scratch file, and checking the deleted file cannot reopen. `ARMCHK.TMP` is a
-reserved scratch name; `ARMAPI.TMP` is a reserved scratch directory. The self-test
-refuses to overwrite either if it already exists. It also verifies shared duplicate
-handles, seeking, truncation, attributes, renaming, directory cleanup, and two
-independent search buffers. Smoke tests boot a temporary image copy and check 25
-console requests, including quoted paths and copy-to-self protection.
+Paths support quotes, relative components, `.`/`..`, and drive `A:`. `DIR` accepts
+directories and case-insensitive `*`/`?` glob patterns, including DOS `*.*`.
+This is not the full DOS 8.3 wildcard algorithm. Long ASCII filenames use the
+firmware backend. Redirection supports `<`, `>`, `>>`, including nested scripts
+and native programs. Pipes, `2>` and DOS device names remain unsupported.
+`COPY` currently takes a single source and destination filename.
+
+Batch files support `%0`–`%9`, `%*`, `%%`, `%ERRORLEVEL%`, `%PATH%`, `%COMSPEC%`,
+`ECHO ON/OFF`, `@`, `REM`, `CALL`, `GOTO`, `IF [NOT] EXIST/ERRORLEVEL`, and
+`EXIT /B`. Commands are limited to 255 bytes and nesting to 16 scripts.
+`FOR`, `SHIFT`, `SET`, string-comparison `IF`, and general environment editing
+remain unimplemented. `DATE`/`TIME` display the DOS clock; API setters change
+only the runtime clock. `EXIT` returns to UEFI after unwinding shell state.
+
+Each boot runs native API integration tests against actual files on disk:
+FCB records, partial EOF padding, paths, search buffers, attributes, file times,
+seek/truncate/duplicate handles, allocation ownership and resizing, clock leap
+years and rollover, native and nested process loading, termination, and parent
+handle preservation. Reserved scratch names are `ARMCHK.TMP`, `ARMFCB.TMP` and
+`ARMAPI.TMP` (a directory). The test refuses to overwrite existing objects with
+those names and restores the starting directory. Smoke tests boot a temporary
+image copy and check 120 console requests, including 70 successive native
+launches that deliberately leave resources for process cleanup, buffered input
+with backspace editing, batch control flow, and redirection restoration.
 
 ## Disk images
 
@@ -74,9 +88,10 @@ console requests, including quoted paths and copy-to-self protection.
 | `build/msdos-arm64.img` | 64 MiB MBR/FAT16, ARM64 EFI application | Boots in QEMU `virt`; API and console tests pass |
 | `build/msdos-arm64-pi3.img` | 128 MiB MBR/FAT32, Pi 3 boot files and UEFI firmware | Firmware/package structure checked; same payload tested through ARM64 UEFI; physical Pi boot unverified |
 
-Both images include `EFI/BOOT/BOOTAA64.EFI`, `ARMTEST.TXT`, a SHA-256 sidecar and
-a JSON manifest. The manifests explicitly record incomplete port status and
-unverified physical hardware. Build products are ignored by Git.
+Both images include `EFI/BOOT/BOOTAA64.EFI`, `NATIVE.EXE`, batch fixtures,
+`ARMTEST.TXT`, a SHA-256 sidecar and a JSON manifest. The manifests explicitly record incomplete port status and
+unverified physical hardware. Raw build products are ignored by Git. Compressed, validated image snapshots
+and their checksums are published in [images](images/README.md) on the `arm` branch.
 
 Build the Pi image with:
 
@@ -87,14 +102,22 @@ make -C arm64 pi-image
 The packager downloads [Pi 3 UEFI firmware v1.53.1](https://github.com/pftf/RPi3/releases/tag/v1.53.1)
 over verified HTTPS and checks its pinned SHA-256 before extracting. It preserves
 upstream config and filenames, includes firmware licenses, and uses the Pi's
-required FAT LBA partition type instead of EFI partition type `0xef`. It refuses
-to overwrite an existing image; remove only the previously generated Pi build
-image when deliberately rebuilding. This image targets Pi 3B/3B+, not Pi 4/5.
+required FAT LBA partition type instead of EFI partition type `0xef`. Rebuilds
+atomically replace only an unchanged image whose manifest and checksum identify
+it as this tool's output. Modified or unrecognized existing images are preserved.
+This image targets Pi 3B/3B+, not Pi 4/5.
 
 To prepare an SD card, select the Pi image and the intended removable card in
 Raspberry Pi Imager's custom-image workflow. Use a card of at least 128 MiB.
 The firmware console can use HDMI/USB input or a supported serial console.
 No physical disk was flashed during this task.
+
+Run `make -C arm64 validate FIRMWARE=/path/to/QEMU_EFI.fd` to check both FAT
+filesystems, compare their payloads to the build outputs, boot both images in
+QEMU and save `build/validation.json`. `make -C arm64 snapshot` validates and
+packages compressed snapshots with raw/compressed SHA-256 checksums. The Pi
+firmware remains under its upstream licenses, included inside the image;
+the DOS assembly is MIT licensed. See [images/README.md](images/README.md).
 
 ## Native Apple Silicon boot
 
@@ -121,52 +144,33 @@ some M-series models. Its support tables describe Asahi's stack, not validation
 of this DOS runtime. The user requested all models; that remains an unmet
 hardware-support requirement, not a claimed feature.
 
-## Ported API and remaining work
+## Native API and remaining work
 
-`dos_call` uses `w8` for the DOS function number and `x0`–`x3` for native
-arguments/results. It is an AAPCS64 function call, not an installed `SVC` handler.
-`x1=0` indicates success; `x1=1` indicates error with a DOS error in `x0`.
-Pointers are flat 64-bit addresses. Original DOS binaries and segmented FCB/PSP
-layouts are incompatible with this ABI. The native search buffer is 280 bytes:
-64-bit attributes at 0, 64-bit size at 8, packed DOS time/date at 16/18, four
-reserved bytes at 20, and a 256-byte ASCII filename at 24. `1Ah` takes its pointer
-and capacity; `4Eh` takes a pattern and attribute mask, and `4Fh` continues the
-search associated with the current buffer.
+The [AArch64 ABI](ABI.md) documents all 57 dispatched function numbers, their
+arguments, return values and limits. Calls use AAPCS64 and a function pointer
+provided to each native process. FCB records retain their standard 37-byte data
+layout; pointers and process/search structures use the native ABI. Original x86
+executables cannot run.
 
-| DOS function | Native implementation | Current limit |
-| --- | --- | --- |
-| `02h` | Console character output | Firmware console |
-| `09h` | `$`-terminated console string | Also stops at NUL |
-| `30h` | Version 4.00 and identity | No fake-version/compatibility state |
-| `39h`–`3Bh`, `47h` | Create/remove/change directory and get current path | Single drive `A:` |
-| `3Ch` | Create/truncate, return native file handle | Attributes R/H/S/A; handles 5–31 |
-| `3Dh` | Open with read/write modes | Basic modes 0, 1, 2; no sharing flags |
-| `3Eh` | Close file | Duplicate references share their position |
-| `3Fh` | Read file | Console input handles pending |
-| `40h` | Write/flush file or console; truncate at current position | Read-only handles are protected |
-| `41h` | Delete file | No wildcards |
-| `42h` | Seek from start/current/end | Signed 64-bit offset |
-| `43h` | Query/set file attributes | Firmware attributes |
-| `45h`, `46h` | Duplicate/force duplicate file handles | Standard console handles pending |
-| `1Ah`, `2Fh`, `4Eh`, `4Fh` | Search-buffer selection and find first/next | 16 independent search buffers, ASCII glob matching |
-| `56h`, `68h` | Rename/move and commit | Firmware backend |
-| `48h` | Allocate firmware pool | Native byte size rather than DOS paragraphs |
-| `49h` | Free firmware pool | No DOS arena/owner semantics |
+The runtime now provides basic console/input, file and standard-handle
+redirection, hierarchical paths, find-first/next state, standard FCB sequential
+and random records, owned memory with in-place resizing, DOS date/time,
+file timestamps, native process loading/termination, and a batch interpreter.
+These adapt selected public contracts from `CPMIO.ASM`, `GETSET.ASM`,
+`HANDLE.ASM`, `FILE.ASM`, `PATH.ASM`, `SEARCH.ASM`, `FCBIO.ASM`, `TIME.ASM`,
+`ALLOC.ASM`, `PROC.ASM` and `COMMAND`. Their original internal algorithms have
+not been fully translated. Hardware and storage still use UEFI Boot Services.
 
-All other calls return invalid-function errors. The version and character
-services adapt behavior from `v4.0/src/DOS/GETSET.ASM` and `CPMIO.ASM`. File and
-memory APIs follow selected external contracts from `HANDLE.ASM`, `FILE.ASM`
-and `ALLOC.ASM`, replacing their implementation with a UEFI backend; their
-original internal algorithms have not been translated.
-
-The complete MS-DOS 4.0 rewrite remains unfinished. Major remaining pieces are
-FCB and full handle services, hierarchical filesystem/paths and FAT drivers,
-PSP/process loading and termination, memory arenas, interrupt/device APIs,
-dates/time/NLS, CONFIG.SYS and batch handling, command-shell compatibility,
-drivers and utilities. DOS `.COM`/`.EXE` software needs a separately designed
-compatibility layer or recompilation. Keeping these limitations explicit is
-necessary: the working boot images demonstrate a port foundation, not completion
-of the requested operating-system rewrite.
+The complete MS-DOS 4.0 rewrite remains unfinished. Outstanding work includes
+full FCB/block/wildcard services, sharing/locking and extended handle APIs,
+DOS memory-control-block/PSP compatibility, interrupts and device-driver ABI,
+FAT/cache/block drivers independent of firmware, NLS/codepages, CONFIG.SYS,
+full COMMAND syntax/environment handling, historical drivers and utilities,
+and physical hardware bring-up. The checked-in historical source archives
+remain x86 assembly. All-model native Apple Silicon support also remains unmet
+because required boot-stack/driver support and hardware validation are absent.
+These image snapshots are development artifacts, with incomplete status recorded
+in their manifests; they are not a completed operating-system conversion.
 
 Reference boot documentation was inspected at Asahi docs commit
 `0d1f8917fa88745d62a4c05d802c4a7298c8616b` and Pi UEFI commit

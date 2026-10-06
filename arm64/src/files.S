@@ -214,6 +214,7 @@ seek_absolute:
     mov x22, #0
 seek_add:
     adds x1, x22, x19
+    b.vs seek_invalid
     tbnz x1, #63, seek_invalid
     mov x19, x1
     mov x0, x21
@@ -294,8 +295,6 @@ dos_dup2:
     str x21, [sp, #-16]!
     mov x19, x1
     mov x21, x0
-    cmp x19, #5
-    b.lo dup2_bad_handle
     cmp x19, #32
     b.hs dup2_bad_handle
     cmp x0, x19
