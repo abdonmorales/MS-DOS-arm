@@ -51,16 +51,21 @@ HVF and UTM have not been tested here. UTM can use an ARM64 VM with UEFI firmwar
 and the raw disk as a writable VirtIO drive. This image requires a writable FAT
 volume for its boot self-test.
 
-Commands: `HELP`, `VER`, `ECHO`, `CLS`, `DIR`, `TYPE`, `DEL`, `SELFTEST`, `EXIT`.
-`TYPE` currently displays ASCII text. Directory enumeration is the root directory;
-long filenames are provided by the firmware. Command parsing supports simple
-space-separated arguments, without DOS quoting, wildcards or redirection.
+Commands: `HELP`, `VER`, `ECHO`, `CLS`, `DIR`, `TYPE`, `DEL`, `CD`/`CHDIR`,
+`MD`/`MKDIR`, `RD`/`RMDIR`, `COPY`, `REN`/`RENAME`, `ATTRIB`, `SELFTEST`, `EXIT`.
+Paths support quotes, relative components, `.`/`..`, and drive `A:`. `DIR` supports
+case-insensitive `*`/`?` glob patterns (including DOS `*.*`); this is not yet the
+full DOS 8.3 wildcard algorithm. Long ASCII filenames use the firmware backend.
+Batch execution and redirection remain pending.
 
 Each boot runs real native API tests: version and invalid-function results,
 allocation/free, reading a known disk file, creating/writing/reopening/deleting
 a scratch file, and checking the deleted file cannot reopen. `ARMCHK.TMP` is a
-reserved scratch name. The self-test refuses to overwrite it if it already
-exists. Smoke tests boot a temporary image copy and check eight console requests.
+reserved scratch name; `ARMAPI.TMP` is a reserved scratch directory. The self-test
+refuses to overwrite either if it already exists. It also verifies shared duplicate
+handles, seeking, truncation, attributes, renaming, directory cleanup, and two
+independent search buffers. Smoke tests boot a temporary image copy and check 25
+console requests, including quoted paths and copy-to-self protection.
 
 ## Disk images
 
@@ -122,19 +127,29 @@ hardware-support requirement, not a claimed feature.
 arguments/results. It is an AAPCS64 function call, not an installed `SVC` handler.
 `x1=0` indicates success; `x1=1` indicates error with a DOS error in `x0`.
 Pointers are flat 64-bit addresses. Original DOS binaries and segmented FCB/PSP
-layouts are incompatible with this ABI.
+layouts are incompatible with this ABI. The native search buffer is 280 bytes:
+64-bit attributes at 0, 64-bit size at 8, packed DOS time/date at 16/18, four
+reserved bytes at 20, and a 256-byte ASCII filename at 24. `1Ah` takes its pointer
+and capacity; `4Eh` takes a pattern and attribute mask, and `4Fh` continues the
+search associated with the current buffer.
 
 | DOS function | Native implementation | Current limit |
 | --- | --- | --- |
 | `02h` | Console character output | Firmware console |
 | `09h` | `$`-terminated console string | Also stops at NUL |
 | `30h` | Version 4.00 and identity | No fake-version/compatibility state |
-| `3Ch` | Create/truncate, return native file handle | Only attributes zero |
+| `39h`–`3Bh`, `47h` | Create/remove/change directory and get current path | Single drive `A:` |
+| `3Ch` | Create/truncate, return native file handle | Attributes R/H/S/A; handles 5–31 |
 | `3Dh` | Open with read/write modes | Basic modes 0, 1, 2; no sharing flags |
-| `3Eh` | Close file | Native handles 5–31 |
+| `3Eh` | Close file | Duplicate references share their position |
 | `3Fh` | Read file | Console input handles pending |
-| `40h` | Write/flush file or console | Zero-length file truncate pending |
+| `40h` | Write/flush file or console; truncate at current position | Read-only handles are protected |
 | `41h` | Delete file | No wildcards |
+| `42h` | Seek from start/current/end | Signed 64-bit offset |
+| `43h` | Query/set file attributes | Firmware attributes |
+| `45h`, `46h` | Duplicate/force duplicate file handles | Standard console handles pending |
+| `1Ah`, `2Fh`, `4Eh`, `4Fh` | Search-buffer selection and find first/next | 16 independent search buffers, ASCII glob matching |
+| `56h`, `68h` | Rename/move and commit | Firmware backend |
 | `48h` | Allocate firmware pool | Native byte size rather than DOS paragraphs |
 | `49h` | Free firmware pool | No DOS arena/owner semantics |
 

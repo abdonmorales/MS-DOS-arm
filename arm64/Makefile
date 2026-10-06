@@ -6,6 +6,7 @@ OBJCOPY := $(CROSS_COMPILE)objcopy
 NM := $(CROSS_COMPILE)nm
 PYTHON ?= python3
 BUILD ?= build
+SOURCES := $(wildcard src/*.S)
 
 .PHONY: all image pi-image smoke clean
 all: $(BUILD)/BOOTAA64.EFI
@@ -19,8 +20,8 @@ smoke: image
 $(BUILD):
 	mkdir -p $@
 
-$(BUILD)/kernel.o: src/kernel.S | $(BUILD)
-	$(AS) -march=armv8-a -g -o $@ $<
+$(BUILD)/kernel.o: $(SOURCES) | $(BUILD)
+	$(AS) -march=armv8-a -g -o $@ src/kernel.S
 
 $(BUILD)/kernel.elf: $(BUILD)/kernel.o link.ld
 	$(LD) -T link.ld --no-undefined -o $@ $<

@@ -37,13 +37,13 @@ efi_main:
     mov x3, #0
     blr x4
     bl filesystem_init
+    bl search_init
     address x0, banner
     bl puts
     bl selftest
     cbnz x0, boot_failed
 shell_loop:
-    address x0, prompt
-    bl puts
+    bl shell_prompt
     address x0, command_buffer
     mov x1, #255
     bl read_line
@@ -89,12 +89,22 @@ efi_return:
 // x1=1 on error, x0=error code. Unimplemented calls fail explicitly.
 .global dos_call
 dos_call:
+    cmp w8, #0x1a
+    b.eq dos_set_dta
+    cmp w8, #0x2f
+    b.eq dos_get_dta
     cmp w8, #0x02
     b.eq dos_console_out
     cmp w8, #0x09
     b.eq dos_print_string
     cmp w8, #0x30
     b.eq dos_get_version
+    cmp w8, #0x39
+    b.eq dos_mkdir
+    cmp w8, #0x3a
+    b.eq dos_rmdir
+    cmp w8, #0x3b
+    b.eq dos_chdir
     cmp w8, #0x3c
     b.eq dos_create
     cmp w8, #0x3d
@@ -107,10 +117,28 @@ dos_call:
     b.eq dos_write
     cmp w8, #0x41
     b.eq dos_delete
+    cmp w8, #0x42
+    b.eq dos_seek
+    cmp w8, #0x43
+    b.eq dos_attributes
+    cmp w8, #0x45
+    b.eq dos_dup
+    cmp w8, #0x46
+    b.eq dos_dup2
+    cmp w8, #0x47
+    b.eq dos_getcwd
     cmp w8, #0x48
     b.eq dos_allocate
     cmp w8, #0x49
     b.eq dos_free
+    cmp w8, #0x4e
+    b.eq dos_find_first
+    cmp w8, #0x4f
+    b.eq dos_find_next
+    cmp w8, #0x56
+    b.eq dos_rename
+    cmp w8, #0x68
+    b.eq dos_commit
     mov x0, #1                  // invalid function
     mov x1, #1
     ret
@@ -182,10 +210,12 @@ dos_open:
     mov x2, #0
     b open_common
 dos_create:
-    // Attributes are not yet translated: fail instead of silently discarding.
-    cbnz x1, create_bad_attributes
+    mov x3, #0x27              // read-only, hidden, system, archive
+    bic x3, x1, x3
+    cbnz x3, create_bad_attributes
+    lsl x2, x1, #8
+    orr x2, x2, #1
     mov x1, #2
-    mov x2, #1
     b open_common
 create_bad_attributes:
     mov x0, #1
@@ -217,6 +247,7 @@ open_common:
     cbz x22, open_denied
     mov x0, x19
     bl path_to_utf16
+    cbnz x1, open_path_error
     mov x2, x0
     mov x0, x22
     add x1, x20, x21, lsl #3
@@ -227,7 +258,7 @@ open_common:
     cbz x24, 4f
     orr x3, x3, #0x8000000000000000  // EFI_FILE_MODE_CREATE
 4:
-    mov x4, #0
+    lsr x4, x24, #8
     ldr x5, [x22, #8]
     blr x5
     cbnz x0, open_not_found
@@ -242,11 +273,26 @@ open_common:
     str xzr, [x20, x21, lsl #3]
     b open_denied
 open_success:
+    ldr x0, [x20, x21, lsl #3]
+    bl get_file_info
+    cbnz x0, open_reject_object
+    ldr x2, [x1, #72]
+    tbnz x2, #4, open_reject_object
+    address x3, handle_modes
+    strb w23, [x3, x21]
     mov x0, x21
     mov x1, #0
     b open_return
+open_reject_object:
+    ldr x0, [x20, x21, lsl #3]
+    ldr x3, [x0, #16]
+    blr x3
+    str xzr, [x20, x21, lsl #3]
+    b open_denied
 open_not_found:
-    mov x0, #2
+    bl efi_error_to_dos
+    b open_error
+open_path_error:
     b open_error
 open_denied:
     mov x0, #5
@@ -301,9 +347,24 @@ dos_close:
     mov x19, x0
     bl file_handle
     cbz x0, close_bad_handle
+    // Duplicates share the same object and position. Close it only when the
+    // final native handle reference is released.
+    address x3, handles
+    mov x4, #5
+1:
+    cmp x4, x19
+    b.eq 2f
+    ldr x5, [x3, x4, lsl #3]
+    cmp x5, x0
+    b.eq close_release
+2:
+    add x4, x4, #1
+    cmp x4, #32
+    b.lo 1b
     ldr x3, [x0, #16]
     blr x3
     cbnz x0, close_bad_handle
+close_release:
     address x3, handles
     str xzr, [x3, x19, lsl #3]
     mov x1, #0
@@ -319,6 +380,12 @@ dos_read:
     stp x19, x20, [sp, #-16]!
     mov x19, x1                 // destination
     mov x20, x2                 // length
+    cmp x0, #32
+    b.hs read_bad_handle
+    address x3, handle_modes
+    ldrb w3, [x3, x0]
+    cmp w3, #1
+    b.eq read_access_error
     bl file_handle
     cbz x0, read_bad_handle
     sub sp, sp, #16
@@ -337,6 +404,9 @@ read_bad_handle:
     mov x0, #6
     b read_error
 read_device_error:
+    bl efi_error_to_dos
+    b read_error
+read_access_error:
     mov x0, #5
 read_error:
     mov x1, #1
@@ -354,11 +424,15 @@ dos_write:
     b.eq write_console
     cmp x0, #2
     b.eq write_console
+    cmp x0, #32
+    b.hs write_bad_handle
+    address x3, handle_modes
+    ldrb w3, [x3, x0]
+    cbz w3, write_access_error
     bl file_handle
     cbz x0, write_bad_handle
     mov x21, x0
-    // DOS write(count=0) truncates at the current position; this is pending.
-    cbz x20, write_unsupported
+    cbz x20, write_truncate
     sub sp, sp, #16
     str x20, [sp]
     mov x1, sp
@@ -391,10 +465,28 @@ write_console:
 write_bad_handle:
     mov x0, #6
     b write_error
-write_unsupported:
-    mov x0, #1
-    b write_error
+write_truncate:
+    sub sp, sp, #16
+    mov x1, sp
+    ldr x3, [x0, #48]
+    blr x3
+    ldr x1, [sp]
+    add sp, sp, #16
+    cbnz x0, write_device_error
+    mov x0, x21
+    bl resize_file
+    cbnz x0, write_device_error
+    mov x0, x21
+    ldr x3, [x0, #80]
+    blr x3
+    cbnz x0, write_device_error
+    mov x0, #0
+    mov x1, #0
+    b write_return
 write_device_error:
+    bl efi_error_to_dos
+    b write_error
+write_access_error:
     mov x0, #5
 write_error:
     mov x1, #1
@@ -584,6 +676,10 @@ strcmp:
     sub w0, w2, w3
     ret
 path_to_utf16:
+    frame
+    address x1, canonical_buffer
+    bl canonicalize_path
+    cbnz x1, path_utf16_return
     address x1, path_buffer
     mov x2, x1
     mov x3, #255
@@ -600,7 +696,9 @@ path_to_utf16:
     strh wzr, [x1]
 3:
     mov x0, x2
-    ret
+    mov x1, #0
+path_utf16_return:
+    unframe
 
 cmd_help:
     address x0, help_message
@@ -638,6 +736,7 @@ cmd_exit:
 cmd_type:
     frame
     str x19, [sp, #-16]!
+    bl next_word
     mov x1, #0
     mov w8, #0x3d
     bl dos_call
@@ -651,11 +750,10 @@ cmd_type:
     bl dos_call
     cbnz x1, type_read_error
     cbz x0, type_close
-    address x2, io_buffer
-    add x2, x2, x0
-    strb wzr, [x2]
-    address x0, io_buffer
-    bl puts
+    mov x2, x0
+    address x1, io_buffer
+    mov x0, #1
+    bl dos_write
     b 1b
 type_read_error:
     address x0, file_error
@@ -677,6 +775,7 @@ cmd_selftest:
     b selftest
 cmd_del:
     frame
+    bl next_word
     mov w8, #0x41
     bl dos_call
     cbz x1, 1f
@@ -684,56 +783,12 @@ cmd_del:
     bl puts
 1:
     unframe
-cmd_dir:
-    frame
-    stp x19, x20, [sp, #-16]!
-    address x19, root_directory
-    ldr x19, [x19]
-    cbz x19, dir_error
-    mov x0, x19
-    mov x1, #0
-    ldr x2, [x19, #56]          // SetPosition(0) rewinds root enumeration
-    blr x2
-    cbnz x0, dir_error
-    sub sp, sp, #16
-1:
-    mov x0, x19
-    mov x1, #1024
-    str x1, [sp]
-    mov x1, sp
-    address x2, file_info_buffer
-    ldr x3, [x19, #32]
-    blr x3
-    cbnz x0, dir_read_error
-    ldr x0, [sp]
-    cbz x0, dir_done
-    address x1, file_info_buffer
-    add x1, x1, #80             // UTF-16 filename
-    address x0, system_table
-    ldr x0, [x0]
-    ldr x0, [x0, #64]
-    ldr x2, [x0, #8]
-    blr x2
-    address x0, newline
-    bl puts
-    b 1b
-dir_read_error:
-    add sp, sp, #16
-    b dir_error
-dir_done:
-    add sp, sp, #16
-    b dir_return
-dir_error:
-    address x0, file_error
-    bl puts
-dir_return:
-    ldp x19, x20, [sp], #16
-    unframe
-
 // Actual API/read checks, not just reaching a prompt.
 selftest:
     frame
     stp x19, x20, [sp, #-16]!
+    bl api_selftest
+    cbnz x0, selftest_failed
     mov w8, #0x30
     bl dos_call
     cbnz x1, selftest_failed
@@ -888,6 +943,16 @@ commands:
     .long name_type - ., cmd_type - (. - 4)
     .long name_dir - ., cmd_dir - (. - 4)
     .long name_del - ., cmd_del - (. - 4)
+    .long name_cd - ., cmd_cd - (. - 4)
+    .long name_chdir - ., cmd_cd - (. - 4)
+    .long name_md - ., cmd_md - (. - 4)
+    .long name_mkdir - ., cmd_md - (. - 4)
+    .long name_rd - ., cmd_rd - (. - 4)
+    .long name_rmdir - ., cmd_rd - (. - 4)
+    .long name_copy - ., cmd_copy - (. - 4)
+    .long name_ren - ., cmd_ren - (. - 4)
+    .long name_rename - ., cmd_ren - (. - 4)
+    .long name_attrib - ., cmd_attrib - (. - 4)
     .long name_selftest - ., cmd_selftest - (. - 4)
     .long name_exit - ., cmd_exit - (. - 4)
     .long 0, 0
@@ -898,6 +963,16 @@ name_cls: .asciz "CLS"
 name_type: .asciz "TYPE"
 name_dir: .asciz "DIR"
 name_del: .asciz "DEL"
+name_cd: .asciz "CD"
+name_chdir: .asciz "CHDIR"
+name_md: .asciz "MD"
+name_mkdir: .asciz "MKDIR"
+name_rd: .asciz "RD"
+name_rmdir: .asciz "RMDIR"
+name_copy: .asciz "COPY"
+name_ren: .asciz "REN"
+name_rename: .asciz "RENAME"
+name_attrib: .asciz "ATTRIB"
 name_selftest: .asciz "SELFTEST"
 name_exit: .asciz "EXIT"
 banner: .asciz "\r\nMS-DOS 4.0 AArch64 port development runtime\r\nNative ARM64 assembly / UEFI platform backend\r\nPartial port: x86 applications and the full DOS kernel are not implemented.\r\n"
@@ -905,7 +980,7 @@ prompt: .asciz "A:\\> "
 newline: .asciz "\r\n"
 erase_char: .asciz "\b \b"
 unknown_message: .asciz "Bad command or unsupported port feature.\r\n"
-help_message: .asciz "HELP VER ECHO CLS DIR TYPE DEL SELFTEST EXIT\r\nTYPE reads an ASCII file from the boot volume.\r\n"
+help_message: .asciz "HELP VER ECHO CLS DIR TYPE DEL CD MD RD COPY REN ATTRIB SELFTEST EXIT\r\nA: is the boot volume. Quote paths containing spaces.\r\n"
 version_message: .asciz "MS-DOS API baseline 4.00; AArch64 development port (partial).\r\n"
 passed_message: .asciz "SELFTEST PASS: version, errors, allocation, FAT read/write/delete.\r\n"
 failed_message: .asciz "SELFTEST FAIL\r\n"
@@ -924,7 +999,14 @@ root_directory: .skip 8
 protocol_result: .skip 8
 pool_result: .skip 8
 handles: .skip 256
+handle_modes: .skip 32
 command_buffer: .skip 256
 path_buffer: .skip 512
 io_buffer: .skip 528
 file_info_buffer: .skip 1024
+
+.include "src/files.S"
+.include "src/api_test.S"
+.include "src/search.S"
+
+.include "src/shell.S"

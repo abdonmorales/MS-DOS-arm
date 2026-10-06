@@ -49,12 +49,17 @@ def main():
                     raise RuntimeError('Native runtime faulted')
             raise RuntimeError('Timed out waiting for ' + repr(expected))
 
-        def command(line, expected):
+        checks = 0
+
+        def command(line, expected=b'', prompt=b'A:\\> '):
+            nonlocal checks
             process.stdin.write(line.encode() + b'\r')
             process.stdin.flush()
-            text = until(b'A:\\> ').replace(b'\r', b'')
+            text = until(prompt).replace(b'\r', b'')
             if expected not in text:
                 raise RuntimeError('Incorrect output for ' + line)
+            checks += 1
+            return text
 
         try:
             text = until(b'A:\\> ')
@@ -68,7 +73,26 @@ def main():
             command('del DOESNOT.TXT', b'File/device error.')
             command('type DOESNOT.TXT', b'File/device error.')
             command('invalidcommand', b'Bad command or unsupported port feature.')
-            print('PASS: ARM64 UEFI disk boot, native API self-tests, eight console checks.')
+            command('md "WORK DIR"')
+            command('cd "WORK DIR"', prompt=b'A:\\WORK DIR> ')
+            command('copy ..\\ARMTEST.TXT "COPY FILE.TXT"', b'1 file(s) copied.',
+                    prompt=b'A:\\WORK DIR> ')
+            command('type "COPY FILE.TXT"', b'ARM64 FAT read', prompt=b'A:\\WORK DIR> ')
+            command('copy "COPY FILE.TXT" ".\\copy file.txt"', b'File/device error.',
+                    prompt=b'A:\\WORK DIR> ')
+            command('type "COPY FILE.TXT"', b'ARM64 FAT read', prompt=b'A:\\WORK DIR> ')
+            command('ren "COPY FILE.TXT" RENAMED.TXT', prompt=b'A:\\WORK DIR> ')
+            command('dir re?amed.*', b'RENAMED.TXT', prompt=b'A:\\WORK DIR> ')
+            command('attrib +r RENAMED.TXT', prompt=b'A:\\WORK DIR> ')
+            command('del RENAMED.TXT', b'File/device error.', prompt=b'A:\\WORK DIR> ')
+            command('attrib -r RENAMED.TXT', prompt=b'A:\\WORK DIR> ')
+            command('cd ..')
+            command('rd "WORK DIR"', b'File/device error.')
+            command('del "WORK DIR\\RENAMED.TXT"')
+            command('rd "WORK DIR"')
+            command('cd "WORK DIR"', b'File/device error.')
+            command('selftest', b'SELFTEST PASS')
+            print(f'PASS: ARM64 UEFI disk boot, native API self-tests, {checks} console checks.')
         finally:
             selector.close()
             process.terminate()
