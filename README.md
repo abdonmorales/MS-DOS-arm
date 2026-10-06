@@ -24,3 +24,10 @@ trademarks or logos is subject to and must follow
 [Microsoft's Trademark & Brand Guidelines](https://www.microsoft.com/legal/intellectualproperty/trademarks/usage/general).
 Use of Microsoft trademarks or logos in modified versions of this project must not cause confusion or imply Microsoft sponsorship.
 Any use of third-party trademarks or logos are subject to those third-party's policies.
+
+# AArch64 development branch
+
+The `arm` branch adds a partial native ARM64 development runtime and UEFI disk
+image tooling under [arm64](arm64/README.md). The complete MS-DOS 4.0 port and
+all-model native Apple Silicon support remain unfinished; see that document for
+implemented services, tested boot paths, Raspberry Pi packaging, and limitations.
