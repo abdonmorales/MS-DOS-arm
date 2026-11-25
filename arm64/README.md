@@ -5,9 +5,11 @@ assembly. It is not a completed conversion of MS-DOS 4.0. The historical source
 archives stay intact as the reference for further migration.
 
 The current runtime is a UEFI application with DOS-style services and a command
-console. UEFI supplies the hardware and FAT filesystem backend. It remains in
-the firmware environment; it is not yet an independent kernel that calls
-`ExitBootServices`, owns exception vectors, or implements its own device drivers.
+console. The FAT12/FAT16/FAT32 filesystem is implemented natively in
+`src/fat.S`; UEFI still supplies the console, clock, image loader and raw
+sector access (Block I/O). It remains in the firmware environment; it is not
+yet an independent kernel that calls `ExitBootServices`, owns exception vectors,
+or implements its own device drivers.
 It contains no Linux guest, x86 interpreter, or x86 executable emulation.
 
 ## Build and run
@@ -20,7 +22,14 @@ dosfstools. The equivalent package names are:
 binutils-aarch64-linux-gnu qemu-system-arm qemu-efi-aarch64 mtools dosfstools
 ```
 
-In the prepared cloud environment:
+On Ubuntu 24.04 the packages above install with `apt-get`, and the targets
+run against the system firmware:
+
+```sh
+make -C arm64 smoke FIRMWARE=/usr/share/qemu-efi-aarch64/QEMU_EFI.fd
+```
+
+In the older prepared cloud environment:
 
 ```sh
 cd /workspace/MS-DOS-arm
@@ -58,8 +67,8 @@ files also run from the shell; `NATIVE.EXE` is a separately linked example.
 
 Paths support quotes, relative components, `.`/`..`, and drive `A:`. `DIR` accepts
 directories and case-insensitive `*`/`?` glob patterns, including DOS `*.*`.
-This is not the full DOS 8.3 wildcard algorithm. Long ASCII filenames use the
-firmware backend. Redirection supports `<`, `>`, `>>`, including nested scripts
+This is not the full DOS 8.3 wildcard algorithm. Long ASCII filenames are
+read and written as VFAT long-name entries by the native driver. Redirection supports `<`, `>`, `>>`, including nested scripts
 and native programs. Pipes, `2>` and DOS device names remain unsupported.
 `COPY` currently takes a single source and destination filename.
 
@@ -77,9 +86,33 @@ years and rollover, native and nested process loading, termination, and parent
 handle preservation. Reserved scratch names are `ARMCHK.TMP`, `ARMFCB.TMP` and
 `ARMAPI.TMP` (a directory). The test refuses to overwrite existing objects with
 those names and restores the starting directory. Smoke tests boot a temporary
-image copy and check 120 console requests, including 70 successive native
+image copy and check 123 console requests, including 70 successive native
 launches that deliberately leave resources for process cleanup, buffered input
 with backspace editing, batch control flow, and redirection restoration.
+
+## Native FAT driver
+
+`src/fat.S` mounts the boot partition through UEFI Block I/O and implements
+FAT12, FAT16 and FAT32: cluster chains, FAT mirroring, fixed and cluster-based
+root directories, directory growth, VFAT long names with checksummed `~N`
+short aliases, Windows NT lower-case flags, and allocation, truncation, rename,
+move and delete. It presents each open file as an `EFI_FILE_PROTOCOL`-shaped
+object, so the DOS services above it did not change. A small write-through
+sector cache (eight 4 KiB entries) keeps every update on disk before a call
+returns. FAT32's FSInfo free count is marked unknown rather than maintained.
+
+The boot banner reports which storage backend is active. If the boot volume is
+read-only or not FAT, the runtime falls back to the firmware's SimpleFileSystem.
+`EXIT` flushes and reinstalls Block I/O so firmware drops stale FAT state.
+
+`make -C arm64 smoke` now also requires the native backend, runs `fsck.fat` on
+the disk after the session and reads a natively written long name back with
+mtools. `make -C arm64 fat-test` stress-tests the driver on its own: it builds
+it into a Linux AArch64 test program (`tests/fat_host.c`, with
+`gcc-aarch64-linux-gnu`) run under `qemu-aarch64` (`qemu-user`) against
+FAT12, FAT16 (512-byte and 4 KiB sectors) and FAT32 (512-byte and 4 KiB
+clusters) images. Each image is prepared with mkfs.fat and mtools, modified
+over two mounts, and must pass `fsck.fat -n` and match an mtools read-back.
 
 ## Disk images
 
@@ -159,12 +192,13 @@ file timestamps, native process loading/termination, and a batch interpreter.
 These adapt selected public contracts from `CPMIO.ASM`, `GETSET.ASM`,
 `HANDLE.ASM`, `FILE.ASM`, `PATH.ASM`, `SEARCH.ASM`, `FCBIO.ASM`, `TIME.ASM`,
 `ALLOC.ASM`, `PROC.ASM` and `COMMAND`. Their original internal algorithms have
-not been fully translated. Hardware and storage still use UEFI Boot Services.
+not been fully translated. The FAT filesystem is native; the console, clock,
+image loading and sector I/O still use UEFI Boot Services.
 
 The complete MS-DOS 4.0 rewrite remains unfinished. Outstanding work includes
 full FCB/block/wildcard services, sharing/locking and extended handle APIs,
 DOS memory-control-block/PSP compatibility, interrupts and device-driver ABI,
-FAT/cache/block drivers independent of firmware, NLS/codepages, CONFIG.SYS,
+block device drivers independent of firmware (replacing `fat_block_io`), NLS/codepages, CONFIG.SYS,
 full COMMAND syntax/environment handling, historical drivers and utilities,
 and physical hardware bring-up. The checked-in historical source archives
 remain x86 assembly. All-model native Apple Silicon support also remains unmet

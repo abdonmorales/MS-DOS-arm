@@ -42,6 +42,7 @@ efi_main:
     bl clock_init
     address x0, banner
     bl puts
+    bl fat_print_backend
     bl selftest
     cbnz x0, boot_failed
 shell_loop:
@@ -68,6 +69,9 @@ boot_failed:
 efi_exit:
     mov x0, #0
 efi_return:
+    mov x19, x0
+    bl fat_unmount
+    mov x0, x19
     ldp x21, x22, [sp], #16
     ldp x19, x20, [sp], #16
     unframe
@@ -579,9 +583,12 @@ delete_return:
     ldr x19, [sp], #16
     unframe
 
+// Prefer the native FAT driver; firmware SimpleFileSystem is the fallback.
 filesystem_init:
     frame
     str x19, [sp, #-16]!
+    bl fat_mount
+    cbz x0, fs_return
     address x19, boot_services
     ldr x19, [x19]
     address x0, image_handle
@@ -1119,6 +1126,7 @@ file_info_buffer: .skip 1024
 selftest_saved_cwd: .skip 256
 
 .include "src/files.S"
+.include "src/fat.S"
 .include "src/api_test.S"
 .include "src/search.S"
 

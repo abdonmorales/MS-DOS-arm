@@ -6,9 +6,31 @@ import os
 import re
 import selectors
 import shutil
+import struct
 import subprocess
 import tempfile
 import time
+
+
+def check_filesystem(image):
+    """After shutdown: fsck the partition and read native writes with mtools."""
+    with image.open('rb') as disk:
+        mbr = disk.read(512)
+        start = struct.unpack_from('<I', mbr, 454)[0]
+        partition = image.with_name('partition.img')
+        disk.seek(start * 512)
+        with partition.open('wb') as out:
+            shutil.copyfileobj(disk, out)
+    fsck = subprocess.run(['fsck.fat', '-n', str(partition)], capture_output=True, text=True)
+    if fsck.returncode:
+        raise RuntimeError('fsck.fat after native writes:\n' + fsck.stdout + fsck.stderr)
+    env = dict(os.environ, MTOOLS_SKIP_CHECK='1')
+    data = subprocess.run(['mtype', '-i', str(partition),
+                           '::/Native Long Directory/Mixed Case Name.txt'],
+                          capture_output=True, env=env)
+    if data.returncode or data.stdout != b'ARM64 FAT read\r\n':
+        raise RuntimeError('mtools could not read a natively written long name')
+    print('PASS: fsck.fat clean after the session; mtools reads native long names.')
 
 
 def main():
@@ -70,6 +92,8 @@ def main():
             text = until(b'A:\\> ')
             if b'SELFTEST PASS' not in text:
                 raise RuntimeError('Boot self-test did not complete')
+            if b'Storage: native FAT' not in text:
+                raise RuntimeError('Native FAT driver did not mount the boot volume')
             command('ver', b'MS-DOS API baseline 4.00')
             command('type ARMTEST.TXT', b'ARM64 FAT read')
             command('echo native-arm64-ok', b'\nnative-arm64-ok\n')
@@ -148,6 +172,11 @@ def main():
             command('rd "WORK DIR"')
             command('cd "WORK DIR"', b'File/device error.')
             command('selftest', b'SELFTEST PASS')
+            # Long names written natively must survive for other FAT readers.
+            command('md "Native Long Directory"')
+            command('copy ARMTEST.TXT "Native Long Directory\\Mixed Case Name.txt"',
+                    b'1 file(s) copied.')
+            command('dir "Native Long Directory"', b'Mixed Case Name.txt')
             print(f'PASS: ARM64 UEFI disk boot, native API self-tests, {checks} console checks.')
         finally:
             selector.close()
@@ -159,6 +188,7 @@ def main():
                 process.wait()
             if args.log:
                 args.log.write_bytes(output)
+        check_filesystem(image)
 
 
 if __name__ == '__main__':
