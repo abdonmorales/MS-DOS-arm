@@ -30,6 +30,11 @@ dos_get_time:
     ret
 puts:
     ret
+// The host test always uses the Block I/O path (platform_native stays 0).
+vio_rw:
+    mov x0, #7
+    orr x0, x0, #0x8000000000000000
+    ret
 // Copy of pack_efi_time from src/search.S (that file needs the whole kernel).
 pack_efi_time:
     ldrh w2, [x0]
@@ -73,3 +78,4 @@ boot_services: .skip 8
 image_handle: .skip 8
 protocol_result: .skip 8
 root_directory: .skip 8
+platform_native: .skip 8

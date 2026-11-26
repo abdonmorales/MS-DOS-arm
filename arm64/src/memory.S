@@ -30,14 +30,10 @@ dos_allocate:
     mov x21, #65535
     add x21, x19, x21
     and x21, x21, #0xffffffffffff0000
-    mov x1, x21
-    mov x0, #2
-    mov x2, x20
-    address x3, boot_services
-    ldr x3, [x3]
-    ldr x3, [x3, #64]
-    blr x3
-    cbnz x0, arena_no_memory
+    mov x0, x21
+    bl plat_alloc
+    cbz x0, arena_no_memory
+    str x0, [x20]
     str x19, [x20, #8]
     str x21, [x20, #16]
     address x2, active_owner
@@ -84,10 +80,8 @@ dos_free:
     bl arena_lookup
     cbz x2, arena_invalid
     mov x19, x2
-    address x3, boot_services
-    ldr x3, [x3]
-    ldr x3, [x3, #72]
-    blr x3
+    ldr x1, [x2, #16]
+    bl plat_free
     cbnz x0, arena_invalid
     stp xzr, xzr, [x19]
     stp xzr, xzr, [x19, #16]

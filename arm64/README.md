@@ -4,12 +4,16 @@ The `arm` branch adds a **partial native AArch64 port**, written in ARM64
 assembly. It is not a completed conversion of MS-DOS 4.0. The historical source
 archives stay intact as the reference for further migration.
 
-The current runtime is a UEFI application with DOS-style services and a command
-console. The FAT12/FAT16/FAT32 filesystem is implemented natively in
-`src/fat.S`; UEFI still supplies the console, clock, image loader and raw
-sector access (Block I/O). It remains in the firmware environment; it is not
-yet an independent kernel that calls `ExitBootServices`, owns exception vectors,
-or implements its own device drivers.
+UEFI is only the boot loader. At startup the kernel finds its console UART
+(ACPI SPCR) and its boot disk (ACPI MCFG, PCI ECAM, virtio-blk), reserves its
+memory, calls `ExitBootServices` and owns the machine from then on: its own
+exception vectors, polled PL011 console, virtio-blk driver, FAT12/16/32
+filesystem (`src/fat.S`), memory arena and PE32+ program loader
+(`src/platform.S`, `src/process.S`). On boards it has no drivers for (today
+anything without ACPI SPCR/MCFG and virtio-blk, such as the Raspberry Pi 3), it
+stays in firmware mode and uses UEFI for the console, memory and sectors; the
+banner's `Platform:` line says which mode is active. See
+[PORT_STATUS.md](PORT_STATUS.md) for what remains.
 It contains no Linux guest, x86 interpreter, or x86 executable emulation.
 
 ## Build and run
@@ -77,7 +81,8 @@ Batch files support `%0`–`%9`, `%*`, `%%`, `%ERRORLEVEL%`, `%PATH%`, `%COMSPEC
 `EXIT /B`. Commands are limited to 255 bytes and nesting to 16 scripts.
 `FOR`, `SHIFT`, `SET`, string-comparison `IF`, and general environment editing
 remain unimplemented. `DATE`/`TIME` display the DOS clock; API setters change
-only the runtime clock. `EXIT` returns to UEFI after unwinding shell state.
+only the runtime clock. `EXIT` powers the machine off in native mode (the
+firmware is gone) and returns to UEFI in firmware mode.
 
 Each boot runs native API integration tests against actual files on disk:
 FCB records, partial EOF padding, paths, search buffers, attributes, file times,
@@ -86,7 +91,7 @@ years and rollover, native and nested process loading, termination, and parent
 handle preservation. Reserved scratch names are `ARMCHK.TMP`, `ARMFCB.TMP` and
 `ARMAPI.TMP` (a directory). The test refuses to overwrite existing objects with
 those names and restores the starting directory. Smoke tests boot a temporary
-image copy and check 123 console requests, including 70 successive native
+image copy and check 125 console requests, including 70 successive native
 launches that deliberately leave resources for process cleanup, buffered input
 with backspace editing, batch control flow, and redirection restoration.
 
@@ -103,7 +108,12 @@ returns. FAT32's FSInfo free count is marked unknown rather than maintained.
 
 The boot banner reports which storage backend is active. If the boot volume is
 read-only or not FAT, the runtime falls back to the firmware's SimpleFileSystem.
-`EXIT` flushes and reinstalls Block I/O so firmware drops stale FAT state.
+In firmware mode, `EXIT` flushes and reinstalls Block I/O so firmware drops
+stale FAT state. In native mode the same driver runs over the kernel's
+virtio-blk driver instead of UEFI Block I/O.
+
+`make -C arm64 smoke-firmware` repeats the smoke test with ACPI hidden from the
+firmware (`-machine virt,acpi=off`), which keeps the kernel in firmware mode.
 
 `make -C arm64 smoke` now also requires the native backend, runs `fsck.fat` on
 the disk after the session and reads a natively written long name back with
@@ -192,13 +202,13 @@ file timestamps, native process loading/termination, and a batch interpreter.
 These adapt selected public contracts from `CPMIO.ASM`, `GETSET.ASM`,
 `HANDLE.ASM`, `FILE.ASM`, `PATH.ASM`, `SEARCH.ASM`, `FCBIO.ASM`, `TIME.ASM`,
 `ALLOC.ASM`, `PROC.ASM` and `COMMAND`. Their original internal algorithms have
-not been fully translated. The FAT filesystem is native; the console, clock,
-image loading and sector I/O still use UEFI Boot Services.
+not been fully translated. In native mode no UEFI boot service is used after
+startup; UEFI runtime services are used only for power-off.
 
 The complete MS-DOS 4.0 rewrite remains unfinished. Outstanding work includes
 full FCB/block/wildcard services, sharing/locking and extended handle APIs,
 DOS memory-control-block/PSP compatibility, interrupts and device-driver ABI,
-block device drivers independent of firmware (replacing `fat_block_io`), NLS/codepages, CONFIG.SYS,
+native drivers for boards other than QEMU `virt`, NLS/codepages, CONFIG.SYS,
 full COMMAND syntax/environment handling, historical drivers and utilities,
 and physical hardware bring-up. The checked-in historical source archives
 remain x86 assembly. All-model native Apple Silicon support also remains unmet

@@ -135,6 +135,9 @@ fat_mount:
     bl fat_cache_read
     cbnz x0, fat_mount_fail
     mov x25, x1                 // boot sector
+    address x0, fat_boot_copy   // lets the platform layer find this disk
+    mov x2, #96
+    bl fat_memcpy
     ldrb w2, [x25, #510]
     cmp w2, #0x55
     b.ne fat_mount_fail
@@ -263,6 +266,8 @@ fat_unmount:
     ldv x2, fat_mounted
     cbz x2, 1f
     bl fat_flush_device
+    ldv x2, platform_native     // no firmware left to hand the disk back to
+    cbnz x2, 1f
     address x19, boot_services
     ldr x19, [x19]
     ldv x0, fat_device
@@ -291,6 +296,15 @@ fat_print_backend:
     address x0, fat_backend_fat32
 1:
     bl puts
+    ldv x2, fat_mounted
+    cbz x2, 2f
+    address x0, fat_backend_blockio
+    ldv x2, platform_native
+    cbz x2, 3f
+    address x0, fat_backend_virtio
+3:
+    bl puts
+2:
     unframe
 
 // ---------------------------------------------------------------------------
@@ -303,6 +317,15 @@ fat_read_blocks:
 fat_write_blocks:
     mov x9, #32                 // WriteBlocks
 fat_block_io:
+    adrp x2, platform_native
+    ldr x2, [x2, :lo12:platform_native]
+    cbz x2, 1f
+    mov x2, x1                  // native virtio-blk path, 512-byte sectors
+    cmp x9, #32
+    cset x3, eq
+    mov x1, #1
+    b vio_rw
+1:
     frame
     mov x4, x1
     mov x2, x0
@@ -314,6 +337,12 @@ fat_block_io:
     unframe
 
 fat_flush_device:
+    adrp x0, platform_native
+    ldr x0, [x0, :lo12:platform_native]
+    cbz x0, 1f
+    mov x0, #0                  // virtio writes complete before vio_rw returns
+    ret
+1:
     frame
     ldv x0, fat_blockio
     ldr x1, [x0, #40]           // FlushBlocks
@@ -3103,9 +3132,11 @@ fat_dotdot_short: .ascii "..         "
 fat_dot_name: .asciz "."
 fat_dotdot_name: .asciz ".."
 fat_empty_name: .asciz ""
-fat_backend_fat12: .asciz "Storage: native FAT12 driver over UEFI Block I/O\r\n"
-fat_backend_fat16: .asciz "Storage: native FAT16 driver over UEFI Block I/O\r\n"
-fat_backend_fat32: .asciz "Storage: native FAT32 driver over UEFI Block I/O\r\n"
+fat_backend_fat12: .asciz "Storage: native FAT12 driver"
+fat_backend_fat16: .asciz "Storage: native FAT16 driver"
+fat_backend_fat32: .asciz "Storage: native FAT32 driver"
+fat_backend_blockio: .asciz " over UEFI Block I/O\r\n"
+fat_backend_virtio: .asciz " over the native virtio-blk driver\r\n"
 fat_backend_firmware: .asciz "Storage: UEFI firmware file system (native FAT driver unavailable)\r\n"
 
 .section .bss
@@ -3147,5 +3178,7 @@ fat_open_path: .skip 264
 fat_open_comp: .skip 264
 fat_rename_comp: .skip 264
 fat_rename_name: .skip 264
+.balign 16
+fat_boot_copy: .skip 96
 .balign 16
 fat_objects: .skip FAT_OBJECTS * OBJ_SIZE

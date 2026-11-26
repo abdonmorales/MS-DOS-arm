@@ -9,7 +9,7 @@ BUILD ?= build
 SOURCES := $(wildcard src/*.S)
 FIXTURES := $(wildcard fixtures/*)
 
-.PHONY: all image pi-image smoke validate snapshot fat-test clean
+.PHONY: all image pi-image smoke smoke-firmware validate snapshot fat-test clean
 all: $(BUILD)/BOOTAA64.EFI $(BUILD)/NATIVE.EXE
 image: $(BUILD)/msdos-arm64.img
 pi-image: $(BUILD)/msdos-arm64-pi3.img
@@ -18,6 +18,10 @@ FIRMWARE ?= /usr/share/qemu-efi-aarch64/QEMU_EFI.fd
 PI_FIRMWARE ?=
 smoke: image
 	$(PYTHON) tools/smoke.py $(BUILD)/msdos-arm64.img --firmware $(FIRMWARE) --log $(BUILD)/smoke.log
+
+# Same checks with ACPI hidden, so the kernel must keep using UEFI services.
+smoke-firmware: image
+	$(PYTHON) tools/smoke.py $(BUILD)/msdos-arm64.img --firmware $(FIRMWARE) --mode firmware --log $(BUILD)/smoke-firmware.log
 
 validate: image pi-image
 	$(PYTHON) tools/validate.py --build $(BUILD) --firmware $(FIRMWARE)

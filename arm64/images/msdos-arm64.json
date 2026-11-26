@@ -2,10 +2,10 @@
   "format": "MBR/FAT16 EFI System Partition",
   "architecture": "AArch64",
   "bytes": 67108864,
-  "sha256": "81d21c5c48cd23b5c74becc2e9610a51d474ae845fb842584f30bb31dcdee4d7",
+  "sha256": "937a6e98ce2909b3ac5ccfe47d2c362a3f5f3bb654a8aca43585ee5f50387793",
   "boot_application": "EFI/BOOT/BOOTAA64.EFI",
   "complete_msdos_port": false,
   "native_hardware_tested": false,
-  "compressed_sha256": "3ef6b3ac765ecaca1d3ecc9b09d1d65420510d373a7706ca77f031451241bb20",
-  "compressed_bytes": 27012
+  "compressed_sha256": "7c5bb98decad3df92e458ee8883f3ce0875031a6d7c4bea5d2acc1ebaaf70bfc",
+  "compressed_bytes": 29080
 }

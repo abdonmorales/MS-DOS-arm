@@ -40,12 +40,15 @@ def main():
     parser.add_argument('--qemu', default='qemu-system-aarch64')
     parser.add_argument('--timeout', type=float, default=45)
     parser.add_argument('--log', type=Path)
+    parser.add_argument('--mode', choices=['native', 'firmware'], default='native',
+                        help='firmware: boot without ACPI so the kernel must stay on UEFI')
     args = parser.parse_args()
     output = bytearray()
     with tempfile.TemporaryDirectory(prefix='arm64-smoke-') as directory:
         image = Path(directory) / 'test.img'
         shutil.copyfile(args.image, image)
-        cmd = [args.qemu, '-machine', 'virt', '-cpu', 'cortex-a72', '-m', '256',
+        machine = 'virt' if args.mode == 'native' else 'virt,acpi=off'
+        cmd = [args.qemu, '-machine', machine, '-cpu', 'cortex-a72', '-m', '256',
                '-bios', str(args.firmware), '-drive',
                f'file={image},format=raw,if=none,id=dos',
                '-device', 'virtio-blk-pci,drive=dos', '-nographic', '-monitor',
@@ -94,6 +97,10 @@ def main():
                 raise RuntimeError('Boot self-test did not complete')
             if b'Storage: native FAT' not in text:
                 raise RuntimeError('Native FAT driver did not mount the boot volume')
+            platform = (b'Platform: native AArch64 kernel' if args.mode == 'native'
+                        else b'Platform: UEFI firmware services')
+            if platform not in text:
+                raise RuntimeError('Unexpected platform mode for ' + args.mode)
             command('ver', b'MS-DOS API baseline 4.00')
             command('type ARMTEST.TXT', b'ARM64 FAT read')
             command('echo native-arm64-ok', b'\nnative-arm64-ok\n')
@@ -108,6 +115,9 @@ def main():
             if b'Native AArch64 program OK' not in edited:
                 raise RuntimeError('Buffered DOS console input/editing failed')
             checks += 1
+            if args.mode == 'native':   # firmware mode keeps UEFI's vectors
+                command('native fault', b'Program terminated by CPU exception.')
+                command('echo code:%ERRORLEVEL%', b'code:1')
             command('native exit7', b'Native AArch64 program OK')
             command('echo code:%ERRORLEVEL%', b'code:7')
             batch = command('script first second', b'script-finished')

@@ -10,8 +10,9 @@ program and batch fixtures. They do not run historical x86 executables.
 | [msdos-arm64-pi3.img.xz](msdos-arm64-pi3.img.xz) | 128 MiB | Pi 3B/3B+ with bundled Pi UEFI firmware |
 
 Each image passed FAT consistency checks, build-payload comparisons, native API
-integration checks and 123 console checks under QEMU AArch64 `virt`/UEFI,
-with the native FAT driver serving the disk and `fsck.fat` clean afterwards.
+integration checks and 125 console checks under QEMU AArch64 `virt`/UEFI,
+with the native kernel (firmware exited) serving the disk and `fsck.fat` clean
+afterwards.
 For the Pi image, this validates FAT32 and the DOS payload through generic UEFI;
 it does not validate Pi ROM/VideoCore boot or physical hardware drivers.
 [validation.json](validation.json) records hashes and the tested scope.

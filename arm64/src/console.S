@@ -85,12 +85,7 @@ dos_console_flush:
     mov x20, x1
     address x0, pending_key
     str xzr, [x0]
-    address x0, system_table
-    ldr x0, [x0]
-    ldr x0, [x0, #48]
-    ldr x3, [x0]
-    mov x1, #0
-    blr x3
+    bl plat_flush_input
     mov w8, w19
     mov x0, x20
     cmp w8, #1
@@ -120,15 +115,8 @@ poll_key:
     ldr x0, [x0]
     cbnz x0, 2f
 1:
-    address x0, system_table
-    ldr x0, [x0]
-    ldr x0, [x0, #48]
-    mov x1, sp
-    ldr x3, [x0, #8]
-    blr x3
-    cbnz x0, 3f
-    ldrh w0, [sp, #2]
-    cbz w0, 1b                 // scan-only keys unsupported by ASCII ABI
+    bl plat_poll_key
+    cbz x0, 3f
     address x2, pending_key
     str x0, [x2]
 2:
