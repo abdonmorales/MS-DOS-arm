@@ -715,8 +715,20 @@ read_line:
     bl stdout_putc
     b 1b
 read_line_eof:
+    address x9, read_line_dos
+    ldrb w9, [x9]
+    cbnz w9, 6f
     mov x22, #1
     b 4f
+6:                                  // 0Ah keeps ^Z as a character and shows it
+    cmp x21, x20
+    b.hs 1b
+    mov w0, #26
+    strb w0, [x19, x21]
+    add x21, x21, #1
+    address x0, ctrl_z_mark
+    bl puts
+    b 1b
 read_line_cancel:               // ^C discards the line, as COMMAND does
     address x0, ctrl_c_mark
     bl puts
@@ -730,6 +742,12 @@ read_line_cancel:               // ^C discards the line, as COMMAND does
 4:
     strb wzr, [x19, x21]
     address x0, newline
+    address x9, read_line_dos       // 0Ah echoes only the carriage return
+    ldrb w10, [x9]
+    strb wzr, [x9]
+    cbz w10, 5f
+    address x0, carriage_return
+5:
     bl puts
     mov x0, x21
     mov x2, x22
@@ -1117,6 +1135,7 @@ name_erase: .asciz "ERASE"
 banner: .asciz "\r\nMS-DOS 4.0 AArch64 port development runtime\r\nNative ARM64 assembly. x86 programs are not supported (native port).\r\n"
 prompt: .asciz "A:\\> "
 newline: .asciz "\r\n"
+carriage_return: .asciz "\r"
 erase_char: .asciz "\b \b"
 ctrl_c_mark: .asciz "^C"
 unknown_message: .asciz "Bad command or file name\r\n"

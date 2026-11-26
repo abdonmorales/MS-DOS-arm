@@ -65,7 +65,11 @@ dos_console_buffer:
     cbz w1, 1f
     sub x1, x1, #1
     add x0, x19, #2
+    address x9, read_line_dos
+    mov w10, #1
+    strb w10, [x9]
     bl read_line
+3:
     strb w0, [x19, #1]
     add x2, x19, #2
     mov w3, #13
@@ -78,6 +82,11 @@ dos_console_buffer:
     mov x1, #0
     ldr x19, [sp], #16
     unframe
+.section .rodata
+ctrl_z_mark: .asciz "^Z"
+.section .bss
+read_line_dos: .skip 8
+.section .text
 dos_console_flush:
     frame
     stp x19, x20, [sp, #-16]!

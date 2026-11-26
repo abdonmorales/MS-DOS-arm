@@ -382,6 +382,152 @@ fl_entry_cluster:
     mov x0, x1
     ret
 
+
+// x0 = directory cluster (0 = root), x1 = name (long or 8.3, any case),
+// x2 = buffer (fl_dir_load capacity in x3). Returns x0 = entry pointer in
+// the buffer or 0, x1 = 0 / 1 on a disk error. The buffer stays loaded.
+fl_find:
+    enter
+    mov x19, x1
+    mov x20, x2
+    mov x1, x2
+    mov x2, x3
+    bl fl_dir_load
+    cbnz x1, 9f
+    mov x21, x0
+    mov x22, #0                 // offset
+    address x23, fl_lfn
+    strb wzr, [x23]
+1:
+    cmp x22, x21
+    b.hs 8f
+    add x24, x20, x22
+    ldrb w2, [x24]
+    cbz w2, 8f
+    cmp w2, #0xe5
+    b.eq 6f
+    ldrb w3, [x24, #11]
+    cmp w3, #0x0f
+    b.ne 3f
+    // Long-name piece: sequence (1-20) at byte 0, 13 UTF-16 characters.
+    and w4, w2, #0x1f
+    sub w4, w4, #1
+    mov w5, #13
+    mul w4, w4, w5
+    cmp w4, #240
+    b.hs 7f
+    add x5, x23, x4
+    address x6, fl_lfn_offsets
+    mov x7, #0
+2:
+    ldrb w8, [x6, x7]
+    ldrh w9, [x24, x8]
+    mov w10, #0xffff
+    cmp w9, w10
+    b.eq 21f
+    cmp w9, #0x7f
+    b.ls 22f
+    mov w9, #'_'
+22:
+    strb w9, [x5, x7]
+    cbz w9, 7f
+21:
+    add x7, x7, #1
+    cmp x7, #13
+    b.lo 2b
+    tbz w2, #6, 7f              // the last piece (0x40) ends the name
+    strb wzr, [x5, #13]
+    b 7f
+3:
+    tbnz w3, #3, 5f             // volume label
+    ldrb w4, [x23]
+    cbz w4, 4f
+    mov x0, x23
+    mov x1, x19
+    bl strcmpi
+    cbz x0, found
+4:
+    mov x0, x24
+    address x1, fl_short
+    bl fl_entry_name
+    address x0, fl_short
+    mov x1, x19
+    bl strcmpi
+    cbz x0, found
+5:
+    strb wzr, [x23]
+    b 7f
+6:
+    strb wzr, [x23]
+7:
+    add x22, x22, #32
+    b 1b
+8:
+    mov x0, #0
+    mov x1, #0
+    leave
+found:
+    mov x0, x24
+    mov x1, #0
+    leave
+9:
+    mov x1, #1
+    leave
+
+// x0 = path ("A:\DIR\FILE", "\DIR\FILE" or relative to the root),
+// x1 = buffer, x2 = capacity. Finds the entry, leaving its directory in
+// the buffer: x0 = entry or 0, x1 = 0 / 1 disk error, x2 = directory cluster.
+fl_resolve:
+    enter
+    mov x19, x0
+    mov x20, x1
+    mov x21, x2
+    mov x0, x19
+    address x1, fl_true
+    dos 0x60                    // canonical "A:\DIR\FILE"
+    cbnz x1, 8f
+    address x22, fl_true
+    add x22, x22, #3            // past "A:\"
+    mov x23, #0                 // directory cluster
+1:
+    ldrb w2, [x22]
+    cbz w2, 8f
+    mov x24, x22                // component
+2:
+    ldrb w2, [x22]
+    cbz w2, 3f
+    cmp w2, #'\\'
+    b.eq 3f
+    add x22, x22, #1
+    b 2b
+3:
+    mov w25, w2
+    strb wzr, [x22]
+    mov x0, x23
+    mov x1, x24
+    mov x2, x20
+    mov x3, x21
+    bl fl_find
+    cbnz x1, 9f
+    cbz x0, 8f
+    cbz w25, 4f
+    mov x26, x0
+    bl fl_entry_cluster
+    mov x23, x0
+    add x22, x22, #1
+    b 1b
+4:
+    mov x2, x23
+    mov x1, #0
+    leave
+8:
+    mov x0, #0
+    mov x1, #0
+    leave
+9:
+    mov x1, #1
+    leave
+
 .equ FL_MAX_DIR_SECTORS, 1024
 .section .bss
 .balign 8
@@ -390,4 +536,9 @@ fl_fat_cached: .skip 8
 fl_dir_count: .skip 8
 fl_dir_sectors: .skip 8 * FL_MAX_DIR_SECTORS
 fl_fat_buffer: .skip 8192
+fl_lfn: .skip 272
+fl_short: .skip 16
+fl_true: .skip 128
+.section .rodata
+fl_lfn_offsets: .byte 1, 3, 5, 7, 9, 14, 16, 18, 20, 22, 24, 28, 30
 .section .text
