@@ -476,21 +476,32 @@ dos_strategy:
     mov x1, #0
     ret
 
-// 66h: 1 get (x2 active, x3 system code page), 2 set x1 (437 only).
+// 66h: 1 get (x2 active, x3 system code page), 2 set x1: the tables for
+// the current country in that code page come from COUNTRY.SYS (NLSFUNC's
+// job in DOS, built in here).
 dos_code_page:
     cmp x0, #1
     b.eq 1f
     cmp x0, #2
     b.ne dos_bad_subfunction
-    cmp x1, #437
-    b.ne 2f
+    address x9, nls_code_page
+    ldr x9, [x9]
+    cmp x1, x9
+    b.eq 3f
+    cbz x1, 2f
+    address x9, dos_country_code
+    ldr x0, [x9]
+    b nls_reload                // returns x1 = 0, or x0 = 2
+3:
     mov x0, #0
     mov x1, #0
     ret
 1:
-    mov x2, #437
-    mov x3, #437
-    mov x0, #437
+    address x9, nls_code_page
+    ldr x2, [x9]
+    address x9, nls_system_code_page
+    ldr x3, [x9]
+    mov x0, x2
     mov x1, #0
     ret
 2:

@@ -815,6 +815,12 @@ cmd_chcp:
     cbnz w9, 1f
     address x0, chcp_message
     bl puts
+    mov x0, #1
+    bl dos_code_page
+    mov x1, #0
+    bl print_number_width
+    address x0, newline
+    bl puts
     unframe
 1:
     bl parse_unsigned
@@ -1173,7 +1179,7 @@ off_word: .asciz "off\r\n"
 on_off_required: .asciz "Must specify ON or OFF\r\n"
 invalid_device_message: .asciz "Invalid device\r\n"
 pause_message: .asciz "Press any key to continue . . ."
-chcp_message: .asciz "Active code page: 437\r\n"
+chcp_message: .asciz "Active code page: "
 chcp_invalid: .asciz "Invalid code page\r\n"
 dot_path: .asciz "."
 day_names: .ascii "Sun\0Mon\0Tue\0Wed\0Thu\0Fri\0Sat\0"

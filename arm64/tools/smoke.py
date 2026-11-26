@@ -402,6 +402,12 @@ def main():
             keys(b'\b' * 8 + b'prompt $p$g\r', b'A:\\>')
             checks += 1
             command('echo done', b'echo done\ndone')
+            # COUNTRY.SYS (assembled from MKCNTRY.ASM) supplies other code pages.
+            command('chcp', b'Active code page: 437')
+            command('chcp 850')
+            command('chcp', b'Active code page: 850')
+            command('chcp 865', b'Invalid code page')
+            command('chcp 437')
             print(f'PASS: ARM64 UEFI disk boot, native API self-tests, {checks} console checks.')
         finally:
             selector.close()

@@ -194,10 +194,22 @@ efi_main:
     dos 0x66
     ok
     expect x2, 437
-    mov x0, #2
+    mov x0, #2                  // COUNTRY.SYS has US 850, not 865
     mov x1, #850
     dos 0x66
+    ok
+    mov x0, #1
+    dos 0x66
+    ok
+    expect x2, 850
+    mov x0, #2
+    mov x1, #865
+    dos 0x66
     err 2
+    mov x0, #2
+    mov x1, #437
+    dos 0x66
+    ok
     mov x0, #0
     dos 0x63
     ok
@@ -758,12 +770,12 @@ fail:
     mov x0, x27
     mov x9, #10
     udiv x10, x0, x9
-    msub x11, x10, x9, x0
+    msub x26, x10, x9, x0       // DOS calls may change x0-x17
     cbz x10, 1f
     add x0, x10, #'0'
     dos 0x02
 1:
-    add x0, x11, #'0'
+    add x0, x26, #'0'
     dos 0x02
     mov x0, #13
     dos 0x02

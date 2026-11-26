@@ -1,4 +1,6 @@
 // SPDX-License-Identifier: MIT
+.equ NLS_FILE_MAX, 32768
+.equ NLS_TABLE_ROOM, 64
 // National language support (NLS): 38h country information, 65h extended
 // country information and the code page 437 tables from DOSMES.ASM.
 .section .text
@@ -6,6 +8,12 @@
 // x0 = country code. Returns x0 = record (u16 id, u16 code page, 34-byte
 // information block, 2 pad bytes) or 0.
 nls_find_country:
+    address x9, nls_loaded
+    ldrh w10, [x9]
+    cbz w10, 4f
+    cmp x10, x0
+    b.eq 3f
+4:
     address x9, nls_countries
 1:
     ldrh w10, [x9]
@@ -52,7 +60,16 @@ dos_country:
 1:
     mov x0, x20
     bl nls_find_country
+    cbnz x0, 11f
+    cbnz x19, 3f                // only setting may load from COUNTRY.SYS
+    mov x0, x20
+    mov x1, #0
+    bl nls_reload
+    cbnz x1, 3f
+    mov x0, x20
+    bl nls_find_country
     cbz x0, 3f
+11:
     cbnz x19, 2f
     address x9, dos_country_code
     str x20, [x9]
@@ -106,7 +123,9 @@ dos_ext_country:
     mov x10, #0xffff
     cmp x9, x10
     b.eq 1f
-    cmp x9, #437
+    address x11, nls_code_page
+    ldr x11, [x11]
+    cmp x9, x11
     b.ne nls_not_found
 1:
     and x22, x2, #0xffff
@@ -131,9 +150,10 @@ dos_ext_country:
     strb w22, [x20, #3]
     lsr w2, w22, #8
     strb w2, [x20, #4]
-    mov w2, #(437 & 255)
+    address x2, nls_code_page
+    ldr x2, [x2]
     strb w2, [x20, #5]
-    mov w2, #(437 >> 8)
+    lsr w2, w2, #8
     strb w2, [x20, #6]
     // Copy as much of the 34-byte block as the caller's buffer holds.
     sub x2, x21, #7
@@ -243,6 +263,220 @@ nls_yes_no:
     mov x1, #0
     ret
 
+// x0 = country, x1 = code page (0: the file's first for that country).
+// Loads them from COUNTRY.SYS (nls_file) if one was found at boot. Returns
+// x1 = 0, or x1 = 1 with x0 = 2.
+nls_reload:
+    frame
+    address x2, nls_file
+    ldrb w3, [x2]
+    cbz w3, 1f
+    bl nls_load
+    cbz x1, 2f
+1:
+    mov x0, #2
+    mov x1, #1
+2:
+    unframe
+
+// x0 = country, x1 = code page (0: the first listed for the country),
+// x2 = path of a DOS 4.0 COUNTRY.SYS (built from MKCNTRY.ASM): makes its
+// country information, case maps, file-name characters, collating and DBCS
+// tables current. Returns x1 = 0, or x1 = 1 with x0 = 2 (no such file) or
+// x0 = 3 (no such country and code page in it).
+nls_load:
+    enter
+    mov x19, x0
+    mov x20, x1
+    mov x0, x2
+    mov x1, #0
+    bl dos_open
+    cbnz x1, 8f
+    mov x21, x0
+    address x22, nls_buffer
+    mov x23, #0                 // bytes read
+1:
+    mov x0, x21
+    add x1, x22, x23
+    mov x2, #NLS_FILE_MAX
+    sub x2, x2, x23
+    cbz x2, 2f
+    bl dos_read
+    cbnz x1, 2f
+    cbz x0, 2f
+    add x23, x23, x0
+    b 1b
+2:
+    mov x0, x21
+    bl dos_close
+    cmp x23, #23
+    b.lo 9f
+    ldrb w0, [x22]
+    cmp w0, #0xff
+    b.ne 9f
+    add x0, x22, #19            // the country table
+    bl nls_u32
+    mov x24, x0
+    add x2, x24, #2
+    cmp x2, x23
+    b.hi 9f
+    add x0, x22, x24
+    bl nls_u16
+    mov x25, x0                 // entries
+    add x24, x24, #2
+3:
+    cbz x25, 9f
+    add x2, x24, #14
+    cmp x2, x23
+    b.hi 9f
+    add x0, x22, x24
+    add x0, x0, #2
+    bl nls_u16
+    cmp x0, x19
+    b.ne 4f
+    cbz x20, 5f
+    add x0, x22, x24
+    add x0, x0, #4
+    bl nls_u16
+    cmp x0, x20
+    b.eq 5f
+4:
+    add x24, x24, #14
+    sub x25, x25, #1
+    b 3b
+5:
+    add x0, x22, x24
+    add x0, x0, #4
+    bl nls_u16
+    mov x20, x0                 // the code page found
+    add x0, x22, x24
+    add x0, x0, #10
+    bl nls_u32
+    mov x24, x0                 // its data: u16 count, 8-byte items
+    add x2, x24, #2
+    cmp x2, x23
+    b.hi 9f
+    add x0, x22, x24
+    bl nls_u16
+    mov x25, x0
+    add x24, x24, #2
+6:
+    cbz x25, 7f
+    add x2, x24, #8
+    cmp x2, x23
+    b.hi 9f
+    add x0, x22, x24
+    ldrb w26, [x0, #2]          // type
+    add x0, x0, #4
+    bl nls_u32
+    mov x27, x0                 // table: FFh, 7-byte name, u16 length
+    add x2, x27, #10
+    cmp x2, x23
+    b.hi 9f
+    add x0, x22, x27
+    add x0, x0, #8
+    bl nls_u16
+    mov x28, x0
+    add x27, x27, #10
+    add x2, x27, x28
+    cmp x2, x23
+    b.hi 9f
+    add x0, x22, x27            // x0 = the table's data, x28 = its length
+    mov x1, x28
+    mov x2, x26
+    bl nls_apply
+    add x24, x24, #8
+    sub x25, x25, #1
+    b 6b
+7:
+    address x9, nls_loaded
+    strh w19, [x9]
+    strh w20, [x9, #2]
+    address x9, nls_code_page
+    str x20, [x9]
+    address x9, dos_country_code
+    str x19, [x9]
+    mov x1, #0
+    leave
+8:
+    mov x0, #2
+    mov x1, #1
+    leave
+9:
+    mov x0, #3
+    mov x1, #1
+    leave
+
+// x0 = table data, x1 = length, x2 = type (MKCNTRY.INC SETxxx).
+nls_apply:
+    frame
+    cmp x2, #1                  // country information: id, code page, block
+    b.ne 1f
+    cmp x1, #38
+    b.lo 9f
+    add x0, x0, #4
+    address x1, nls_loaded + 4
+    mov x2, #34
+    bl copy_bytes
+    b 9f
+1:
+    cmp x2, #2                  // upper case (the file-name map is the same)
+    b.ne 2f
+    cmp x1, #128
+    b.ne 9f
+    address x1, nls_upper_data
+    mov x2, #128
+    bl copy_bytes
+    b 9f
+2:
+    cmp x2, #5                  // file-name characters
+    b.ne 3f
+    cmp x1, #NLS_TABLE_ROOM
+    b.hi 9f
+    address x9, nls_file_chars
+    strh w1, [x9]
+    mov x2, x1
+    add x1, x9, #2
+    bl copy_bytes
+    b 9f
+3:
+    cmp x2, #6                  // collating sequence
+    b.ne 4f
+    cmp x1, #256
+    b.ne 9f
+    address x1, nls_collate_data
+    mov x2, #256
+    bl copy_bytes
+    b 9f
+4:
+    cmp x2, #7                  // DBCS lead-byte ranges and their 0,0 end
+    b.ne 9f
+    cmp x1, #NLS_TABLE_ROOM - 2
+    b.hi 9f
+    address x9, nls_dbcs_table
+    strh w1, [x9]
+    add x2, x1, #2
+    add x1, x9, #2
+    bl copy_bytes
+9:
+    unframe
+
+// x0 = address: little-endian u16 / u32 at any alignment.
+nls_u16:
+    ldrb w1, [x0]
+    ldrb w2, [x0, #1]
+    orr w0, w1, w2, lsl #8
+    ret
+nls_u32:
+    ldrb w1, [x0]
+    ldrb w2, [x0, #1]
+    orr w1, w1, w2, lsl #8
+    ldrb w2, [x0, #2]
+    orr w1, w1, w2, lsl #16
+    ldrb w2, [x0, #3]
+    orr w0, w1, w2, lsl #24
+    ret
+
 .section .rodata
 .balign 4
 // Country records adapted from COUNTRY.SYS (MKCNTRY.ASM), code page 437:
@@ -288,6 +522,12 @@ nls_countries:
     .byte 1,0,36,0,0,0,0,44,0,46,0,45,0,58,0,0,2,0,0,0,0,0,44,0,0,0,0,0,0,0,0,0,0,0
     .byte 0, 0
     .short 0, 0
+.section .data
+.balign 4
+// The country loaded from COUNTRY.SYS (country 0: none), as above.
+nls_loaded: .skip 40
+nls_code_page: .quad 437
+nls_system_code_page: .quad 437
 .balign 2
 // UCASE_TAB / FILE_UCASE_TAB: u16 length, then characters 80h-FFh.
 nls_upper_table:
@@ -309,6 +549,7 @@ nls_file_chars:
     .byte 0, 0, 0x20
     .byte 2, 14
     .ascii ".\"/\\[]:|<>+=;,"
+    .skip NLS_TABLE_ROOM - 22
 .balign 2
 // COLLATE_TAB: sort weights for all 256 characters.
 nls_collate_table:
@@ -334,8 +575,11 @@ nls_collate_data:
 // DBCS_TAB: no lead-byte ranges in code page 437.
 nls_dbcs_table:
     .short 0
-    .skip 16
+    .skip NLS_TABLE_ROOM
 
 .section .bss
 .balign 8
 dos_country_code: .skip 8
+nls_file: .skip 128             // COUNTRY.SYS found at boot ("" if none)
+.balign 16
+nls_buffer: .skip NLS_FILE_MAX

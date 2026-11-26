@@ -94,7 +94,7 @@ binary's table matches this list.
 | `34h` | None | `x0` InDOS byte, `x2` critical-error byte (both 0 while a program runs) |
 | `36h` | `x0` drive (0 default, 1 A:) | `x0` unit bytes, `x2` free units, `x3` total units |
 | `37h` | `x0` 0 get / 1 set (`x1`) / 2 / 3 | `x2` switch character (`/`); AVAILDEV `x2=FFh` |
-| `38h` | `x0` 34-byte buffer, `x1` country (0 current) | Country information; `x0=0` selects country `x1`. `x0=x2` country |
+| `38h` | `x0` 34-byte buffer, `x1` country (0 current) | Country information; `x0=0` selects country `x1` (loaded from COUNTRY.SYS if not built in). `x0=x2` country |
 | `39h`, `3Ah`, `3Bh` | `x0` path | Create/remove/change directory |
 | `3Ch` | `x0` path, `x1` R/H/S/A attributes | Create/truncate; `x0` handle |
 | `3Dh` | `x0` path, `x1` open mode | `x0` handle. Mode bits 0–2 access, 4–6 sharing, 7 not inherited (below) |
@@ -126,9 +126,9 @@ binary's table matches this list.
 | `5Dh` | `x0` subfunction | 01h commit all; 06h `x0` swappable data area, `x2` size; 0Ah set extended error (`x1` code, `x2` class, `x3` action, `x4` locus); others need a network (error 1) |
 | `5Eh`, `5Fh` | `x0` subfunction | No network: `5E00h` returns `x2=0`; `5F02h` returns error 18; others error 1 |
 | `60h` | `x0` path, `x1` 128-byte buffer | TRUENAME: `A:\DIR\FILE` upper case, `A:/NUL` for devices |
-| `63h` | `x0` subfunction | 0: `x0` empty lead-byte table (no DBCS in code page 437) |
+| `63h` | `x0` subfunction | 0: `x0` the lead-byte ranges of the code page (empty for 437 and 850) |
 | `65h` | `x0` id, `x1` code page, `x2` country, `x3` buffer, `x4` size | Extended country information and case mapping (below) |
-| `66h` | `x0` 1 get / 2 set, `x1` code page | `x2` active, `x3` system code page: 437 only |
+| `66h` | `x0` 1 get / 2 set, `x1` code page | `x2` active, `x3` system code page; set loads the current country's tables in that code page from COUNTRY.SYS (error 2 if it has none) |
 | `67h` | `x0` handle count | Up to 32 per process; more returns error 8 |
 | `68h`, `6Ah` | `x0` handle | Flush/commit (no-op success on a read-only handle) |
 | `69h` | `x0` 0 get / 1 set, `x1` drive, `x2` 25-byte buffer | Media ID: u16 level 0, u32 serial, 11-byte label, 8-byte file system type (from the boot record) |
@@ -216,8 +216,16 @@ The 38h block is 34 bytes: u16 date format (0 M/D/Y, 1 D/M/Y, 2 Y/M/D),
 currency symbol (5 bytes), thousands, decimal, date and time separators
 (2 bytes each), currency format, currency digits, time format (0 12-hour,
 1 24-hour), four zero bytes where DOS kept a far case-map pointer, data-list
-separator, ten reserved bytes. Countries: 1, 3, 31, 32, 33, 34, 39, 41, 44,
-46, 49, 61 and 358, all code page 437 (data from COUNTRY.SYS).
+separator, ten reserved bytes. Built in (code page 437): 1, 3, 31, 32, 33,
+34, 39, 41, 44, 46, 49, 61 and 358.
+
+`\COUNTRY.SYS` is the DOS 4.0 file, assembled at build time from
+`v4.0/src/DEV/COUNTRY/MKCNTRY.ASM` by `tools/mkcntry.py`: 46 country and code
+page pairs (437, 850, 860, 862-865 and the DBCS pages 932-938) with their
+country information, case maps, file-name characters, collating sequences
+and DBCS tables. `COUNTRY=nnn[,cp][,file]` loads from it (default
+`A:\COUNTRY.SYS`; without the file the built-in records are used), and `66h`
+(`CHCP`) and `38h` reload from it as NLSFUNC did.
 
 `65h` ids: 01h returns id, u16 size 38, u16 country, u16 code page and the 34
 bytes (41 bytes, truncated to `x4`); 02h upper case, 04h file-name upper case,
@@ -230,7 +238,7 @@ string (`x1`); 23h classifies `x1` as 0 no, 1 yes, 2 neither.
 
 `\CONFIG.SYS` is read once at boot, before `AUTOEXEC.BAT`. Keywords:
 `BREAK=ON|OFF`, `BUFFERS=n` (1–99; up to 32 4 KiB sector buffers are cached,
-the value is reported by `52h`), `COUNTRY=nnn` (as `38h`), `DEVICE=path [args]`,
+the value is reported by `52h`), `COUNTRY=nnn[,cp][,file]` (from COUNTRY.SYS, below), `DEVICE=path [args]`,
 `FCBS=` and `STACKS=` (accepted; no fixed tables to size), `FILES=n` (8–255,
 open files at once, at most 64; the standard devices use no entries),
 `INSTALL=path [args]` (run after every driver has loaded), `LASTDRIVE=x`,

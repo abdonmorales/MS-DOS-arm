@@ -68,7 +68,11 @@ upper = $(shell echo $(1) | tr a-z A-Z)
 PROGRAM_NAMES := $(patsubst programs/%.S,%,$(wildcard programs/*.S))
 DRIVER_NAMES := $(patsubst drivers/%.S,%,$(wildcard drivers/*.S))
 PAYLOADS := $(foreach p,$(PROGRAM_NAMES),$(BUILD)/$(call upper,$(p)).EXE) \
-	$(foreach p,$(DRIVER_NAMES),$(BUILD)/$(call upper,$(p)).SYS)
+	$(foreach p,$(DRIVER_NAMES),$(BUILD)/$(call upper,$(p)).SYS) $(BUILD)/COUNTRY.SYS
+
+# COUNTRY.SYS is data: the DOS 4.0 file assembled from MKCNTRY.ASM.
+$(BUILD)/COUNTRY.SYS: ../v4.0/src/DEV/COUNTRY/MKCNTRY.ASM ../v4.0/src/DEV/COUNTRY/MKCNTRY.INC tools/mkcntry.py | $(BUILD)
+	$(PYTHON) tools/mkcntry.py $< $@
 
 $(BUILD)/%.o: programs/%.S programs/lib.inc programs/fatlib.inc programs/cds.inc programs/sysxfer.inc programs/diskdrv.inc programs/backup.inc | $(BUILD)
 	$(AS) -march=armv8-a -g -I programs -o $@ $<

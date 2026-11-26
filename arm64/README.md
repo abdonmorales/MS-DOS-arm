@@ -73,7 +73,11 @@ The utilities from `v4.0/src/CMD` are separate native programs on the image:
 `RECOVER`, `REPLACE`, `RESTORE`, `SORT`, `SUBST`, `SYS`, `TREE` and `XCOPY`.
 The `CONFIG.SYS` fixture loads `RAMDRIVE.SYS` twice and `VDISK.SYS` once, so
 drives B:, C: and D: are RAM disks for the multi-drive tools (`B:` switches
-drive, as in DOS).
+drive, as in DOS). It also loads `ANSI.SYS` (DOS escape sequences, cursor
+reports and key reassignment over the serial terminal) and `PRINTER.SYS`
+(PRN to the serial line). `COUNTRY.SYS`, assembled from the original
+`MKCNTRY.ASM`, gives `COUNTRY=` and `CHCP` the DOS 4.0 countries and code
+pages.
 
 Paths support quotes, relative components, `.`/`..`, drive letters, and DOS device
 names (`CON`, `AUX`, `PRN`, `NUL`, `CLOCK$`). `DIR` prints the DOS 4.0 layout
@@ -243,9 +247,8 @@ not been fully translated. In native mode no UEFI boot service is used after
 startup; UEFI runtime services are used only for power-off.
 
 The complete MS-DOS 4.0 rewrite remains unfinished; [PORT_STATUS.md](PORT_STATUS.md)
-tracks it. Outstanding work is the remaining historical drivers (ANSI,
-COUNTRY, PRINTER), native drivers for boards other than QEMU `virt`, and
-physical hardware bring-up. The checked-in historical source archives
+tracks it. Outstanding work is native drivers for boards other than QEMU
+`virt` and physical hardware bring-up. The checked-in historical source archives
 remain x86 assembly. All-model native Apple Silicon support also remains unmet
 because required boot-stack/driver support and hardware validation are absent.
 These image snapshots are development artifacts, with incomplete status recorded

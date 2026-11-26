@@ -263,21 +263,96 @@ config_accept:
     bl config_number
     unframe
 
-// COUNTRY=nnn[,[cp][,file]]
+// COUNTRY=nnn[,[cp][,file]]: the country's tables come from COUNTRY.SYS
+// (default \COUNTRY.SYS on the boot drive). Without that file the built-in
+// code page 437 records are used.
 config_country:
-    frame
+    enter
+    mov x19, x0
     bl config_number
-    cbnz x1, 1f
-    mov x1, x0
+    cbnz x1, 8f
+    mov x20, x0                 // country
+    mov x21, #0                 // code page
+    address x22, config_country_file
+1:
+    ldrb w2, [x19]
+    cbz w2, 4f
+    add x19, x19, #1
+    cmp w2, #','
+    b.ne 1b
+    ldrb w2, [x19]
+    cmp w2, #','
+    b.eq 2f
+    cbz w2, 4f
+    mov x0, x19
+    bl config_number
+    cbnz x1, 8f
+    mov x21, x0
+2:
+    ldrb w2, [x19]              // the file after the second comma
+    cbz w2, 4f
+    add x19, x19, #1
+    cmp w2, #','
+    b.ne 2b
+    mov x0, x19
+    bl skip_blanks
+    ldrb w2, [x0]
+    cbz w2, 4f
+    address x1, nls_file
+    bl config_copy_word
+    mov x23, #1                 // named: it must load
+    b 5f
+4:
+    address x0, config_country_file
+    address x1, nls_file
+    bl config_copy_word
+    mov x23, #0
+5:
+    mov x0, x20
+    mov x1, x21
+    address x2, nls_file
+    bl nls_load
+    cbnz x1, 6f
+    address x9, nls_code_page
+    ldr x2, [x9]
+    address x9, nls_system_code_page
+    str x2, [x9]
+    b 9f
+6:
+    cmp x0, #2
+    b.ne 8f
+    address x9, nls_file        // no COUNTRY.SYS: the built-in records
+    strb wzr, [x9]
+    cbnz x23, 8f
+    cbz x21, 7f
+    cmp x21, #437
+    b.ne 8f
+7:
+    mov x1, x20
     mov x0, #0
     bl dos_country
-    cbz x1, 2f
-1:
+    cbz x1, 9f
+8:
     address x0, config_bad_country
     bl puts
-2:
+9:
     mov x1, #0
-    unframe
+    leave
+
+// x0 = text, x1 = 128-byte output: copies one word (to a blank or the end).
+config_copy_word:
+    mov x2, #0
+1:
+    ldrb w3, [x0, x2]
+    cmp w3, #' '
+    b.ls 2f
+    strb w3, [x1, x2]
+    add x2, x2, #1
+    cmp x2, #127
+    b.lo 1b
+2:
+    strb wzr, [x1, x2]
+    ret
 
 // LASTDRIVE=x (A-Z)
 config_lastdrive_set:
@@ -526,6 +601,7 @@ config_bad_device: .asciz "Bad or missing "
 config_driver_failed: .asciz "Device driver did not install: "
 config_bad_program: .asciz "Bad or missing program: "
 config_bad_country: .asciz "Invalid country code or code page\r\n"
+config_country_file: .asciz "A:\\COUNTRY.SYS"
 comspec_name: .asciz "COMSPEC"
 kernel_image_path: .asciz "\\EFI\\BOOT\\BOOTAA64.EFI"
 command_com: .asciz "COMMAND.COM"
