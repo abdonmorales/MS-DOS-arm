@@ -657,6 +657,13 @@ lr_init:
     str xzr, [x0, #16]          // length
     ret
 
+// x0 = reader: ^Z is ordinary text from now on (EDLIN /B).
+lr_binary:
+    ldr x1, [x0]
+    orr x1, x1, #(1 << 63)
+    str x1, [x0]
+    ret
+
 // x0 = reader, x1 = destination, x2 = capacity. Reads one line without its
 // CR/LF. Returns x0 = length, x1 = 0, or x1 = 1 at end of file (nothing
 // read). A ^Z ends the text. Overlong lines are split.
@@ -673,6 +680,7 @@ lr_getline:
     cmp x2, x3
     b.lo 2f
     ldr x0, [x19]
+    and x0, x0, #0xffffffff     // bit 63: binary (lr_binary)
     add x1, x19, #24
     mov x2, #4096
     dos 0x3f
@@ -687,14 +695,21 @@ lr_getline:
     add x2, x2, #1
     str x2, [x19, #8]
     cmp w5, #0x1a
-    b.eq 7f
+    b.ne 21f
+    ldr x6, [x19]
+    tbz x6, #63, 7f
+21:
     mov x23, #1
     cmp w5, #10
     b.eq 9f
     cmp w5, #13
     b.eq 1b
     cmp x22, x21
-    b.hs 9f
+    b.lo 3f
+    sub x2, x2, #1              // full: the byte starts the next piece
+    str x2, [x19, #8]
+    b 9f
+3:
     strb w5, [x20, x22]
     add x22, x22, #1
     b 1b
@@ -712,6 +727,19 @@ lr_getline:
     mov x0, x22
     mov x1, #0
     leave
+
+// Directory walkers call this when a tree is deeper than they can follow:
+// says so once.
+depth_note:
+    frame
+    address x9, depth_noted
+    ldr x10, [x9]
+    cbnz x10, 1f
+    mov x10, #1
+    str x10, [x9]
+    say "Directory tree too deep: deeper levels were skipped\r\n"
+1:
+    unframe
 
 // x0 = question text. Reads Y or N; returns x0 = 1 for yes.
 ask_yn:
@@ -988,4 +1016,5 @@ lib_error_table:
 lib_descriptor: .skip 8
 lib_dos: .skip 8
 lib_split_char: .skip 8
+depth_noted: .skip 8
 .section .text

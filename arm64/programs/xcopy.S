@@ -176,6 +176,43 @@ main:
     add x1, x23, #L_DST
     strb wzr, [x1]
 9:
+    // /S into the source tree would copy forever (CHK_CYCLIC_COPY).
+    tbz x20, #4, 91f
+    add x0, x23, #L_SRC
+    address x1, true_src
+    bl truename_dir
+    add x0, x23, #L_DST
+    address x1, true_dst
+    bl truename_dir
+    address x0, true_src
+    bl strlen
+    mov x2, x0
+    address x3, true_src
+    address x4, true_dst
+    mov x5, #0
+92:
+    cmp x5, x2
+    b.hs 93f
+    ldrb w6, [x3, x5]
+    ldrb w7, [x4, x5]
+    cmp w6, w7
+    b.ne 91f
+    add x5, x5, #1
+    b 92b
+93:
+    ldrb w7, [x4, x5]           // equal, or a subdirectory of the source
+    cbz w7, 94f
+    cmp w7, #'\\'
+    b.eq 94f
+    sub x5, x5, #1
+    ldrb w6, [x3, x5]
+    cmp w6, #'\\'                // the source is a root ("A:\")
+    b.ne 91f
+94:
+    say "Cannot perform a cyclic copy\r\n"
+    mov x0, #4
+    bl exit
+91:
     tbz x20, #5, 10f            // /W
     say "Press any key to begin copying file(s)"
     dos 0x08
@@ -355,7 +392,10 @@ walk:
 6:
     tbz x21, #4, 9f             // /S
     cmp x19, #MAX_DEPTH - 1
-    b.hs 9f
+    b.lo 7788f
+    bl depth_note               // deeper directories are skipped, not lost
+    b 9f
+7788:
     add x0, x20, #L_SRC
     address x1, star_star
     address x2, spath
@@ -577,7 +617,18 @@ stop:
 9:
     leave
 
+// x0 = directory ("" = current), x1 = 128-byte buffer: its true name.
+truename_dir:
+    frame
+    ldrb w2, [x0]
+    cbnz w2, 1f
+    address x0, dot_dir
+1:
+    dos 0x60
+    unframe
+
 .section .rodata
+dot_dir: .asciz "."
 switch_letters: .asciz "AEMPSW"
 star_star: .asciz "*.*"
 yes_no: .asciz " (Y/N)?"
@@ -599,4 +650,6 @@ truename1: .skip 128
 truename2: .skip 128
 .balign 16
 levels: .skip LEVEL * MAX_DEPTH
+true_src: .skip 128
+true_dst: .skip 128
 buffer: .skip BUF_SIZE

@@ -453,6 +453,8 @@ restore_file:
     mov x24, x0                 // part number
     cmp x24, #1
     b.hi 20f
+    address x9, part1_restored  // only its own later parts may follow
+    strb wzr, [x9]
     // The first part: does the file exist already?
     mov x0, x23
     mov x1, #0
@@ -510,9 +512,17 @@ restore_file:
     dos 0x3c
     cbnz x1, 98f
     mov x25, x0
+    mov x0, x23
+    address x1, part1_restored
+    bl strcpy
     b 30f
 20:
-    // A later part continues the file.
+    // A later part continues the file, if its first part was restored
+    // (not skipped by /P, /N, /M or a selection).
+    mov x0, x23
+    address x1, part1_restored
+    bl strcmpi
+    cbnz x0, 99f
     mov x0, x23
     mov x1, #1
     dos 0x3d
@@ -727,6 +737,7 @@ star_star: .asciz "*.*"
 read_only_text: .asciz "\r\nis a read-only file\r\nReplace the file (Y/N)?"
 changed_text: .asciz "\r\nwas changed after it was backed up\r\nReplace the file (Y/N)?"
 .section .bss
+part1_restored: .skip 256
 .balign 8
 options: .skip 8
 source: .skip 8

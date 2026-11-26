@@ -75,8 +75,10 @@ recover_file:
     bl fl_set
     b 4f
 2:
-    strh w26, [x20, #26]        // the file now starts at the next unit
-    lsr x2, x26, #16
+    cmp x26, x25                // the file now starts at the next unit,
+    csel x2, xzr, x26, hs       // or at none (0) when that was the end
+    strh w2, [x20, #26]
+    lsr x2, x2, #16
     strh w2, [x20, #20]
     b 4f
 3:

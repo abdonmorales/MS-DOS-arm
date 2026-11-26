@@ -190,12 +190,20 @@ load_lines:
     add x1, x20, x23
     mov x2, #TEXT_SIZE - 2
     sub x2, x2, x23
-    cbz x2, 2f
+    cbz x2, 21f                 // full: is there more?
     bl fread
     cbnz x1, 2f
     cbz x0, 2f
     add x23, x23, x0
     b 1b
+21:
+    mov x0, x22
+    address x1, probe_byte
+    mov x2, #1
+    bl fread
+    cbnz x1, 2f
+    cbz x0, 2f
+    bl too_long
 2:
     mov x0, x22
     bl fclose
@@ -209,7 +217,10 @@ load_lines:
     cmp w2, #0x1a
     b.eq 8f
     cmp x24, #MAX_LINES
-    b.hs 8f
+    b.lo 31f
+    bl too_long
+    b 8f
+31:
     add x2, x20, x25
     str x2, [x21, x24, lsl #3]
     add x24, x24, #1
@@ -241,6 +252,17 @@ load_lines:
 9:
     mov x1, #1
     leave
+
+// x19 = the file being loaded: it does not fit, so only its start is
+// compared. Said plainly rather than reporting a false match.
+too_long:
+    frame
+    say "WARNING: "
+    mov x0, x19
+    bl puts
+    say " is too long for a text compare; only the first 8192 lines\r\n"
+    say "or 128K are compared (use /B for the whole file)\r\n"
+    unframe
 
 // x0, x1 = line indexes into lines1/lines2. Returns x0 = 1 if equal
 // (honouring /C and /W).
@@ -629,6 +651,7 @@ binary_types:
     .asciz ".BIN"
     .byte 0
 .section .bss
+probe_byte: .skip 8
 .balign 8
 opt_flags: .skip 8
 opt_resync: .skip 8

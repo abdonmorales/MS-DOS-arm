@@ -223,7 +223,10 @@ walk:
     ldr x2, [x9]
     cbz x2, 9f
     cmp x19, #MAX_DEPTH - 1
-    b.hs 9f
+    b.lo 7788f
+    bl depth_note               // deeper directories are skipped, not lost
+    b 9f
+7788:
     add x0, x20, #L_DIR
     address x1, star_star
     address x2, path

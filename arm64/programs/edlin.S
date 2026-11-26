@@ -57,6 +57,10 @@ main:
     bl read_lines_into
     mov x0, x20
     bl fclose
+    address x9, load_partial
+    ldr x10, [x9]
+    address x9, partial_load
+    str x10, [x9]
     say "End of input file\r\n"
 command_loop:
     mov x0, #'*'
@@ -380,10 +384,27 @@ read_lines_into:
     enter
     mov x19, x1
     mov x20, #0
+    mov x21, x0
     mov x1, x0
     address x0, reader
     bl lr_init
+    address x9, binary_mode     // /B: ^Z does not end the text
+    ldr x9, [x9]
+    cbz x9, 1f
+    address x0, reader
+    bl lr_binary
 1:
+    // The file offset of the next line: where a partial load stops.
+    mov x0, x21
+    mov x1, #0
+    mov x2, #1
+    bl fseek
+    address x9, reader
+    ldp x10, x11, [x9, #8]      // position, length
+    sub x11, x11, x10
+    sub x0, x0, x11
+    address x9, load_offset
+    str x0, [x9]
     address x0, reader
     address x1, scratch
     mov x2, #LINE_MAX + 1
@@ -400,6 +421,9 @@ read_lines_into:
     b 1b
 3:
     say "Insufficient memory\r\n"
+    address x9, load_partial    // the initial load: E copies the rest
+    mov x10, #1
+    str x10, [x9]
 2:
     mov x0, x20
     leave
@@ -986,7 +1010,13 @@ do_end:
     address x0, backup_name
     address x1, file_name
     bl strcmpi
-    cbz x0, 2f                  // editing a .BAK file: no backup
+    cbnz x0, 1f                 // editing a .BAK file: no backup, so a
+    address x9, partial_load    // partial load has nowhere to copy from
+    ldr x9, [x9]
+    cbz x9, 2f
+    say "Cannot end a partly loaded .BAK file\r\n"
+    b done
+1:
     address x0, backup_name
     dos 0x41
     address x0, file_name
@@ -1014,21 +1044,88 @@ do_end:
     mov x2, x0
     mov x1, x26
     mov x0, x23
-    bl fwrite
+    bl write_checked
     mov x0, x23
     address x1, crlf_bytes
     mov x2, #2
-    bl fwrite
+    bl write_checked
     add x25, x25, #1
     b 4b
 5:
+    // A partial load: the lines never read follow, from the original
+    // (now NAME.BAK).
+    address x9, partial_load
+    ldr x9, [x9]
+    cbz x9, 7f
+    address x0, backup_name
+    mov x1, #0
+    bl fopen
+    cbnz x1, 7f
+    mov x24, x0
+    address x9, load_offset
+    ldr x1, [x9]
+    mov x2, #0
+    bl fseek
+    mov x25, #0
+6:
+    mov x0, x24
+    address x1, scratch
+    mov x2, #1024
+    bl fread
+    cbnz x1, 61f
+    cbz x0, 61f
+    mov x2, x0
+    address x9, binary_mode     // text ends at ^Z
+    ldr x9, [x9]
+    cbnz x9, 62f
+    address x1, scratch
+    mov x3, #0
+63:
+    ldrb w4, [x1, x3]
+    cmp w4, #0x1a
+    b.eq 64f
+    add x3, x3, #1
+    cmp x3, x2
+    b.lo 63b
+    b 62f
+64:
+    mov x2, x3
+    mov x25, #1                 // stop after this piece
+62:
+    mov x0, x23
+    address x1, scratch
+    bl write_checked
+    cmp x25, #1
+    b.ne 6b
+61:
+    mov x0, x24
+    bl fclose
+7:
     mov x0, x23
     address x1, eof_byte
     mov x2, #1
-    bl fwrite
+    bl write_checked
     mov x0, x23
     bl fclose
     mov x0, #0
+    bl exit
+
+// x0 = handle, x1 = data, x2 = count: a short write ends EDLIN (errorlevel 1).
+write_checked:
+    frame
+    str x19, [sp, #-16]!
+    mov x19, x2
+    cbz x19, 1f
+    bl fwrite
+    cbnz x1, 2f
+    cmp x0, x19
+    b.lo 2f
+1:
+    ldr x19, [sp], #16
+    unframe
+2:
+    say "Disk full. Edits lost.\r\n"
+    mov x0, #1
     bl exit
 
 do_quit:
@@ -1047,6 +1144,9 @@ eof_byte: .byte 0x1a
 .section .bss
 .balign 8
 binary_mode: .skip 8
+partial_load: .skip 8
+load_partial: .skip 8
+load_offset: .skip 8
 new_file: .skip 8
 line_count: .skip 8
 current: .skip 8
