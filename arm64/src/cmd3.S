@@ -672,10 +672,15 @@ copy_file:
     address x1, copy_canon_a
     bl canonicalize_path
     cbnz x1, cf_error
+    ldv x26, canonical_drive
     mov x0, x20
     address x1, copy_canon_b
     bl canonicalize_path
     cbnz x1, cf_error
+    ldv x2, canonical_drive     // the same path on another drive differs
+    cmp x2, x26
+    mov x26, #0
+    b.ne 1f
     address x0, copy_canon_a
     address x1, copy_canon_b
     bl strcasecmp
@@ -1276,7 +1281,13 @@ dir_end:
     bl puts
     leave
 dir_not_found:
+    cmp x0, #15
+    b.eq 1f
     address x0, c3_file_not_found
+    bl puts
+    leave
+1:
+    address x0, invalid_drive_message
     bl puts
     leave
 dir_bad_switch:

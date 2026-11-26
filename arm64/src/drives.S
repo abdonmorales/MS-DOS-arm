@@ -208,6 +208,11 @@ canonicalize_path:
     ldrb w5, [x3, x4]
     cbz w5, 62f
     ldrb w6, [x20, x4]
+    sub w7, w6, #'a'            // FAT names compare without case
+    cmp w7, #26
+    b.hs 611f
+    sub w6, w6, #32
+611:
     cmp w5, w6
     b.ne 69f
     add x4, x4, #1

@@ -286,6 +286,10 @@ dos_list_of_lists:
     str x1, [x9, #112]
     mov x1, #ENV_SIZE
     str x1, [x9, #120]
+    address x1, drive_table     // the CDS: SUBST, JOIN and ASSIGN edit it
+    str x1, [x9, #128]
+    mov x1, #DRIVES
+    str x1, [x9, #136]
     mov x0, x9
     mov x1, #0
     unframe
@@ -724,4 +728,4 @@ ioctl_return:
 .section .bss
 .balign 16
 dos_dpb: .skip 64
-dos_sysvars: .skip 128
+dos_sysvars: .skip 144
