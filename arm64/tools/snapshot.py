@@ -46,12 +46,19 @@ def main():
     if (record['iso_test'] != 'pass' or record['sha256'] != digest(iso) or
             record['source_files_sha256'] != report['source_files_sha256']):
         raise SystemExit('ISO bytes or test mismatch: run make iso-test')
-    output = args.output / 'armdos.iso.xz'
-    with iso.open('rb') as raw, lzma.open(output, 'wb', preset=6) as compressed:
-        shutil.copyfileobj(raw, compressed)
+    # Published uncompressed so it can be downloaded and booted (or attached
+    # to a VM) as-is. It is ~31 MiB, well under GitHub's 100 MiB file limit.
+    if iso.stat().st_size >= 100 * 1024 * 1024:
+        raise SystemExit('ISO is over GitHub\'s 100 MiB file limit')
+    output = args.output / 'armdos.iso'
+    shutil.copyfile(iso, output)
+    if digest(output) != record['sha256']:
+        raise SystemExit('Copied ISO does not match the tested bytes')
     (args.output / 'armdos.iso.sha256').write_text(f"{record['sha256']}  armdos.iso\n")
-    (args.output / 'armdos.iso.xz.sha256').write_text(f'{digest(output)}  {output.name}\n')
-    print(f'{output}: {output.stat().st_size} compressed bytes')
+    # Drop the old compressed form so a stale .iso.xz is never left beside it.
+    for stale in ('armdos.iso.xz', 'armdos.iso.xz.sha256'):
+        (args.output / stale).unlink(missing_ok=True)
+    print(f'{output}: {output.stat().st_size} bytes')
     shutil.copyfile(args.build / 'validation.json', args.output / 'validation.json')
 
 

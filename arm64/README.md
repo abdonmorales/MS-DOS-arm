@@ -244,8 +244,8 @@ over two mounts, and must pass `fsck.fat -n` and match an mtools read-back.
 
 Both images include `EFI/BOOT/BOOTAA64.EFI`, `NATIVE.EXE`, `DOSTEST.EXE`, batch fixtures,
 `ARMTEST.TXT`, a SHA-256 sidecar and a JSON manifest. The manifests record that physical hardware is
-unverified (`complete_msdos_port` stays false until a real Pi 3 boots). Raw build products are ignored by Git. Compressed, validated image snapshots
-and their checksums are published in [images](images/README.md) on the `arm` branch.
+unverified (`complete_msdos_port` stays false until a real Pi 3 boots). Raw build products are ignored by Git. Validated snapshots (compressed disk
+images and the uncompressed live ISO) and their checksums are published in [images](images/README.md) on the `arm` branch.
 
 ## Live ISO and INSTALL
 
