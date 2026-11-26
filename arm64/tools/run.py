@@ -24,7 +24,9 @@ def main():
            '-m', '256', '-bios', str(args.firmware.resolve()),
            '-drive', f'file={args.image.resolve()},format=raw,if=none,id=dos',
            '-device', 'virtio-blk-pci,drive=dos', '-nographic', '-net', 'none',
-           '-no-reboot']
+           '-no-reboot',
+           # EDK2 otherwise waits out a hidden boot-menu timeout (~5 s).
+           '-boot', 'menu=on,splash-time=0']
     raise SystemExit(subprocess.call(cmd))
 
 
