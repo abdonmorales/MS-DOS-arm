@@ -1,8 +1,23 @@
-# MS-DOS 4.0 AArch64 development port
+# ARM DOS
 
-The `arm` branch adds a **partial native AArch64 port**, written in ARM64
-assembly. It is not a completed conversion of MS-DOS 4.0. The historical source
-archives stay intact as the reference for further migration.
+**ARM DOS** is MS-DOS 4.0 ported natively to 64-bit ARM (AArch64), written in
+ARM64 assembly. The kernel, COMMAND, `CONFIG.SYS`, the DOS function set, the
+`v4.0/src/CMD` utilities and the `v4.0/src/DEV` drivers are re-implemented
+with the same commands, behaviour and on-disk formats; the historical x86
+sources in this repository are the reference it was ported from and stay
+unchanged.
+
+What to expect:
+
+- **x86 programs do not run.** ARM DOS runs native AArch64 programs (PE32+
+  `.EXE` files built against [ABI.md](ABI.md)) and batch files. There is no x86
+  emulator, by design.
+- **QEMU `virt` (and Apple Silicon Macs under QEMU/HVF) is fully supported and
+  tested**, natively (the kernel leaves UEFI and drives the hardware itself) and
+  in firmware mode.
+- **A real Raspberry Pi 3 has not been booted yet.** Its native drivers pass
+  their tests on QEMU's `raspi3b` model; only a physical board can confirm them
+  (see [PORT_STATUS.md](PORT_STATUS.md), milestone 8).
 
 UEFI is only the boot loader. At startup the kernel finds its console UART
 (ACPI SPCR) and its boot disk (ACPI MCFG, PCI ECAM, virtio-blk), reserves its
@@ -16,9 +31,8 @@ native drivers too (PL011 or mini UART console, SD card on the Arasan SDHCI,
 `src/sdhci.S`), tested bare metal on QEMU's `raspi3b` model by
 `make -C arm64 pi-test`; since they have not run on a physical board yet, the
 Pi uses them only when the card's FAT volume has a file named `NATIVE.ON`, and
-otherwise stays in firmware mode. See
-[PORT_STATUS.md](PORT_STATUS.md) for what remains.
-It contains no Linux guest, x86 interpreter, or x86 executable emulation.
+otherwise stays in firmware mode. It contains no Linux guest, x86 interpreter,
+or x86 executable emulation.
 
 ## Build and run
 
@@ -57,9 +71,12 @@ python3 arm64/tools/run.py arm64/build/msdos-arm64.img --firmware /path/to/QEMU_
 
 The runner chooses QEMU's `hvf` accelerator and `host` CPU on Apple Silicon
 macOS, or `tcg` and Cortex-A72 elsewhere. The cloud validation used TCG on x86_64;
-HVF was tested on an Apple M3 Pro (macOS 27.2, QEMU 11.1 from Homebrew, its `edk2-aarch64-code.fd`): `make smoke` passes all 255 checks in native mode and 253 in firmware mode, with the same output as TCG. UTM has not been tested. UTM can use an ARM64 VM with UEFI firmware
+HVF was tested on an Apple M3 Pro (macOS 27.2, QEMU 11.1 from Homebrew, its `edk2-aarch64-code.fd`): `make smoke` passed all its checks in native and firmware mode, with the same output as TCG. UTM has not been tested. UTM can use an ARM64 VM with UEFI firmware
 and the raw disk as a writable VirtIO drive. This image requires a writable FAT
 volume for its boot self-test.
+
+The disk image files keep their original names (`msdos-arm64.img`,
+`msdos-arm64-pi3.img`).
 
 Commands: `HELP`, `VER`, `ECHO`, `CLS`, `DIR`, `TYPE`, `DEL`/`ERASE`,
 `CD`/`CHDIR`, `MD`/`MKDIR`, `RD`/`RMDIR`, `COPY`, `REN`/`RENAME`,
@@ -93,7 +110,7 @@ keep their date and time. `DEL` takes wildcards and `/P`, and asks
 `Are you sure (Y/N)?` for `*.*`; `REN` takes templates (`REN *.TXT *.OLD`). Long
 ASCII filenames are read and written as VFAT long-name entries and shown whole
 by `DIR`. Redirection supports `<`, `>`, `>>`, and pipes (`a | b`) run through
-temporary files in the root, as COMMAND did. `2>` is not a DOS 4.0 feature.
+temporary files (`\%PIPEdn.$$$`) in the root, as COMMAND did. `2>` is not a DOS 4.0 feature.
 
 `\CONFIG.SYS` is processed at boot: `BREAK`, `BUFFERS`, `COUNTRY`, `DEVICE`,
 `FCBS`, `FILES`, `INSTALL`, `LASTDRIVE`, `REM`, `SHELL` and `STACKS`. `DEVICE=`
@@ -103,11 +120,14 @@ loads native AArch64 character drivers (`.SYS` PE32+ images; see
 The environment holds `COMSPEC`, `PATH`, `PROMPT` and anything set with `SET`;
 it is passed to every program (descriptor +40). `PROMPT` supports `$P $G $L $B
 $Q $$ $E $H $N $_ $D $T $V`. Batch files support `%0`–`%9`, `%*`, `%%`,
-`%NAME%` environment expansion, `%ERRORLEVEL%`, `ECHO ON/OFF` (restored when the
+`%NAME%` environment expansion (in batch files only, as in COMMAND 4.0), `%ERRORLEVEL%`, `ECHO ON/OFF` (restored when the
 batch ends), `ECHO.`, `@`, `REM`, `CALL`, `GOTO`, `SHIFT`,
 `FOR %%v IN (set) DO command` (with wildcards in the set),
 `IF [NOT] EXIST/ERRORLEVEL/string1==string2`, `PAUSE`, and `EXIT /B`. Commands
-are limited to 255 bytes and nesting to 16 scripts. `DATE` and `TIME` show the
+are limited to 255 bytes and `CALL` nesting to 16 scripts; a batch file started
+from another without `CALL` replaces it, so restart loops run indefinitely.
+Internal command names end at `= / + ; , . \\ " [` as in COMMAND (`cd..`,
+`dir/w`, `echo.text`). `DATE` and `TIME` show the
 clock in the country's format and prompt for a new value. `EXIT` powers the
 machine off in native mode (the firmware is gone) and returns to UEFI in
 firmware mode.
@@ -119,7 +139,7 @@ years and rollover, native and nested process loading, termination, and parent
 handle preservation. Reserved scratch names are `ARMCHK.TMP`, `ARMFCB.TMP` and
 `ARMAPI.TMP` (a directory). The test refuses to overwrite existing objects with
 those names and restores the starting directory. Smoke tests boot a temporary
-image copy and check 125 console requests, including 70 successive native
+image copy and check about 290 console requests, including 70 successive native
 launches that deliberately leave resources for process cleanup, buffered input
 with backspace editing, batch control flow, and redirection restoration.
 
@@ -171,8 +191,8 @@ over two mounts, and must pass `fsck.fat -n` and match an mtools read-back.
 | `build/msdos-arm64-pi3.img` | 128 MiB MBR/FAT32, Pi 3 boot files and UEFI firmware | Firmware/package structure checked; same payload tested through ARM64 UEFI; physical Pi boot unverified |
 
 Both images include `EFI/BOOT/BOOTAA64.EFI`, `NATIVE.EXE`, `DOSTEST.EXE`, batch fixtures,
-`ARMTEST.TXT`, a SHA-256 sidecar and a JSON manifest. The manifests explicitly record incomplete port status and
-unverified physical hardware. Raw build products are ignored by Git. Compressed, validated image snapshots
+`ARMTEST.TXT`, a SHA-256 sidecar and a JSON manifest. The manifests record that physical hardware is
+unverified (`complete_msdos_port` stays false until a real Pi 3 boots). Raw build products are ignored by Git. Compressed, validated image snapshots
 and their checksums are published in [images](images/README.md) on the `arm` branch.
 
 Build the Pi image with:
@@ -233,7 +253,7 @@ some M-series models. Its support tables describe Asahi's stack, not validation
 of this DOS runtime. Support for every Apple Silicon model remains a goal,
 not a claimed feature.
 
-## Native API and remaining work
+## Native API and status
 
 The [AArch64 ABI](ABI.md) documents every DOS function from 00h to 6Ch, their
 arguments, return values and limits. Calls use AAPCS64 and a function pointer
@@ -258,14 +278,13 @@ not been fully translated. In native mode no UEFI boot service is used after
 startup; UEFI runtime services are used only for power-off.
 
 [PORT_STATUS.md](PORT_STATUS.md) tracks the port: milestones 1-7 (kernel,
-COMMAND, every utility, drivers, NLS) are done. What remains is milestone 8's
-physical hardware bring-up: booting the Pi 3 image, and its native drivers, on
-a real board. Until that is verified the manifests keep `complete_msdos_port`
-false. The checked-in historical source archives
-remain x86 assembly. All-model native Apple Silicon support also remains unmet
-because required boot-stack/driver support and hardware validation are absent.
-These image snapshots are development artifacts, with incomplete status recorded
-in their manifests; they are not a completed operating-system conversion.
+DOS functions, COMMAND, `CONFIG.SYS`, every utility, drivers, NLS) are done,
+and QEMU `virt` runs fully native. What remains is milestone 8's physical
+hardware check: booting the Pi 3 image, and its native drivers, on a real
+board. Until that is verified the manifests keep `complete_msdos_port` false.
+The checked-in historical source archives remain x86 assembly. Booting natively
+on every Apple Silicon model is not supported (see above); running under QEMU
+on a Mac is.
 
 Reference boot documentation was inspected at Asahi docs commit
 `0d1f8917fa88745d62a4c05d802c4a7298c8616b` and Pi UEFI commit

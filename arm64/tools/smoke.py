@@ -107,7 +107,7 @@ def main():
                         else b'Platform: UEFI firmware services')
             if platform not in text:
                 raise RuntimeError('Unexpected platform mode for ' + args.mode)
-            command('ver', b'MS-DOS API baseline 4.00')
+            command('ver', b'ARM DOS Version 4.00')
             # % expansion is for batch files: EL.BAT reports ERRORLEVEL.
             command('echo @echo code:%ERRORLEVEL%>EL.BAT')
             command('type ARMTEST.TXT', b'ARM64 FAT read')
@@ -432,7 +432,7 @@ def main():
             command('echo printed>PRN', b'PRN\nprinted\n')
             command('prompt $e[120;"ver";13p$p$g')
             command('prompt $p$g')
-            if b'MS-DOS API baseline' not in keys(b'x', b'A:\\>'):
+            if b'ARM DOS Version' not in keys(b'x', b'A:\\>'):
                 raise RuntimeError('ANSI.SYS key reassignment failed')
             checks += 1
             command('prompt $e[120p$p$g')

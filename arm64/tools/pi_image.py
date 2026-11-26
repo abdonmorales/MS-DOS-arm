@@ -69,8 +69,8 @@ def main():
             shutil.copyfile(fixture, source / fixture.name)
         (source / 'ARMTEST.TXT').write_bytes(b'ARM64 FAT read\r\n')
         (source / 'ARMDOS.TXT').write_bytes(
-            b'Native AArch64 MS-DOS 4.0 port development runtime.\r\n'
-            b'Partial port; this image has not been tested on physical Pi hardware.\r\n')
+            b'ARM DOS 4.0: MS-DOS 4.0 ported natively to AArch64.\r\n'
+            b'This image has not yet been booted on a physical Raspberry Pi 3.\r\n')
         (source / 'startup.nsh').write_text('fs0:\\EFI\\BOOT\\BOOTAA64.EFI\r\n')
         # Keep third-party license notices with redistributed firmware.
         license_url = ('https://raw.githubusercontent.com/pftf/RPi3/'
