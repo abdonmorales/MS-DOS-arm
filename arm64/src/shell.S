@@ -44,6 +44,26 @@ shell_execute:
     ldrb w2, [x19]
     cbz w2, shell_execute_done
 8:
+    ldrb w2, [x19, #1]          // "B:" selects a drive
+    cmp w2, #':'
+    b.ne 81f
+    ldrb w2, [x19, #2]
+    cbnz w2, 81f
+    ldrb w2, [x19]
+    sub x21, x2, #'A'
+    cmp x21, #26
+    b.hs 82f
+    add x0, x21, #1
+    bl drive_physical
+    cbnz x1, 82f
+    mov x0, x21
+    bl dos_set_drive
+    b shell_execute_done
+82:
+    address x0, invalid_drive_message
+    bl puts
+    b shell_execute_done
+81:
     ldrb w2, [x19, #4]
     cmp w2, #'.'
     b.ne 9f
@@ -151,18 +171,58 @@ cmd_cd:
     bl next_word
     ldrb w2, [x0]
     cbnz w2, 1f
-    address x0, drive_prefix
-    bl puts
+    bl print_current_drive
     address x0, current_directory
     bl puts
     address x0, newline
     bl puts
     b 2f
 1:
+    ldrb w3, [x0, #1]           // "CD B:" shows that drive's directory
+    cmp w3, #':'
+    b.ne 3f
+    ldrb w3, [x0, #2]
+    cbnz w3, 3f
+    bic w2, w2, #0x20
+    sub x2, x2, #'A'
+    cmp x2, #26
+    b.hs 4f
+    stp x2, xzr, [sp, #-16]!
+    add x0, x2, #1
+    bl drive_physical
+    ldp x2, xzr, [sp], #16
+    cbnz x1, 4f
+    add w0, w2, #'A'
+    stp x2, xzr, [sp, #-16]!
+    bl stdout_putc
+    mov x0, #':'
+    bl stdout_putc
+    ldp x0, xzr, [sp], #16
+    bl drive_cwd
+    bl puts
+    address x0, newline
+    bl puts
+    b 2f
+4:
+    address x0, invalid_drive_message
+    bl puts
+    b 2f
+3:
     bl dos_chdir
     bl shell_check_error
 2:
     unframe
+// Prints the current drive as "A:".
+print_current_drive:
+    frame
+    adrp x0, current_drive
+    ldr x0, [x0, :lo12:current_drive]
+    add w0, w0, #'A'
+    bl stdout_putc
+    mov x0, #':'
+    bl stdout_putc
+    unframe
+
 cmd_md:
     mov w8, #0x39
     b cmd_path_call
@@ -217,7 +277,6 @@ strcasecmp:
 .section .rodata
 exe_suffix: .asciz ".EXE"
 bat_suffix: .asciz ".BAT"
-drive_prefix: .asciz "A:"
 prompt_suffix: .asciz "> "
 copy_success: .asciz "        1 file(s) copied.\r\n"
 directory_marker: .asciz "  <DIR>"

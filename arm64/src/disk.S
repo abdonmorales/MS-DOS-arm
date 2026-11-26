@@ -15,19 +15,42 @@
     strb \tmp, [\base, #(\off + 1)]
 .endm
 
-// x0 = drive (0 default, 1 A:). Returns x1 = 0 when it names the FAT volume.
+// x0 = drive (0 default, 1 A:, ...). Makes its FAT volume live (after
+// ASSIGN and SUBST). Returns x1 = 0 with x0 = the physical drive when it
+// holds a mounted FAT volume; x1 = 1 with x0 = 15 (no such drive) or 21
+// (not formatted). Preserves x2-x8.
 disk_check_drive:
-    cmp x0, #1
-    b.hi 1f
+    frame
+    stp x2, x3, [sp, #-16]!
+    bl disk_select_drive
+    cbnz x1, 1f
     adrp x9, fat_mounted
     ldr x9, [x9, :lo12:fat_mounted]
-    cbz x9, 1f
-    mov x1, #0
-    ret
-1:
-    mov x0, #15
+    cbnz x9, 1f
+    mov x0, #21
     mov x1, #1
-    ret
+1:
+    ldp x2, x3, [sp], #16
+    unframe
+
+// Same, but an unformatted drive is accepted (for FORMAT's IOCTLs).
+disk_select_drive:
+    frame
+    stp x2, x3, [sp, #-16]!
+    stp x4, x5, [sp, #-16]!
+    stp x6, x7, [sp, #-16]!
+    str x8, [sp, #-16]!
+    bl drive_physical
+    cbnz x1, 1f
+    str x0, [sp, #-16]!
+    bl drive_select
+    ldr x0, [sp], #16
+1:
+    ldr x8, [sp], #16
+    ldp x6, x7, [sp], #16
+    ldp x4, x5, [sp], #16
+    ldp x2, x3, [sp], #16
+    unframe
 
 // 1Bh / 1Ch (x0 = drive): x0 sectors per cluster, x2 bytes per sector,
 // x3 clusters, x4 media byte, x5 = pointer to the media byte.
@@ -168,10 +191,10 @@ dos_get_dpb:
     frame
     bl disk_check_drive
     cbnz x1, 1f
+    mov x2, x0                  // drive number in the DPB
     address x0, fat_boot_copy
     add x0, x0, #11
     address x1, dos_dpb
-    mov x2, #0
     bl dpb_from_bpb
     address x0, dos_dpb
     mov x1, #0
@@ -517,8 +540,9 @@ ioctl_retry:
 
 ioctl_generic_block:
     mov x0, x19
-    bl disk_check_drive
+    bl disk_select_drive        // unformatted media is for FORMAT to fix
     cbnz x1, ioctl_error
+    mov x20, x0                 // the physical drive
     and x9, x22, #0xffff
     mov x10, #0x0860
     cmp x9, x10
@@ -529,6 +553,11 @@ ioctl_generic_block:
     mov x10, #0x0841
     cmp x9, x10
     b.eq ioctl_write_sectors
+    mov x10, #0x0840
+    cmp x9, x10
+    b.eq ioctl_rebuild
+    ldv x10, fat_mounted
+    cbz x10, ioctl_not_ready
     mov x10, #0x0866
     cmp x9, x10
     b.eq 1f
@@ -546,11 +575,44 @@ ioctl_generic_block:
     cbnz x1, ioctl_error
     b ioctl_value
 
-// 0860h: x3 = 88-byte buffer: u64 bytes per sector, sectors per cluster,
+// 0840h: re-reads the drive's boot record (FORMAT calls it when done).
+ioctl_rebuild:
+    mov x0, x20
+    bl drive_remount
+    cbnz x1, ioctl_error
+    mov x0, #0
+    b ioctl_value
+ioctl_not_ready:
+    mov x0, #21
+    b ioctl_error
+
+// 0860h: x3 = 96-byte buffer: u64 bytes per sector, sectors per cluster,
 // FAT type, first data sector, clusters, first FAT sector, sectors per FAT,
-// FAT copies, first root sector, root entries, root cluster.
+// FAT copies, first root sector, root entries, root cluster, and the total
+// sectors of the device. An unformatted drive reports FAT type 0 with only
+// the sector size and total filled in.
 ioctl_device_params:
     cbz x3, ioctl_invalid
+    mov x9, #0
+1:
+    str xzr, [x3, x9]
+    add x9, x9, #8
+    cmp x9, #96
+    b.lo 1b
+    ldv x9, fat_total_sectors
+    cbnz x9, 2f
+    address x10, fat_boot_copy  // the boot disk: from its boot record
+    ldrb w9, [x10, #19]
+    ldrb w11, [x10, #20]
+    orr w9, w9, w11, lsl #8
+    cbnz x9, 2f
+    ldr w9, [x10, #32]
+2:
+    str x9, [x3, #88]
+    ldv x9, fat_bps
+    str x9, [x3]
+    ldv x10, fat_mounted
+    cbz x10, 3f
     ldv x9, fat_bps
     str x9, [x3]
     ldv x9, fat_spc
@@ -573,6 +635,7 @@ ioctl_device_params:
     str x9, [x3, #72]
     ldv x9, fat_root_cluster
     str x9, [x3, #80]
+3:
     mov x0, #0
     b ioctl_value
 

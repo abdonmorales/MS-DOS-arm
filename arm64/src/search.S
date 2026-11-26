@@ -97,9 +97,15 @@ find_slot_install:
     add x20, x20, #1
 4:
     strb wzr, [x20]
-    // canonicalize_path's source and destination must not overlap.
-    mov x0, x21
+    // Reopen the parent as the canonical path it already is, on its drive
+    // (canonicalize_path's source and destination must not overlap).
     address x1, search_path
+    mov w2, #1
+    strb w2, [x1]
+    ldv x2, canonical_drive
+    strb w2, [x1, #1]
+    mov x0, x21
+    add x1, x1, #2
     bl copy_cstring
     address x0, search_path
     mov x1, #1
@@ -367,4 +373,4 @@ current_dta_capacity: .skip 8
 default_dta: .skip 280
 search_slots: .skip 4608
 search_name: .skip 256
-search_path: .skip 256
+search_path: .skip 264

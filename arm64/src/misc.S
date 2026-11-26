@@ -1,18 +1,5 @@
 // SPDX-License-Identifier: MIT
 .section .text
-dos_get_drive:
-    mov x0, #0
-    mov x1, #0
-    ret
-dos_set_drive:
-    cbnz x0, 1f
-    mov x0, #1                 // one configured drive, A:
-    mov x1, #0
-    ret
-1:
-    mov x0, #15
-    mov x1, #1
-    ret
 dos_disk_reset:
     frame
     stp x19, x20, [sp, #-16]!
@@ -44,11 +31,11 @@ dos_disk_reset:
 dos_free_space:
     frame
     sub sp, sp, #16
-    cmp x0, #1                 // 0=default, 1=A:
-    b.hi free_space_drive_error
-    address x0, root_directory
-    ldr x0, [x0]
-    cbz x0, free_space_drive_error
+    bl drive_physical          // 0=default, 1=A:, ...
+    cbnz x1, free_space_drive_error
+    bl drive_entry
+    ldr x0, [x0, #DRV_ROOT]
+    cbz x0, free_space_not_ready
     mov x2, #1024
     str x2, [sp]
     mov x2, sp
@@ -65,6 +52,10 @@ dos_free_space:
     udiv x2, x2, x0
     udiv x3, x3, x0
     mov x1, #0
+    b free_space_return
+free_space_not_ready:
+    mov x0, #21
+    mov x1, #1
     b free_space_return
 free_space_drive_error:
     mov x0, #15

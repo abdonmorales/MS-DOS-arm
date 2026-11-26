@@ -52,8 +52,7 @@ efi_path_error_to_dos:
     b 1b
 2:
     cbz x20, 8f                 // the parent is the root, which exists
-    address x0, root_directory
-    ldr x0, [x0]
+    bl canonical_root
     cbz x0, 8f
     strh wzr, [x19, x20]        // open just the parent
     sub sp, sp, #16
@@ -82,29 +81,22 @@ efi_path_error_to_dos:
     ldp x19, x20, [sp], #16
     unframe
 
-// x0=ASCII path, x1=256-byte destination. Canonical result begins with '\'.
-// A: relative paths use this drive's current directory. Other drives fail.
-// Dot components are resolved before calling firmware; root cannot escape.
-canonicalize_path:
+// x0 = ASCII path without a drive, x1 = 256-byte destination, x2 = that
+// drive's current directory. Canonical result begins with '\'. Dot
+// components are resolved here; the root cannot be escaped. Leaf.
+canonical_core:
     mov x9, x0
     mov x10, x1
-    ldrb w2, [x9]
-    cbz w2, canonical_relative
-    ldrb w3, [x9, #1]
-    cmp w3, #':'
-    b.ne canonical_start
-    bic w2, w2, #0x20
-    cmp w2, #'A'
-    b.ne canonical_drive_error
-    add x9, x9, #2
+    mov x11, x2
 canonical_start:
     ldrb w2, [x9]
+    cbz w2, canonical_relative
     cmp w2, #'\\'
     b.eq canonical_absolute
     cmp w2, #'/'
     b.eq canonical_absolute
 canonical_relative:
-    address x4, current_directory
+    mov x4, x11
     mov x7, #0
 1:
     ldrb w2, [x4, x7]
@@ -424,8 +416,7 @@ open_path_object:
     bl path_to_utf16
     cbnz x1, object_return
     mov x2, x0
-    address x0, root_directory
-    ldr x0, [x0]
+    bl canonical_root
     cbz x0, object_no_volume
     sub sp, sp, #16
     str xzr, [sp]
@@ -500,8 +491,11 @@ dos_chdir:
     ldr x3, [x0, #16]
     blr x3
     cbnz x0, chdir_error
-    address x0, canonical_buffer
-    address x1, current_directory
+    adrp x0, canonical_logical_drive  // the path as the drive shows it
+    ldr x0, [x0, :lo12:canonical_logical_drive]
+    bl drive_cwd
+    mov x1, x0
+    address x0, canonical_logical
     bl copy_cstring
     mov x0, #0
     mov x1, #0
@@ -525,11 +519,29 @@ chdir_missing:
     mov x0, #3
     b chdir_return
 
-// 47h: x0=buffer, x1=capacity. Return path without drive/leading slash.
+// 47h: x0=buffer, x1=capacity, x2=drive (0 default, 1 A:, ...). Returns
+// the path without drive or leading slash.
 dos_getcwd:
     mov x9, x0
     mov x10, x1
-    address x2, current_directory
+    adrp x3, current_drive
+    ldr x3, [x3, :lo12:current_drive]
+    subs x2, x2, #1
+    csel x2, x3, x2, lo
+    cmp x2, #26
+    b.hs 4f
+    address x3, drive_table
+    mov x4, #DRV_SIZE
+    madd x3, x2, x4, x3
+    ldr x4, [x3, #DRV_FLAGS]
+    tst x4, #3
+    b.eq 4f
+    add x3, x3, #DRV_CWD
+    adrp x4, current_drive
+    ldr x4, [x4, :lo12:current_drive]
+    address x5, current_directory
+    cmp x4, x2
+    csel x2, x5, x3, eq
     add x2, x2, #1
     mov x3, #0
 1:
@@ -548,6 +560,10 @@ dos_getcwd:
     mov x0, x9
     mov x1, #0
     ret
+4:
+    mov x0, #15
+    mov x1, #1
+    ret
 
 dos_rmdir:
     frame
@@ -560,7 +576,11 @@ dos_rmdir:
     address x0, canonical_buffer
     ldrb w1, [x0, #1]
     cbz w1, rmdir_denied          // root is never removable
-    address x1, current_directory
+    adrp x0, canonical_logical_drive  // nor any drive's current directory
+    ldr x0, [x0, :lo12:canonical_logical_drive]
+    bl drive_cwd
+    mov x1, x0
+    address x0, canonical_logical
     bl strcasecmp               // FAT names are case-insensitive
     cbz x0, rmdir_denied
     mov x0, x19
@@ -706,10 +726,16 @@ dos_rename:
     bl open_path_object
     cbnz x1, rename_return
     mov x19, x0
+    adrp x22, canonical_drive
+    ldr x22, [x22, :lo12:canonical_drive]
     mov x0, x20
     bl path_to_utf16
     cbnz x1, rename_close_error
     mov x21, x0
+    adrp x2, canonical_drive    // a rename cannot move to another drive
+    ldr x2, [x2, :lo12:canonical_drive]
+    cmp x2, x22
+    b.ne rename_other_drive
     mov x0, x19
     bl get_file_info
     cbnz x0, rename_close_error
@@ -738,6 +764,13 @@ dos_rename:
 rename_error:
     mov x0, x22
     bl efi_error_to_dos
+    mov x1, #1
+    b rename_return
+rename_other_drive:
+    mov x0, x19
+    ldr x3, [x0, #16]
+    blr x3
+    mov x0, #17                 // not the same device
     mov x1, #1
     b rename_return
 rename_close_error:

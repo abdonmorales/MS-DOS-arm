@@ -389,10 +389,12 @@ config_device:
 1:
     str xzr, [x22, x0]
     add x0, x0, #8
-    cmp x0, #64
+    cmp x0, #96
     b.lo 1b
     address x0, dos_call
     str x0, [x22]
+    bl drive_next_free          // a block driver's unit gets this letter
+    str x0, [x22, #64]
     mov x0, x20
     bl skip_blanks
     mov x1, x0
@@ -418,6 +420,16 @@ config_device:
     mov x0, x22
     blr x21
     cbnz x1, 7f
+    ldr x2, [x22, #48]          // sectors: a block device
+    cbz x2, 6f
+    ldr x0, [x22, #24]
+    ldr x1, [x22, #56]
+    cbz x0, 7f
+    bl drive_add_block
+    cbnz x1, 7f
+    mov x1, #0
+    leave
+6:
     mov x0, x22
     bl dev_install
     cbnz x1, 7f
@@ -516,7 +528,7 @@ command_com: .asciz "COMMAND.COM"
 .section .bss
 .balign 16
 config_text: .skip CONFIG_SIZE
-config_request: .skip 64
+config_request: .skip 96
 config_install_list: .skip 64
 config_install_count: .skip 8
 config_shell_program: .skip 8

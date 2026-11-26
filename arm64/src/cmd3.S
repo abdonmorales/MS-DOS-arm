@@ -100,6 +100,10 @@ append_star:
     b.hs 2f
     add x1, x19, x0
     cbnz x20, 1f
+    cbz x0, 1f                  // "" and "B:" take "*.*" as they are
+    ldurb w2, [x1, #-1]
+    cmp w2, #':'
+    b.eq 1f
     mov w2, #'\\'
     strb w2, [x1], #1
 1:
@@ -1163,13 +1167,25 @@ cmd_dir:
     mov x0, x20
     bl append_star
 dir_header:
-    address x0, c3_empty
-    bl cmd_vol
     mov x0, x20
     address x1, dir_canon
     bl canonicalize_path
     cbnz x1, dir_not_found
+    address x0, canonical_logical   // the drive and path as named
+    address x1, dir_canon
+    bl copy_cstring
+    ldv x0, canonical_logical_drive
+    add w0, w0, #'A'
+    address x1, dir_drive
+    strb w0, [x1]
+    mov w0, #':'
+    strb w0, [x1, #1]
+    strb wzr, [x1, #2]
+    address x0, dir_drive
+    bl cmd_vol
     address x0, c3_directory_of
+    bl puts
+    address x0, dir_drive
     bl puts
     address x0, dir_canon
     bl dir_prefix_len
@@ -1248,7 +1264,9 @@ dir_end:
     bl print_number_width
     address x0, c3_files
     bl puts
-    mov x0, #0
+    address x0, dir_drive       // free space of the listed drive
+    ldrb w0, [x0]
+    sub x0, x0, #('A' - 1)
     mov w8, #0x36
     bl dos_call
     mul x0, x0, x2
@@ -1452,12 +1470,13 @@ c3_onto_itself: .asciz "File cannot be copied onto itself\r\n"
 c3_copied: .asciz " File(s) copied\r\n"
 c3_all_files: .asciz "All files in directory will be deleted!\r\nAre you sure (Y/N)?"
 c3_delete_query: .asciz ",    Delete (Y/N)?"
-c3_directory_of: .asciz " Directory of  A:"
+c3_directory_of: .asciz " Directory of  "
 c3_dir_marker: .asciz " <DIR>    "
 c3_files: .asciz " File(s)"
 c3_bytes_free: .asciz " bytes free\r\n"
 c3_strike_key: .asciz "Strike a key when ready . . . "
 .section .bss
+dir_drive: .skip 8
 .balign 16
 wild_dta: .skip 288
 dir_dta: .skip 288

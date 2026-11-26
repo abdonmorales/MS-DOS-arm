@@ -278,8 +278,7 @@ shell_prompt:
     mov w20, w0
     cmp w20, #'P'
     b.ne 3f
-    address x0, drive_prefix
-    bl puts
+    bl print_current_drive
     address x0, current_directory
     bl puts
     b 1b
@@ -307,7 +306,9 @@ shell_prompt:
     b.eq 8f
     cmp w20, #'N'
     b.ne 4f
-    mov w0, #'A'
+    adrp x0, current_drive
+    ldr x0, [x0, :lo12:current_drive]
+    add w0, w0, #'A'
     b 8f
 4:
     cmp w20, #'_'

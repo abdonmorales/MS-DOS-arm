@@ -932,7 +932,8 @@ dos_truename:
     address x1, truename_buffer
     bl canonicalize_path
     cbnz x1, 4f
-    mov w9, #'A'
+    ldv x9, canonical_drive     // the physical drive, after SUBST and JOIN
+    add w9, w9, #'A'
     strb w9, [x20]
     mov w9, #':'
     strb w9, [x20, #1]

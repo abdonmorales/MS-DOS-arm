@@ -545,17 +545,38 @@ if_file_exists:
 
 // ---------------------------------------------------------------------------
 // VOL: label and serial number from the boot record.
+// x0 = arguments: an optional drive ("B:").
 cmd_vol:
     frame
     str x19, [sp, #-16]!
     sub sp, sp, #32
+    mov x19, #0                 // DOS drive number (0: the current one)
+5:
+    ldrb w2, [x0]
+    cmp w2, #' '
+    b.ne 6f
+    add x0, x0, #1
+    b 5b
+6:
+    cbz w2, 7f
+    ldrb w3, [x0, #1]
+    cmp w3, #':'
+    b.ne 7f
+    bic w2, w2, #0x20
+    sub w19, w2, #('A' - 1)
+7:
     mov x0, #0
-    mov x1, #0
+    mov x1, x19
     mov x2, sp
     bl dos_media_id
     cbnz x1, 3f
     address x0, vol_drive_message
     bl puts
+    mov x0, x19
+    bl drive_letter
+    bl stdout_putc
+    mov x0, #' '
+    bl stdout_putc
     add x0, sp, #6
     address x1, fcb_no_name
     mov x2, #11
@@ -593,12 +614,22 @@ cmd_vol:
     bl puts
     b 4f
 3:
-    address x0, file_error
+    address x0, invalid_drive_message
     bl puts
 4:
     add sp, sp, #32
     ldr x19, [sp], #16
     unframe
+
+// x0 = DOS drive number (0 current, 1 A:). Returns x0 = its letter.
+drive_letter:
+    cbnz x0, 1f
+    adrp x0, current_drive
+    ldr x0, [x0, :lo12:current_drive]
+    add x0, x0, #1
+1:
+    add x0, x0, #('A' - 1)
+    ret
 
 // x0, x1, x2 = count: x0 = 1 when the byte ranges are equal.
 label_equal:
@@ -1130,7 +1161,8 @@ pipe_template: .asciz "\\%PIPE#.$$$"
 for_in_keyword: .asciz "IN"
 for_do_keyword: .asciz "DO"
 for_nested_message: .asciz "FOR cannot be nested\r\n"
-vol_drive_message: .asciz " Volume in drive A "
+vol_drive_message: .asciz " Volume in drive "
+invalid_drive_message: .asciz "Invalid drive specification\r\n"
 vol_no_label: .asciz "has no label\r\n"
 vol_is: .asciz "is "
 vol_serial_message: .asciz " Volume Serial Number is "

@@ -37,6 +37,7 @@ efi_main:
     mov x3, #0
     blr x4
     bl filesystem_init
+    bl drives_init
     bl search_init
     bl memory_init
     bl clock_init
@@ -197,13 +198,13 @@ open_common:
     mov x2, x25
     bl sft_check
     cbnz x1, open_error
-    address x0, root_directory
-    ldr x22, [x0]
-    cbz x22, open_denied
     mov x0, x19
     bl path_to_utf16
     cbnz x1, open_path_error
     mov x2, x0
+    bl canonical_root           // the root of the drive the path names
+    mov x22, x0
+    cbz x22, open_not_ready
     mov x0, x22
     add x1, x20, x21, lsl #3
     mov x3, #1                  // EFI_FILE_MODE_READ
@@ -257,6 +258,9 @@ open_not_found:
     bl efi_path_error_to_dos
     b open_error
 open_path_error:
+    b open_error
+open_not_ready:
+    mov x0, #21
     b open_error
 open_bad_mode:
     mov x0, #12                 // invalid access code
@@ -1165,6 +1169,7 @@ file_info_buffer: .skip 1024
 selftest_saved_cwd: .skip 256
 
 .include "src/files.S"
+.include "src/drives.S"
 .include "src/fat.S"
 .include "src/platform.S"
 .include "src/api_test.S"

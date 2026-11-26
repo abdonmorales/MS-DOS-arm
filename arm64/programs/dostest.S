@@ -237,7 +237,7 @@ efi_main:
     expect x2, 512
     cbz x0, fail
     cbz x3, fail
-    mov x0, #3
+    mov x0, #17                 // Q: is not a drive
     dos 0x1c
     err 15
     mov x0, #0
