@@ -457,7 +457,7 @@ load_last_set:
     b.hs 5f
     mov x24, x23
     add x0, x22, x23
-    add x0, x0, #65
+    add x0, x0, #66             // DB_NextDB
     bl bk_get32
     cmn w0, #1
     b.eq 5f
@@ -628,7 +628,19 @@ backup_file:
     mov x4, #(BK_DIRBLOCK + BK_FILEBLOCK + 8192)
     add x3, x3, x4
     cmp x3, x0
+    b.hi 0f
+    // The index must also fit in the CONTROL buffer.
+    add x3, x2, #(BK_DIRBLOCK + BK_FILEBLOCK)
+    mov x4, #CTL_SIZE
+    cmp x3, x4
     b.ls 2f
+    address x0, set_dir         // a fixed target has no next disk
+    bl strlen
+    cmp x0, #3
+    b.ls 0f
+    say "Too many files for one backup set\r\n"
+    b stop
+0:
     address x9, disk_files
     ldr x2, [x9]
     cbnz x2, 1f
@@ -674,7 +686,7 @@ backup_file:
     cmp x2, #63
     b.lo 32b
 33:
-    add x0, x23, #65
+    add x0, x23, #66            // DB_NextDB: none yet
     mov x1, #-1
     bl bk_put32
     address x9, last_block
@@ -683,7 +695,7 @@ backup_file:
     cmn x2, #1
     b.eq 34f
     add x0, x20, x2
-    add x0, x0, #65
+    add x0, x0, #66
     mov x1, x22
     bl bk_put32
 34:
@@ -769,10 +781,12 @@ backup_file:
     address x9, control_len
     str x22, [x9]
     ldr x2, [x19, #L_BLOCK]     // one more file in the directory block
-    add x2, x20, x2
-    ldrb w3, [x2, #64]
-    add w3, w3, #1
-    strb w3, [x2, #64]
+    add x26, x20, x2
+    add x0, x26, #64            // DB_NumEntries (u16)
+    bl bk_get16
+    add w1, w0, #1
+    add x0, x26, #64
+    bl bk_put16
     address x9, files
     ldr x2, [x9]
     add x2, x2, #1

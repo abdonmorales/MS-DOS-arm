@@ -161,6 +161,13 @@ def main():
             command('echo fail <MISSING.TXT >OUTPUT.TXT', b'File/device error.')
             command('echo restored-after-error', b'\nrestored-after-error\n')
             command('del OUTPUT.TXT')
+            # COPY A+B A appends B to A (it must not truncate A first).
+            command('echo AAA>CAT1.TXT')
+            command('echo BBB>CAT2.TXT')
+            command('copy CAT1.TXT+CAT2.TXT CAT1.TXT')
+            command('type CAT1.TXT', b'AAA\nBBB')
+            command('del CAT1.TXT')
+            command('del CAT2.TXT')
             # 0Dh/68h with read-only handles; DOS error codes 2 vs 3.
             command('native disk', b'Native AArch64 program OK')
             command('echo 50% done', b'\n50% done\n')

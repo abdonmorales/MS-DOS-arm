@@ -1080,8 +1080,14 @@ copy_concat:
     mov x2, x24
     bl copy_file
     cbz x1, 10f
-    cmn x0, #1                  // the destination itself is skipped
-    b.eq 12f
+    cmn x0, #1                  // the destination itself
+    b.ne 13f
+    // COPY A+B A: as the first part, the destination keeps its contents
+    // and later parts are appended (the DOS append idiom). Later on, its
+    // contents are already gone, so it is just skipped.
+    cbnz x24, 12f
+    b 10f
+13:
     bl print_dos_error
     b 12f
 10:

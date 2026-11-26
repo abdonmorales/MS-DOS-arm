@@ -107,6 +107,14 @@ fl_get:
     frame
     str x19, [sp, #-16]!
     mov x19, x0
+    // Out-of-range clusters and FAT read errors read as end of chain, so
+    // every chain walker stops instead of chasing garbage.
+    cmp x19, #2
+    b.lo 8f
+    flp x2, FL_CLUSTERS
+    add x2, x2, #2
+    cmp x19, x2
+    b.hs 8f
     flp x2, FL_TYPE
     cmp x2, #12
     b.eq 12f
@@ -114,17 +122,22 @@ fl_get:
     b.eq 16f
     lsl x0, x19, #2
     bl fl_fat_byte
+    cbnz x1, 8f
     ldr w0, [x0]
     and x0, x0, #0x0fffffff
+    mov x1, #0
     b 9f
 16:
     lsl x0, x19, #1
     bl fl_fat_byte
+    cbnz x1, 8f
     ldrh w0, [x0]
+    mov x1, #0
     b 9f
 12:
     add x0, x19, x19, lsr #1
     bl fl_fat_byte
+    cbnz x1, 8f
     ldrb w2, [x0]
     ldrb w3, [x0, #1]
     orr w0, w2, w3, lsl #8
@@ -132,6 +145,11 @@ fl_get:
     lsr w0, w0, #4
 1:
     and w0, w0, #0xfff
+    mov x1, #0
+    b 9f
+8:
+    bl fl_eoc                   // end of chain
+    mov x1, #1
 9:
     ldr x19, [sp], #16
     unframe
@@ -154,6 +172,15 @@ fl_set:
     enter
     mov x19, x0
     mov x20, x1
+    // Never write an entry outside the FAT: a bad link would otherwise
+    // land in FAT2, the root directory or file data.
+    mov x1, #1
+    cmp x19, #2
+    b.lo 9f
+    flp x2, FL_CLUSTERS
+    add x2, x2, #2
+    cmp x19, x2
+    b.hs 9f
     flp x2, FL_TYPE
     cmp x2, #12
     b.eq 12f

@@ -47,6 +47,8 @@ main:
     strb w0, [x9]
     address x9, error_drive
     strb w0, [x9]
+    address x9, chk_name        // FILEnnnn.CHK goes on the checked drive
+    strb w0, [x9]
     sub x0, x0, #('A' - 1)
     address x9, fl_drive
     str x0, [x9]
@@ -562,7 +564,7 @@ lost_chains:
     mov x1, x27
     mov x2, x28
     bl recover_chain
-    add x28, x28, #1
+    add x28, x0, #1
 72:
     add x22, x22, #1
     b 71b
@@ -572,11 +574,17 @@ lost_chains:
     mul x0, x23, x9
     mov x1, #10
     bl put_dec
+    say " bytes disk space\r\n           "
+    address x9, opt_flags
+    ldr x9, [x9]
+    tbnz x9, #0, 80f
+    say "would be "
+80:
     cbz x27, 81f
-    say " bytes disk space\r\n           would be converted to files\r\n"
+    say "converted to files\r\n"
     b 82f
 81:
-    say " bytes disk space\r\n           would be freed\r\n"
+    say "freed\r\n"
 82:
     address x9, opt_flags
     ldr x9, [x9]
@@ -599,11 +607,20 @@ recover_chain:
     // Free every cluster of the chain.
     bl fl_eoc
     mov x21, x0
+    flp x23, FL_CLUSTERS
+    add x23, x23, #2
 1:
     cmp x19, #2
     b.lo 9f
     cmp x19, x21
     b.hs 9f
+    // Stop at a cluster outside the volume, or one that already belongs to
+    // a live file (cross-link) or was freed: never free someone else's data.
+    cmp x19, x23
+    b.hs 9f
+    mov x0, x19
+    bl is_marked
+    cbnz x0, 9f
     mov x0, x19
     bl fl_get
     mov x22, x0
@@ -620,11 +637,20 @@ recover_chain:
     mov x1, #1
     bl walk_chain
     mov x21, x0
-    // Create \FILEnnnn.CHK, then point its entry at the chain.
+    cmp x1, #2                  // links outside the volume: end it at the
+    b.ne 30f                    // last good cluster
+    mov x22, x2
+    bl fl_eoc
+    mov x1, x0
+    mov x0, x22
+    bl fl_set
+    // Create d:\FILEnnnn.CHK, then point its entry at the chain. Like DOS,
+    // skip numbers already in use so earlier recoveries are never truncated.
+30:
     address x0, chk_name
     mov x3, x20
     mov x6, #10
-    mov x4, #8
+    mov x4, #10
 31:
     udiv x7, x3, x6
     msub x5, x7, x6, x3
@@ -632,11 +658,19 @@ recover_chain:
     strb w5, [x0, x4]
     mov x3, x7
     sub x4, x4, #1
-    cmp x4, #5
+    cmp x4, #7
     b.hs 31b
     mov x1, #0
-    bl fcreate
-    cbnz x1, 9f
+    dos 0x5b                    // create new: fails if the name exists
+    cbz x1, 32f
+    cmp x0, #80                 // file exists: try the next number
+    b.ne 9f
+    add x20, x20, #1
+    mov x9, #10000
+    cmp x20, x9
+    b.lo 30b
+    b 9f
+32:
     bl fclose
     mov x0, #0
     address x1, dir
@@ -647,7 +681,7 @@ recover_chain:
     address x23, dir
     add x24, x23, x22
     address x0, chk_name
-    add x0, x0, #1
+    add x0, x0, #3              // past "d:\"
     address x1, chk_short
     mov x2, #0
 4:
@@ -690,6 +724,7 @@ recover_chain:
     add x23, x23, #32
     b 5b
 9:
+    mov x0, x20                 // the file number used (for the next chain)
     leave
 
 summary:
@@ -960,7 +995,7 @@ report_contiguity:
 .section .rodata
 convert_question: .asciz "Convert lost chains to files (Y/N)? "
 .section .data
-chk_name: .asciz "\\FILE0000.CHK"
+chk_name: .asciz "A:\\FILE0000.CHK"
 .section .bss
 .balign 8
 opt_flags: .skip 8
