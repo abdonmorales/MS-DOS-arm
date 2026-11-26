@@ -62,6 +62,7 @@ def main():
         boot_dir.mkdir(parents=True)
         shutil.copyfile(args.efi, boot_dir / 'BOOTAA64.EFI')
         shutil.copyfile(args.efi.parent / 'NATIVE.EXE', source / 'NATIVE.EXE')
+        shutil.copyfile(args.efi.parent / 'DOSTEST.EXE', source / 'DOSTEST.EXE')
         shutil.copyfile(Path(__file__).parent.parent.parent / 'LICENSE', source / 'DOS-MIT.TXT')
         for name in ['SCRIPT.BAT', 'CHILD.BAT']:
             shutil.copyfile(Path(__file__).parent.parent / 'fixtures' / name, source / name)

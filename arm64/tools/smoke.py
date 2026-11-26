@@ -120,6 +120,16 @@ def main():
             if args.mode == 'native':   # firmware mode keeps UEFI's vectors
                 command('native fault', b'Program terminated by CPU exception.')
                 command('echo code:%ERRORLEVEL%', b'code:1')
+            command('dostest', b'DOSTEST PASS')
+            process.stdin.write(b'dostest ctrlc\r')
+            process.stdin.flush()
+            until(b'WAIT>')
+            process.stdin.write(b'\x03')
+            process.stdin.flush()
+            text = until(b'A:\\> ')
+            if b'^C' not in text or b'CTRL-C OK' not in text:
+                raise RuntimeError('Ctrl-C did not end the program with type 1')
+            checks += 1
             command('native exit7', b'Native AArch64 program OK')
             command('echo code:%ERRORLEVEL%', b'code:7')
             batch = command('script first second', b'script-finished')

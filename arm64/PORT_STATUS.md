@@ -16,8 +16,8 @@ a CPU emulator and is tracked separately as an optional milestone.
 |---|-----------|--------|
 | 1 | Native FAT12/16/32 filesystem (`src/fat.S`) | Done |
 | 2 | Standalone kernel: leave UEFI (`ExitBootServices`), own exception vectors, PL011 console, virtio-blk disk, own PE32+ program loader and memory arena; firmware mode kept only as a fallback for boards without native drivers | Done (QEMU `virt`; `make smoke`, `make smoke-firmware`) |
-| 3 | Complete DOS function set (INT 21h equivalents 00h–6Ch in the native ABI, including FCB, IOCTL, sharing/locking, extended open, NLS queries) | Next |
-| 4 | COMMAND parity: pipes, `FOR`, `SET`, `SHIFT`, `PATH`, `PROMPT`, `VOL`, `VERIFY`, `BREAK`, `CTTY`, wildcard `COPY`/`DEL`/`REN`, `DIR` switches, environment, `AUTOEXEC.BAT` | Planned |
+| 3 | Complete DOS function set (INT 21h equivalents 00h–6Ch in the native ABI, including FCB, IOCTL, sharing/locking, extended open, NLS queries) | Done (`DOSTEST.EXE` in `make smoke`; dispatch table checked by `make unit`) |
+| 4 | COMMAND parity: pipes, `FOR`, `SET`, `SHIFT`, `PATH`, `PROMPT`, `VOL`, `VERIFY`, `BREAK`, `CTTY`, wildcard `COPY`/`DEL`/`REN`, `DIR` switches, environment, `AUTOEXEC.BAT` | Next |
 | 5 | `CONFIG.SYS`: `FILES`, `BUFFERS`, `SHELL`, `DEVICE` (native drivers), `BREAK`, `COUNTRY`, `LASTDRIVE` | Planned |
 | 6 | Portable utilities from `v4.0/src/CMD` as native programs: ATTRIB, CHKDSK, COMP, EDLIN, FC, FIND, FORMAT, LABEL, MEM, MORE, REPLACE, SORT, SUBST, SYS, TREE, XCOPY, plus BACKUP/RESTORE, APPEND, ASSIGN, JOIN, RECOVER, DISKCOPY/DISKCOMP | Planned |
 | 7 | Portable drivers from `v4.0/src/DEV`: ANSI (console escape handling), RAMDRIVE/VDISK, COUNTRY data, PRINTER as a serial/null device | Planned |

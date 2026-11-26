@@ -67,7 +67,8 @@ volume for its boot self-test.
 Commands: `HELP`, `VER`, `ECHO`, `CLS`, `DIR`, `TYPE`, `DEL`, `CD`/`CHDIR`,
 `MD`/`MKDIR`, `RD`/`RMDIR`, `COPY`, `REN`/`RENAME`, `ATTRIB`, `DATE`, `TIME`,
 `REM`, `CALL`, `GOTO`, `IF`, `SELFTEST`, `EXIT`. Native AArch64 `.EXE` and `.BAT`
-files also run from the shell; `NATIVE.EXE` is a separately linked example.
+files also run from the shell; `NATIVE.EXE` is a separately linked example and
+`DOSTEST.EXE` exercises the DOS function set from a loaded program.
 
 Paths support quotes, relative components, `.`/`..`, and drive `A:`. `DIR` accepts
 directories and case-insensitive `*`/`?` glob patterns, including DOS `*.*`.
@@ -142,7 +143,7 @@ over two mounts, and must pass `fsck.fat -n` and match an mtools read-back.
 | `build/msdos-arm64.img` | 64 MiB MBR/FAT16, ARM64 EFI application | Boots in QEMU `virt`; API and console tests pass |
 | `build/msdos-arm64-pi3.img` | 128 MiB MBR/FAT32, Pi 3 boot files and UEFI firmware | Firmware/package structure checked; same payload tested through ARM64 UEFI; physical Pi boot unverified |
 
-Both images include `EFI/BOOT/BOOTAA64.EFI`, `NATIVE.EXE`, batch fixtures,
+Both images include `EFI/BOOT/BOOTAA64.EFI`, `NATIVE.EXE`, `DOSTEST.EXE`, batch fixtures,
 `ARMTEST.TXT`, a SHA-256 sidecar and a JSON manifest. The manifests explicitly record incomplete port status and
 unverified physical hardware. Raw build products are ignored by Git. Compressed, validated image snapshots
 and their checksums are published in [images](images/README.md) on the `arm` branch.
@@ -200,28 +201,32 @@ hardware-support requirement, not a claimed feature.
 
 ## Native API and remaining work
 
-The [AArch64 ABI](ABI.md) documents all 57 dispatched function numbers, their
+The [AArch64 ABI](ABI.md) documents every DOS function from 00h to 6Ch, their
 arguments, return values and limits. Calls use AAPCS64 and a function pointer
 provided to each native process. FCB records retain their standard 37-byte data
 layout; pointers and process/search structures use the native ABI. Original x86
 executables cannot run.
 
-The runtime now provides basic console/input, file and standard-handle
-redirection, hierarchical paths, find-first/next state, standard FCB sequential
-and random records, owned memory with in-place resizing, DOS date/time,
-file timestamps, native process loading/termination, and a batch interpreter.
+The runtime provides the complete DOS 4.0 function set (00h-6Ch): console and
+AUX/PRN I/O, the CON/AUX/PRN/NUL/CLOCK$ devices, handle and FCB file services
+(including extended FCBs, FCB searches, wildcard delete/rename, random block
+I/O and filename parsing), built-in SHARE semantics (sharing modes, record
+locks), IOCTL, drive parameter blocks, the list of lists, media IDs, extended
+errors, Ctrl-C/BREAK handling with vector 23h, terminate-and-stay-resident,
+load-only and overlay exec modes, allocation strategies, country information
+and code page 437 case mapping, TRUENAME, temporary files and extended
+open/create. It also has a batch interpreter.
 These adapt selected public contracts from `CPMIO.ASM`, `GETSET.ASM`,
 `HANDLE.ASM`, `FILE.ASM`, `PATH.ASM`, `SEARCH.ASM`, `FCBIO.ASM`, `TIME.ASM`,
-`ALLOC.ASM`, `PROC.ASM` and `COMMAND`. Their original internal algorithms have
+`ALLOC.ASM`, `PROC.ASM`, `DISPATCH.ASM`, `FCB.ASM`, `LOCK.ASM`, `SHARE.ASM`,
+`IOCTL.ASM`, `DOSMES.ASM` (NLS tables) and `COMMAND`. Their original internal algorithms have
 not been fully translated. In native mode no UEFI boot service is used after
 startup; UEFI runtime services are used only for power-off.
 
-The complete MS-DOS 4.0 rewrite remains unfinished. Outstanding work includes
-full FCB/block/wildcard services, sharing/locking and extended handle APIs,
-DOS memory-control-block/PSP compatibility, interrupts and device-driver ABI,
-native drivers for boards other than QEMU `virt`, NLS/codepages, CONFIG.SYS,
-full COMMAND syntax/environment handling, historical drivers and utilities,
-and physical hardware bring-up. The checked-in historical source archives
+The complete MS-DOS 4.0 rewrite remains unfinished; [PORT_STATUS.md](PORT_STATUS.md)
+tracks it. Outstanding work includes full COMMAND syntax and environment
+handling, CONFIG.SYS, the historical drivers and utilities, native drivers for
+boards other than QEMU `virt`, and physical hardware bring-up. The checked-in historical source archives
 remain x86 assembly. All-model native Apple Silicon support also remains unmet
 because required boot-stack/driver support and hardware validation are absent.
 These image snapshots are development artifacts, with incomplete status recorded

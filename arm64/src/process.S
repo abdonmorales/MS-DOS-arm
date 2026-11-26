@@ -1,21 +1,52 @@
 // SPDX-License-Identifier: MIT
 // Native PE32+ AArch64 process ABI. The kernel loads and relocates images
 // itself; a program's entry point receives x0 = ARMDOS64 process descriptor.
-.equ PROCESS_FRAME_SIZE, 816    // +112: register context for proc_call
+.equ PROCESS_FRAME_SIZE, 880    // +704: proc_call context, +816: saved state
 .section .text
-dos_exec:
+
+// 4Bh: x0 = path, x1 = command tail, x2 = mode.
+//  0 load and execute.  1 load only: x0 = image base, x2 = entry, x3 = size
+//  (the caller owns the block and frees it with 49h).  3 overlay: load at
+//  x3 (4 KiB aligned) with x4 bytes available, relocated for that address;
+//  returns the same registers as mode 1.
+dos_exec_call:
+    cbz x2, dos_exec
+    cmp x2, #1
+    b.eq 1f
+    cmp x2, #3
+    b.ne 2f
+    mov x1, x3
+    mov x2, x4
+    tst x1, #0xfff
+    b.ne 2f
+    cbz x1, 2f
+    b pe_load
+1:
+    mov x1, #0
+    mov x2, #0
+    b pe_load
+2:
+    mov x0, #1
+    mov x1, #1
+    ret
+
+// x0 = path, x1 = destination (0 = allocate an owned block), x2 = capacity.
+// Loads and relocates a native PE32+ image. Returns x0 = base, x2 = entry,
+// x3 = image size, x1 = 0; or x1 = 1 with a DOS error in x0.
+pe_load:
     frame
     stp x19, x20, [sp, #-16]!
     stp x21, x22, [sp, #-16]!
     stp x23, x24, [sp, #-16]!
     stp x25, x26, [sp, #-16]!
     stp x27, x28, [sp, #-16]!
-    sub sp, sp, #PROCESS_FRAME_SIZE
+    sub sp, sp, #64
     mov x26, sp
-    mov x20, x1                 // stable caller-owned command tail
+    mov x27, x1                 // caller's destination
+    mov x28, x2                 // and its capacity
     mov x1, #0
     bl dos_open
-    cbnz x1, exec_return
+    cbnz x1, pe_return
     mov x19, x0
     bl file_handle
     bl get_file_info
@@ -72,10 +103,17 @@ exec_read_image:
     mov x1, #0x1000000
     cmp x0, x1
     b.hi exec_free_bad_format
-    str x0, [x26, #24]          // temporarily: image size
+    str x0, [x26, #24]          // image size
+    cbz x27, 11f
+    cmp x0, x28
+    b.hi exec_free_too_big
+    mov x23, x27                // overlay destination
+    b 12f
+11:
     bl dos_allocate
     cbnz x1, exec_free_error
     mov x23, x0                 // image base
+12:
     ldr x1, [x26, #24]
     bl fat_zero_bytes
     ldr x2, [x26, #32]
@@ -176,8 +214,91 @@ exec_read_image:
     bl plat_sync_code
     mov x0, x22
     bl dos_free
-    mov x22, x23                // from here x22 = loaded image
-    mov x19, x23                // the image base is the process owner id
+    mov x0, x23
+    mov x2, x25
+    ldr x3, [x26, #24]
+    mov x1, #0
+    b pe_return
+exec_free_close_error:
+    mov x23, x0
+    mov x0, x22
+    bl dos_free
+    mov x0, x19
+    bl dos_close
+    mov x0, x23
+    mov x1, #1
+    b pe_return
+exec_free_close_bad_format:
+    mov x0, x19
+    bl dos_close
+exec_free_bad_format:
+    mov x0, x22
+    bl dos_free
+    b exec_bad_format
+exec_close_bad_format:
+    mov x0, x19
+    bl dos_close
+    b exec_bad_format
+exec_close_error:
+    mov x23, x0
+    mov x0, x19
+    bl dos_close
+    mov x0, x23
+    mov x1, #1
+    b pe_return
+exec_unload_bad_format:
+    cbnz x27, exec_free_bad_format   // never free the caller's overlay area
+    mov x0, x23
+    bl dos_free
+    b exec_free_bad_format
+exec_free_too_big:
+    mov x0, x22
+    bl dos_free
+    mov x0, #8
+    mov x1, #1
+    b pe_return
+exec_free_error:
+    mov x23, x0
+    mov x0, x22
+    bl dos_free
+    mov x0, x23
+    mov x1, #1
+    b pe_return
+exec_bad_format:
+    mov x0, #11                // invalid executable format
+    mov x1, #1
+pe_return:
+    add sp, sp, #64
+    ldp x27, x28, [sp], #16
+    ldp x25, x26, [sp], #16
+    ldp x23, x24, [sp], #16
+    ldp x21, x22, [sp], #16
+    ldp x19, x20, [sp], #16
+    unframe
+
+// Frame: 0 parent frame, 8 parent owner, 16 parent DTA, 24 parent exit code,
+// 40 parent handles+modes (288), 328 descriptor, 392 DTA, 672 DTA capacity,
+// 704 context, 816 PSP override, 824 vectors 22h-24h, 848 TSR flag,
+// 856 InDOS, 864 image base.
+dos_exec:
+    frame
+    stp x19, x20, [sp, #-16]!
+    stp x21, x22, [sp, #-16]!
+    stp x23, x24, [sp, #-16]!
+    stp x25, x26, [sp, #-16]!
+    stp x27, x28, [sp, #-16]!
+    sub sp, sp, #PROCESS_FRAME_SIZE
+    mov x26, sp
+    mov x20, x1                 // stable caller-owned command tail
+    mov x1, #0
+    mov x2, #0
+    bl pe_load
+    cbnz x1, exec_return
+    mov x22, x0                 // loaded image
+    mov x25, x2                 // entry point
+    mov x19, x0                 // the image base is the process owner id
+    str x0, [x26, #864]
+    str xzr, [x26, #848]
     add x28, x26, #328
     // All descriptor pointers are installed at runtime: no absolute fixups.
     address x1, process_signature
@@ -221,12 +342,47 @@ exec_read_image:
     add x1, x26, #40
     mov x2, #288
     bl copy_bytes
+    // Handles opened with the no-inherit bit (80h) stay with the parent.
+    address x0, handles
+    address x1, handle_modes
+    mov x2, #0
+4:
+    ldrb w3, [x1, x2]
+    tbz w3, #7, 5f
+    str xzr, [x0, x2, lsl #3]
+    strb wzr, [x1, x2]
+5:
+    add x2, x2, #1
+    cmp x2, #32
+    b.lo 4b
+    // The PSP kept the terminate, Ctrl-C and critical-error vectors.
+    address x0, dos_vectors
+    ldr x1, [x0, #0x22 * 8]
+    str x1, [x26, #824]
+    ldr x1, [x0, #0x23 * 8]
+    str x1, [x26, #832]
+    ldr x1, [x0, #0x24 * 8]
+    str x1, [x26, #840]
+    address x0, dos_psp_override
+    ldr x1, [x0]
+    str x1, [x26, #816]
+    str xzr, [x0]
+    address x0, dos_sda
+    ldrb w1, [x0, #SDA_INDOS]
+    str x1, [x26, #856]
+    strb wzr, [x0, #SDA_INDOS]  // the child runs outside DOS
     mov x0, x25
     mov x1, x28
     add x2, x26, #704
     bl proc_call
     mov x24, x0
+    ldr x27, [x26, #848]        // 1 Ctrl-C, 3 stay resident
+    cmp x27, #3
+    b.eq 6f                     // 31h: the program and its memory stay
     bl arena_release_owner
+6:
+    mov x0, x19
+    bl lock_release_owner
     bl search_release_owner
     mov x25, #0
 2:
@@ -255,58 +411,45 @@ exec_read_image:
     address x0, process_frames
     ldr x1, [x26]
     str x1, [x0]
-    address x0, last_exit_code
-    // Returning EFI errors count as abnormal termination (DOS termination 2).
+    address x0, dos_vectors
+    ldr x1, [x26, #824]
+    str x1, [x0, #0x22 * 8]
+    ldr x1, [x26, #832]
+    str x1, [x0, #0x23 * 8]
+    ldr x1, [x26, #840]
+    str x1, [x0, #0x24 * 8]
+    address x0, dos_psp_override
+    ldr x1, [x26, #816]
+    str x1, [x0]
+    address x0, dos_sda
+    ldr x1, [x26, #856]
+    strb w1, [x0, #SDA_INDOS]
+    // Termination type in the high byte: 0 normal, 1 Ctrl-C, 2 CPU
+    // exception or error return, 3 terminate and stay resident.
+    and x23, x23, #255
+    cmp x27, #3
+    b.ne 7f
+    orr x23, x23, #0x300
+    b 3f
+7:
+    cmp x27, #1
+    b.ne 8f
+    mov x23, #0x0100
+    b 3f
+8:
     cbz x24, 3f
     mov x23, #0x0201
 3:
+    address x0, last_exit_code
     str x23, [x0]
+    cmp x27, #3
+    b.eq 9f
     mov x0, x22                 // unload the image (owned by the parent)
     bl dos_free
+9:
     mov x0, #0
     mov x1, #0
     b exec_return
-exec_free_close_error:
-    mov x23, x0
-    mov x0, x22
-    bl dos_free
-    mov x0, x19
-    bl dos_close
-    mov x0, x23
-    mov x1, #1
-    b exec_return
-exec_free_close_bad_format:
-    mov x0, x19
-    bl dos_close
-exec_free_bad_format:
-    mov x0, x22
-    bl dos_free
-    b exec_bad_format
-exec_close_bad_format:
-    mov x0, x19
-    bl dos_close
-    b exec_bad_format
-exec_close_error:
-    mov x23, x0
-    mov x0, x19
-    bl dos_close
-    mov x0, x23
-    mov x1, #1
-    b exec_return
-exec_unload_bad_format:
-    mov x0, x23
-    bl dos_free
-    b exec_free_bad_format
-exec_free_error:
-    mov x23, x0
-    mov x0, x22
-    bl dos_free
-    mov x0, x23
-    mov x1, #1
-    b exec_return
-exec_bad_format:
-    mov x0, #11                // invalid executable format
-    mov x1, #1
 exec_return:
     add sp, sp, #PROCESS_FRAME_SIZE
     ldp x27, x28, [sp], #16
@@ -315,6 +458,21 @@ exec_return:
     ldp x21, x22, [sp], #16
     ldp x19, x20, [sp], #16
     unframe
+
+// 31h: x0 = exit code, x1 = bytes to keep (the whole image stays resident
+// with every block the program allocated; open files are still closed).
+dos_keep_process:
+    frame
+    address x2, process_frames
+    ldr x2, [x2]
+    cbz x2, terminate_no_process
+    and x0, x0, #255
+    address x3, process_exit_code
+    str x0, [x3]
+    mov x0, #3
+    str x0, [x2, #848]
+    mov x0, #0
+    b proc_resume
 
 dos_terminate:
     frame

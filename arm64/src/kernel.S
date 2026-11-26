@@ -40,6 +40,7 @@ efi_main:
     bl search_init
     bl memory_init
     bl clock_init
+    bl dos2_init
     bl platform_go_native
     address x0, banner
     bl puts
@@ -88,128 +89,6 @@ efi_return:
     ldp x21, x22, [sp], #16
     ldp x19, x20, [sp], #16
     unframe
-
-// AAPCS64: w8 = DOS function; x0-x3 = arguments. x1=0 on success;
-// x1=1 on error, x0=error code. Unimplemented calls fail explicitly.
-.global dos_call
-dos_call:
-    cmp w8, #0x0d
-    b.eq dos_disk_reset
-    cmp w8, #0x0e
-    b.eq dos_set_drive
-    cmp w8, #0x19
-    b.eq dos_get_drive
-    cmp w8, #0x36
-    b.eq dos_free_space
-    cmp w8, #0x44
-    b.eq dos_ioctl
-    cmp w8, #0x57
-    b.eq dos_file_time
-    cmp w8, #0x5b
-    b.eq dos_create_new
-    cmp w8, #0x0f
-    b.eq dos_fcb_open
-    cmp w8, #0x10
-    b.eq dos_fcb_close
-    cmp w8, #0x13
-    b.eq dos_fcb_delete
-    cmp w8, #0x14
-    b.eq dos_fcb_seq_read
-    cmp w8, #0x15
-    b.eq dos_fcb_seq_write
-    cmp w8, #0x16
-    b.eq dos_fcb_create
-    cmp w8, #0x21
-    b.eq dos_fcb_random_read
-    cmp w8, #0x22
-    b.eq dos_fcb_random_write
-    cmp w8, #0x23
-    b.eq dos_fcb_get_length
-    cmp w8, #0x24
-    b.eq dos_fcb_get_position
-    cmp w8, #0x01
-    b.eq dos_console_input
-    cmp w8, #0x06
-    b.eq dos_console_direct
-    cmp w8, #0x07
-    b.eq dos_console_noecho
-    cmp w8, #0x08
-    b.eq dos_console_noecho
-    cmp w8, #0x0a
-    b.eq dos_console_buffer
-    cmp w8, #0x0b
-    b.eq dos_console_status
-    cmp w8, #0x0c
-    b.eq dos_console_flush
-    cmp w8, #0x1a
-    b.eq dos_set_dta
-    cmp w8, #0x2f
-    b.eq dos_get_dta
-    cmp w8, #0x2a
-    b.eq dos_get_date
-    cmp w8, #0x2b
-    b.eq dos_set_date
-    cmp w8, #0x2c
-    b.eq dos_get_time
-    cmp w8, #0x2d
-    b.eq dos_set_time
-    cmp w8, #0x02
-    b.eq dos_console_out
-    cmp w8, #0x09
-    b.eq dos_print_string
-    cmp w8, #0x30
-    b.eq dos_get_version
-    cmp w8, #0x39
-    b.eq dos_mkdir
-    cmp w8, #0x3a
-    b.eq dos_rmdir
-    cmp w8, #0x3b
-    b.eq dos_chdir
-    cmp w8, #0x3c
-    b.eq dos_create
-    cmp w8, #0x3d
-    b.eq dos_open
-    cmp w8, #0x3e
-    b.eq dos_close
-    cmp w8, #0x3f
-    b.eq dos_read
-    cmp w8, #0x40
-    b.eq dos_write
-    cmp w8, #0x41
-    b.eq dos_delete
-    cmp w8, #0x42
-    b.eq dos_seek
-    cmp w8, #0x43
-    b.eq dos_attributes
-    cmp w8, #0x45
-    b.eq dos_dup
-    cmp w8, #0x46
-    b.eq dos_dup2
-    cmp w8, #0x47
-    b.eq dos_getcwd
-    cmp w8, #0x48
-    b.eq dos_allocate
-    cmp w8, #0x49
-    b.eq dos_free
-    cmp w8, #0x4a
-    b.eq dos_resize
-    cmp w8, #0x4b
-    b.eq dos_exec
-    cmp w8, #0x4c
-    b.eq dos_terminate
-    cmp w8, #0x4d
-    b.eq dos_get_exit_code
-    cmp w8, #0x4e
-    b.eq dos_find_first
-    cmp w8, #0x4f
-    b.eq dos_find_next
-    cmp w8, #0x56
-    b.eq dos_rename
-    cmp w8, #0x68
-    b.eq dos_commit
-    mov x0, #1                  // invalid function
-    mov x1, #1
-    ret
 
 // Adapted from GETSET.ASM $GET_VERSION: 4.00 and OEM/user identity.
 // Segmented pointers and the compatibility fake-version state are absent.
@@ -270,9 +149,18 @@ open_common:
     stp x19, x20, [sp, #-16]!
     stp x21, x22, [sp, #-16]!
     stp x23, x24, [sp, #-16]!
-    cmp x1, #2
-    b.hi open_denied
-    mov x23, x1
+    stp x25, x26, [sp, #-16]!
+    // Open mode byte: bits 0-2 access, 4-6 sharing, 7 not inherited.
+    mov x9, #0xf7
+    bics xzr, x1, x9
+    b.ne open_bad_mode
+    and x23, x1, #7
+    cmp x23, #2
+    b.hi open_bad_mode
+    ubfx x25, x1, #4, #3
+    cmp x25, #4
+    b.hi open_bad_mode
+    and x26, x1, #0x80
     mov x24, x2
     mov x19, x0
     address x20, handles
@@ -286,6 +174,14 @@ open_common:
     mov x0, #4                  // too many open files
     b open_error
 2:
+    mov x0, x19
+    bl dev_lookup
+    cbnz x0, open_device
+    mov x0, x19
+    mov x1, x23
+    mov x2, x25
+    bl sft_check
+    cbnz x1, open_error
     address x0, root_directory
     ldr x22, [x0]
     cbz x22, open_denied
@@ -322,11 +218,20 @@ open_success:
     cbnz x0, open_reject_object
     ldr x2, [x1, #72]
     tbnz x2, #4, open_reject_object
+    ldr x0, [x20, x21, lsl #3]
+    mov x1, x23
+    mov x2, x25
+    bl sft_register
+open_install_mode:
     address x3, handle_modes
-    strb w23, [x3, x21]
+    orr w4, w23, w26
+    strb w4, [x3, x21]
     mov x0, x21
     mov x1, #0
     b open_return
+open_device:
+    str x0, [x20, x21, lsl #3]
+    b open_install_mode
 open_reject_object:
     ldr x0, [x20, x21, lsl #3]
     ldr x3, [x0, #16]
@@ -338,11 +243,15 @@ open_not_found:
     b open_error
 open_path_error:
     b open_error
+open_bad_mode:
+    mov x0, #12                 // invalid access code
+    b open_error
 open_denied:
     mov x0, #5
 open_error:
     mov x1, #1
 open_return:
+    ldp x25, x26, [sp], #16
     ldp x23, x24, [sp], #16
     ldp x21, x22, [sp], #16
     ldp x19, x20, [sp], #16
@@ -385,10 +294,11 @@ file_handle:
     ret
 dos_close:
     frame
-    str x19, [sp, #-16]!
+    stp x19, x20, [sp, #-16]!
     mov x19, x0
     bl file_handle
     cbz x0, close_bad_handle
+    mov x20, x0
     // Duplicates share the same object and position. Close it only when the
     // final native handle reference is released.
     address x3, handles
@@ -405,9 +315,12 @@ dos_close:
     b.lo 1b
     bl parent_references_file
     cbnz x1, close_release
+    mov x0, x20
     ldr x3, [x0, #16]
     blr x3
     cbnz x0, close_bad_handle
+    mov x0, x20
+    bl sft_release
 close_release:
     address x3, handles
     str xzr, [x3, x19, lsl #3]
@@ -417,7 +330,7 @@ close_bad_handle:
     mov x0, #6
     mov x1, #1
 close_return:
-    ldr x19, [sp], #16
+    ldp x19, x20, [sp], #16
     unframe
 dos_read:
     cbnz x0, read_file_handle
@@ -434,11 +347,16 @@ read_file_handle:
     b.hs read_bad_handle
     address x3, handle_modes
     ldrb w4, [x3, x0]
+    and w4, w4, #3
     bl file_handle
     cbz x0, read_bad_handle
     cmp w4, #1
     b.eq read_access_error
     mov x21, x0
+    bl dev_id_of
+    cmn x0, #1
+    b.ne read_device
+    mov x0, x21
     sub sp, sp, #16
     mov x1, sp
     ldr x3, [x0, #48]
@@ -446,6 +364,11 @@ read_file_handle:
     ldr x22, [sp]
     add sp, sp, #16
     cbnz x0, read_device_error
+    mov x1, x22
+    mov x2, x20
+    mov x0, x21
+    bl lock_check
+    cbnz x0, read_error
     mov x0, x21
     bl get_file_info
     cbnz x0, read_device_error
@@ -471,6 +394,12 @@ read_file_handle:
 read_at_eof:
     mov x0, #0
     mov x1, #0
+    b read_return
+read_device:
+    mov x0, x21
+    mov x1, x19
+    mov x2, x20
+    bl dev_read
     b read_return
 read_bad_handle:
     mov x0, #6
@@ -507,10 +436,27 @@ write_file_handle:
     b.hs write_bad_handle
     address x3, handle_modes
     ldrb w4, [x3, x0]
+    and w4, w4, #3
     bl file_handle
     cbz x0, write_bad_handle
     cbz w4, write_access_error
     mov x21, x0
+    bl dev_id_of
+    cmn x0, #1
+    b.ne write_device
+    sub sp, sp, #16
+    mov x0, x21
+    mov x1, sp
+    ldr x3, [x0, #48]           // GetPosition for the lock check
+    blr x3
+    ldr x1, [sp]
+    add sp, sp, #16
+    cbnz x0, write_device_error
+    mov x0, x21
+    mov x2, x20
+    bl lock_check
+    cbnz x0, write_error
+    mov x0, x21
     cbz x20, write_truncate
     sub sp, sp, #16
     str x20, [sp]
@@ -528,7 +474,18 @@ write_file_handle:
     mov x0, x20
     mov x1, #0
     b write_return
+write_device:
+    mov x0, x21
+    mov x1, x19
+    mov x2, x20
+    bl dev_write
+    b write_return
 write_console:
+    address x0, process_frames
+    ldr x0, [x0]
+    cbz x0, 3f
+    bl ctrl_c_poll              // output to the console checks for Ctrl-C
+3:
     mov x21, #0
 1:
     cmp x21, x20
@@ -576,24 +533,36 @@ write_return:
 
 dos_delete:
     frame
-    str x19, [sp, #-16]!
+    stp x19, x20, [sp, #-16]!
+    mov x19, x0
+    bl dev_lookup
+    cbnz x0, delete_denied      // devices cannot be deleted
+    mov x0, x19
+    bl sft_path_open
+    cbnz x0, delete_denied      // SHARE refuses to delete an open file
+    mov x0, x19
     mov x1, #2
     bl dos_open
     cbnz x1, delete_return
     mov x19, x0
     bl file_handle
+    mov x20, x0
     ldr x3, [x0, #24]           // Delete also closes the EFI handle
     blr x3
     address x3, handles
     str xzr, [x3, x19, lsl #3]
-    cbnz x0, delete_error
+    mov x19, x0
+    mov x0, x20
+    bl sft_release
+    cbnz x19, delete_denied
+    mov x0, #0
     mov x1, #0
     b delete_return
-delete_error:
+delete_denied:
     mov x0, #5
     mov x1, #1
 delete_return:
-    ldr x19, [sp], #16
+    ldp x19, x20, [sp], #16
     unframe
 
 // Prefer the native FAT driver; firmware SimpleFileSystem is the fallback.
@@ -658,9 +627,15 @@ read_key:
     frame
     stp x19, x20, [sp, #-16]!
     sub sp, sp, #32
+    address x0, con_direct
+    ldr x0, [x0]
+    cbnz x0, read_key_pending
     address x0, handles
     ldr x0, [x0]
     cbz x0, read_key_pending
+    address x1, dev_objects
+    cmp x0, x1
+    b.eq read_key_pending       // stdin is CON itself
     mov x0, #0
     mov x1, sp
     mov x2, #1
@@ -681,6 +656,13 @@ read_key_pending:
     b read_key_return
 read_key_firmware:
     bl plat_read_key
+    cmp x0, #3
+    b.ne read_key_return
+    address x1, process_frames
+    ldr x1, [x1]
+    cbz x1, read_key_return     // the shell handles ^C itself
+    bl ctrl_c_raise             // returns only if vector 23h continues
+    b read_key_pending
 read_key_return:
     add sp, sp, #32
     ldp x19, x20, [sp], #16
@@ -697,6 +679,8 @@ read_line:
     bl read_key
     cmp w0, #26
     b.eq read_line_eof
+    cmp w0, #3
+    b.eq read_line_cancel
     cmp w0, #13
     b.eq 4f
     cmp w0, #10
@@ -718,6 +702,10 @@ read_line:
 read_line_eof:
     mov x22, #1
     b 4f
+read_line_cancel:               // ^C discards the line, as COMMAND does
+    address x0, ctrl_c_mark
+    bl puts
+    mov x21, #0
 3:
     cbz x21, 1b
     sub x21, x21, #1
@@ -1072,6 +1060,7 @@ banner: .asciz "\r\nMS-DOS 4.0 AArch64 port development runtime\r\nNative ARM64 
 prompt: .asciz "A:\\> "
 newline: .asciz "\r\n"
 erase_char: .asciz "\b \b"
+ctrl_c_mark: .asciz "^C"
 unknown_message: .asciz "Bad command or unsupported port feature.\r\n"
 help_message: .asciz "HELP VER ECHO CLS DIR TYPE DEL CD MD RD COPY REN ATTRIB DATE TIME\r\nREM CALL GOTO IF SELFTEST EXIT\r\nNative ARM64 EXE and BAT files; quote paths containing spaces.\r\nRedirection: < input, > output, >> append. A: is the boot volume.\r\n"
 version_message: .asciz "MS-DOS API baseline 4.00; AArch64 development port (partial).\r\n"
@@ -1116,3 +1105,9 @@ selftest_saved_cwd: .skip 256
 .include "src/clock.S"
 .include "src/fcb.S"
 .include "src/misc.S"
+.include "src/dispatch.S"
+.include "src/devices.S"
+.include "src/share.S"
+.include "src/nls.S"
+.include "src/disk.S"
+.include "src/dos3.S"

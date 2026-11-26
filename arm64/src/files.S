@@ -261,7 +261,7 @@ dos_dup:
     frame
     str x19, [sp, #-16]!
     mov x19, x0
-    bl file_handle
+    bl dup_source
     cbz x0, dup_bad_handle
     address x3, handles
     mov x4, #5
@@ -277,8 +277,7 @@ dos_dup:
 2:
     str x0, [x3, x4, lsl #3]
     address x3, handle_modes
-    ldrb w5, [x3, x19]
-    strb w5, [x3, x4]
+    strb w2, [x3, x4]
     mov x0, x4
     mov x1, #0
     b dup_return
@@ -299,9 +298,10 @@ dos_dup2:
     b.hs dup2_bad_handle
     cmp x0, x19
     b.eq dup2_same
-    bl file_handle
+    bl dup_source
     cbz x0, dup2_bad_handle
     mov x20, x0
+    str x2, [sp, #8]
     address x3, handles
     ldr x3, [x3, x19, lsl #3]
     cbz x3, dup2_install
@@ -312,13 +312,13 @@ dup2_install:
     address x3, handles
     str x20, [x3, x19, lsl #3]
     address x3, handle_modes
-    ldrb w4, [x3, x21]
+    ldr x4, [sp, #8]
     strb w4, [x3, x19]
     mov x0, x19
     mov x1, #0
     b dup2_return
 dup2_same:
-    bl file_handle
+    bl dup_source
     cbz x0, dup2_bad_handle
     mov x0, x19
     mov x1, #0
@@ -330,6 +330,27 @@ dup2_return:
     ldr x21, [sp], #16
     ldp x19, x20, [sp], #16
     unframe
+
+// x0 = handle. Returns x0 = object (an unredirected standard handle 0-2
+// becomes the CON device) and x2 = mode byte for the copy; x0 = 0 if invalid.
+dup_source:
+    mov x9, x0
+    cmp x9, #32
+    b.hs 1f
+    address x3, handles
+    ldr x0, [x3, x9, lsl #3]
+    address x3, handle_modes
+    ldrb w2, [x3, x9]
+    cbnz x0, 2f
+    cmp x9, #2
+    b.hi 1f
+    address x0, dev_objects
+    mov x2, #2
+2:
+    ret
+1:
+    mov x0, #0
+    ret
 
 // Open a path as an EFI object directly (not a DOS-visible handle).
 // x0=ASCII path, x1=EFI open mode, x2=attributes.
@@ -600,6 +621,14 @@ dos_rename:
     stp x19, x20, [sp, #-16]!
     stp x21, x22, [sp, #-16]!
     mov x20, x1
+    mov x19, x0
+    bl sft_path_open            // SHARE: an open file keeps its name
+    cbz x0, 2f
+    mov x0, #5
+    mov x1, #1
+    b rename_return
+2:
+    mov x0, x19
     mov x1, #3
     mov x2, #0
     bl open_path_object

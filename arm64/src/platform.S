@@ -153,23 +153,51 @@ plat_alloc:
     add x0, x0, x1
     lsr x0, x0, #PLAT_GRANULE_SHIFT     // granules needed
     cbz x0, 9f
+    // Walk the free runs and pick one by the 58h strategy:
+    // 0 first fit, 1 best fit (smallest run that fits), 2 last fit.
     address x1, plat_granule_map
-    mov x2, #0                  // candidate start
+    ldv x6, plat_alloc_strategy
+    mov x7, #-1                 // chosen start
+    mov x8, #-1                 // chosen run length (best fit)
+    mov x4, #0
 4:
-    add x3, x2, x0
-    cmp x3, #PLAT_GRANULES
-    b.hi 9f
-    mov x4, x2
-5:
-    cmp x4, x3
-    b.hs 7f
+    cmp x4, #PLAT_GRANULES
+    b.hs 6f
     ldrh w5, [x1, x4, lsl #1]
-    cbnz w5, 6f
+    cbz w5, 41f
     add x4, x4, #1
-    b 5b
-6:
-    add x2, x4, #1
     b 4b
+41:
+    mov x2, x4                  // run start
+42:
+    add x4, x4, #1
+    cmp x4, #PLAT_GRANULES
+    b.hs 43f
+    ldrh w5, [x1, x4, lsl #1]
+    cbz w5, 42b
+43:
+    sub x3, x4, x2              // run length
+    cmp x3, x0
+    b.lo 4b
+    cmp x6, #1
+    b.eq 44f
+    b.hi 45f
+    mov x7, x2                  // first fit: take it
+    b 6f
+44:
+    cmp x3, x8
+    b.hs 4b
+    mov x8, x3
+    mov x7, x2
+    b 4b
+45:
+    sub x7, x4, x0              // last fit: top of the highest run
+    b 4b
+6:
+    cmn x7, #1
+    b.eq 9f
+    mov x2, x7
+    add x3, x2, x0
 7:
     // Mark the run: first granule holds the count, the rest hold 0xffff.
     strh w0, [x1, x2, lsl #1]
@@ -855,6 +883,11 @@ plat_exception:
     bl puts
     mov x0, x22
     bl plat_print_hex
+    address x0, plat_exc_base   // lets PC be matched against kernel.elf
+    bl puts
+    address x0, efi_main
+    sub x0, x0, #0x1000         // kernel.elf links at 0x1000
+    bl plat_print_hex
     address x0, newline
     bl puts
     address x2, process_frames
@@ -899,6 +932,7 @@ rsdp_signature: .ascii "RSD PTR "
 plat_cls_sequence: .asciz "\x1b[2J\x1b[H"
 plat_exc_message: .asciz "\r\nCPU exception: ESR="
 plat_exc_pc: .asciz " PC="
+plat_exc_base: .asciz " KERNEL="
 plat_exc_far: .asciz " FAR="
 plat_exc_process: .asciz "Program terminated by CPU exception.\r\n"
 plat_exc_halt: .asciz "Kernel halted.\r\n"
@@ -928,5 +962,6 @@ vio_buffer: .skip 8
 vio_used_seen: .skip 8
 vio_part_lba: .skip 8
 plat_granule_map: .skip PLAT_GRANULES * 2
+plat_alloc_strategy: .skip 8
 .balign 16
 plat_memory_map: .skip 16384

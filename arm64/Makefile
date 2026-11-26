@@ -10,7 +10,7 @@ SOURCES := $(wildcard src/*.S)
 FIXTURES := $(wildcard fixtures/*)
 
 .PHONY: all image pi-image unit smoke smoke-firmware check validate snapshot fat-test clean
-all: $(BUILD)/BOOTAA64.EFI $(BUILD)/NATIVE.EXE
+all: $(BUILD)/BOOTAA64.EFI $(BUILD)/NATIVE.EXE $(BUILD)/DOSTEST.EXE
 image: $(BUILD)/msdos-arm64.img
 pi-image: $(BUILD)/msdos-arm64-pi3.img
 
@@ -72,10 +72,23 @@ $(BUILD)/native.bin: $(BUILD)/native.elf
 $(BUILD)/NATIVE.EXE: $(BUILD)/native.bin $(BUILD)/native.elf tools/pe.py
 	$(PYTHON) tools/pe.py --nm $(NM) $(BUILD)/native.elf $< $@
 
-$(BUILD)/msdos-arm64.img: $(BUILD)/BOOTAA64.EFI $(BUILD)/NATIVE.EXE $(FIXTURES) tools/image.py
+# Generic rules for the separately linked native test programs.
+$(BUILD)/%.o: programs/%.S | $(BUILD)
+	$(AS) -march=armv8-a -g -o $@ $<
+
+$(BUILD)/dostest.elf: $(BUILD)/dostest.o link.ld
+	$(LD) -T link.ld --no-undefined -o $@ $<
+
+$(BUILD)/dostest.bin: $(BUILD)/dostest.elf
+	$(OBJCOPY) -O binary $< $@
+
+$(BUILD)/DOSTEST.EXE: $(BUILD)/dostest.bin $(BUILD)/dostest.elf tools/pe.py
+	$(PYTHON) tools/pe.py --nm $(NM) $(BUILD)/dostest.elf $< $@
+
+$(BUILD)/msdos-arm64.img: $(BUILD)/BOOTAA64.EFI $(BUILD)/NATIVE.EXE $(BUILD)/DOSTEST.EXE $(FIXTURES) tools/image.py
 	$(PYTHON) tools/image.py $< $@
 
-$(BUILD)/msdos-arm64-pi3.img: $(BUILD)/BOOTAA64.EFI $(BUILD)/NATIVE.EXE $(FIXTURES) tools/pi_image.py
+$(BUILD)/msdos-arm64-pi3.img: $(BUILD)/BOOTAA64.EFI $(BUILD)/NATIVE.EXE $(BUILD)/DOSTEST.EXE $(FIXTURES) tools/pi_image.py
 	$(PYTHON) tools/pi_image.py $< $@ --replace-generated $(if $(PI_FIRMWARE),--firmware "$(PI_FIRMWARE)")
 
 clean:

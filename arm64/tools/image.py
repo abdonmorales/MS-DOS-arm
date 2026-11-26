@@ -109,6 +109,7 @@ def main():
     for name, data in [
         (b'LICENSE TXT', (Path(__file__).parent.parent.parent / 'LICENSE').read_bytes()),
         (b'NATIVE  EXE', (args.efi.parent / 'NATIVE.EXE').read_bytes()),
+        (b'DOSTEST EXE', (args.efi.parent / 'DOSTEST.EXE').read_bytes()),
         (b'SCRIPT  BAT', (Path(__file__).parent.parent / 'fixtures/SCRIPT.BAT').read_bytes()),
         (b'CHILD   BAT', (Path(__file__).parent.parent / 'fixtures/CHILD.BAT').read_bytes()),
         (b'ARMTEST TXT', b'ARM64 FAT read\r\n'),
