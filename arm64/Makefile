@@ -9,15 +9,20 @@ BUILD ?= build
 SOURCES := $(wildcard src/*.S)
 FIXTURES := $(wildcard fixtures/*)
 
-.PHONY: all image pi-image smoke validate snapshot clean
+.PHONY: all image pi-image unit smoke check validate snapshot clean
 all: $(BUILD)/BOOTAA64.EFI $(BUILD)/NATIVE.EXE
 image: $(BUILD)/msdos-arm64.img
 pi-image: $(BUILD)/msdos-arm64-pi3.img
 
 FIRMWARE ?= /usr/share/qemu-efi-aarch64/QEMU_EFI.fd
 PI_FIRMWARE ?=
+unit: $(BUILD)/kernel.elf $(BUILD)/kernel.bin
+	$(PYTHON) tools/unit.py --build $(BUILD) --nm $(NM)
+
 smoke: image
 	$(PYTHON) tools/smoke.py $(BUILD)/msdos-arm64.img --firmware $(FIRMWARE) --log $(BUILD)/smoke.log
+
+check: unit smoke
 
 validate: image pi-image
 	$(PYTHON) tools/validate.py --build $(BUILD) --firmware $(FIRMWARE)

@@ -81,6 +81,17 @@ image copy and check 120 console requests, including 70 successive native
 launches that deliberately leave resources for process cleanup, buffered input
 with backspace editing, batch control flow, and redirection restoration.
 
+`make -C arm64 unit` runs host-side unit tests in about 6 seconds, with no
+firmware or boot. `tools/unit.py` loads `build/kernel.bin` into the Unicorn CPU
+emulator (`python3 -m pip install unicorn`) and calls routines by their
+`kernel.elf` symbol, comparing each against a Python reference: every date
+from 1975 to 2111 through `validate_date`, `date_to_days` and `days_to_date`,
+every date and time of day through `pack_efi_time`, about 330,000
+`wildcard_match` pattern/name pairs, and every DOS function number through
+`dos_call`, which must reach the handler listed in `DISPATCH` and fail
+anything ABI.md does not document. Only routines that need no UEFI services
+can be called this way. `make -C arm64 check` runs `unit` then `smoke`.
+
 ## Disk images
 
 | Image | Format | Verified scope |

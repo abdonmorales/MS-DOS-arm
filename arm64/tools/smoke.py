@@ -27,7 +27,9 @@ def main():
                '-bios', str(args.firmware), '-drive',
                f'file={image},format=raw,if=none,id=dos',
                '-device', 'virtio-blk-pci,drive=dos', '-nographic', '-monitor',
-               'none', '-net', 'none', '-no-reboot']
+               'none', '-net', 'none', '-no-reboot',
+               # EDK2 otherwise waits out a hidden boot-menu timeout (~5 s).
+               '-boot', 'menu=on,splash-time=0']
         process = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                    stderr=subprocess.STDOUT)
         selector = selectors.DefaultSelector()
