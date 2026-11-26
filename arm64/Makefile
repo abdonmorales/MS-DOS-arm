@@ -22,7 +22,8 @@ unit: $(BUILD)/kernel.elf $(BUILD)/kernel.bin
 smoke: image
 	$(PYTHON) tools/smoke.py $(BUILD)/msdos-arm64.img --firmware $(FIRMWARE) --log $(BUILD)/smoke.log
 
-check: unit smoke
+check: unit
+	$(MAKE) smoke
 
 validate: image pi-image
 	$(PYTHON) tools/validate.py --build $(BUILD) --firmware $(FIRMWARE)

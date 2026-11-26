@@ -19,6 +19,7 @@ import os
 import re
 import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -35,6 +36,7 @@ MEMORY_SIZE = 0x400000
 SCRATCH = 0x300000           # argument strings
 STACK_TOP = 0x3F0000
 RETURN_TRAP = 0x3FF000       # BRK #0; reaching it ends a call
+CALL_TIMEOUT = 2.0           # seconds; any single routine call is microseconds
 
 
 class Kernel:
@@ -55,6 +57,23 @@ class Kernel:
         self.cpu.mem_write(RETURN_TRAP, bytes.fromhex('000020d4'))
         self.stops = {}
         self.stopped_at = None
+        # A hung routine must fail the test, not stall it. Unicorn's own
+        # count=/timeout= limits make every call several times slower, so a
+        # watchdog thread stops the CPU when one call runs past CALL_TIMEOUT.
+        self.call_serial = 0
+        self.in_call = False
+        self.timed_out = False
+        threading.Thread(target=self._watchdog, daemon=True).start()
+
+    def _watchdog(self):
+        seen = None
+        while True:
+            time.sleep(CALL_TIMEOUT / 2)
+            current = (self.call_serial, self.in_call)
+            if current[1] and current == seen:
+                self.timed_out = True
+                self.cpu.emu_stop()
+            seen = current
 
     def address(self, name):
         try:
@@ -88,13 +107,20 @@ class Kernel:
         cpu.reg_write(UC_ARM64_REG_SP, STACK_TOP)
         cpu.reg_write(UC_ARM64_REG_LR, RETURN_TRAP)
         self.stopped_at = None
+        self.call_serial += 1
+        self.in_call = True
         try:
             # No count/timeout limit: either one makes Unicorn several times slower.
             cpu.emu_start(self.address(name), RETURN_TRAP)
         except UcError as error:
             pc = cpu.reg_read(UC_ARM64_REG_PC)
             raise RuntimeError(f'{name} faulted at pc={pc:#x}: {error}') from None
+        finally:
+            self.in_call = False
         pc = cpu.reg_read(UC_ARM64_REG_PC)
+        if self.timed_out:
+            raise RuntimeError(f'{name} did not return within {CALL_TIMEOUT:g}s '
+                               f'(pc={pc:#x}); infinite loop?')
         if self.stopped_at is None and pc != RETURN_TRAP:
             raise RuntimeError(f'{name} stopped at pc={pc:#x} without returning')
         return [cpu.reg_read(UC_ARM64_REG_X0 + index) for index in range(results)]
@@ -271,10 +297,13 @@ def test_dispatcher(kernel):
                              f'{sorted(hex(n) for n in set(table) - documented)}, only in '
                              f'ABI.md: {sorted(hex(n) for n in documented - set(table))}')
     kernel.stop_at(set(table.values()))
-    values = list(range(256)) + [0x100 + n for n in table] + [0xffffffff, 0x8000000d]
+    # dos_call must look only at w8: the upper half of x8 is garbage.
+    values = list(range(256)) + [0x100 + n for n in table] + [0xffffffff, 0x8000000d,
+                                                            0xdead_0000_0000_000d,
+                                                            0xffff_ffff_0000_0040]
     for number in values:
         x0, x1 = kernel.call('dos_call', w8=number, results=2)
-        expected = table.get(number)
+        expected = table.get(number & 0xffffffff)
         if expected is None:
             if kernel.stopped_at is not None or (x0, x1) != (1, 1):
                 raise AssertionError(f'dos_call w8={number:#x} should fail with error 1, '
@@ -309,6 +338,8 @@ def main():
     args = parser.parse_args()
     started = time.monotonic()
     tests = [test for test in TESTS if not args.only or args.only in test.__name__]
+    if not tests:
+        sys.exit(f'no unit test name contains {args.only!r}')
     with concurrent.futures.ProcessPoolExecutor(max_workers=max(1, args.jobs)) as pool:
         results = list(pool.map(run_test, itertools.repeat(args.build),
                                 itertools.repeat(args.nm), tests))
