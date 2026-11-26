@@ -44,7 +44,8 @@ registers allowed by AAPCS64. All structures are little endian.
 ## Dispatched functions
 
 Every number from `00h` to `6Ch` is dispatched (DISPATCH.ASM's table, in
-[src/dispatch.S](src/dispatch.S)); numbers above `6Ch` return error 1. A
+[src/dispatch.S](src/dispatch.S)), plus the ARM DOS extension `E0h`; other
+numbers above `6Ch` return error 1. A
 failing call (`x1=1`) is recorded for `59h`. `tools/unit.py` checks that the
 binary's table matches this list.
 
@@ -133,6 +134,28 @@ binary's table matches this list.
 | `68h`, `6Ah` | `x0` handle | Flush/commit (no-op success on a read-only handle) |
 | `69h` | `x0` 0 get / 1 set, `x1` drive, `x2` 25-byte buffer | Media ID: u16 level 0, u32 serial, 11-byte label, 8-byte file system type (from the boot record) |
 | `6Ch` | `x0` path, `x1` open mode, `x2` attributes, `x3` action | Extended open/create; `x2` 1 opened, 2 created, 3 replaced |
+| `E0h` | `x0` subfunction 0–5 | ARM DOS extension: raw disk services for INSTALL (below) |
+
+### Disk services (E0h, ARM DOS extension)
+
+DOS reached whole disks through INT 13h; this call stands in for it while
+UEFI boot services run (firmware mode, as on the live ISO). A disk is a
+firmware Block I/O device that is a whole disk, present, writable, at least
+8 MiB, with 512–4096-byte blocks, and not the disk ARM DOS booted from (its
+device path is not a prefix of the boot partition's). `INSTALL.EXE` is the
+user.
+
+| `x0` | Arguments | Result |
+| --- | --- | --- |
+| 0 | None | Finds the disks; `x0` their count (0 under the native kernel) |
+| 1 | `x1` disk, `x2` 32-byte buffer | u64 block size, u64 blocks, u64 flags (1 removable), u64 0 |
+| 2, 3 | `x1` disk, `x2` first block, `x3` blocks, `x4` buffer | Read / write (any alignment; 64 KiB at a time through a kernel buffer) |
+| 4 | `x1` disk, `x2` first block, `x3` blocks | Attaches that range (a partition) as the next drive letter, as a block device driver's unit; `x0` the drive (0 = A:). Up to 4 per boot. FORMAT then works on it |
+| 5 | `x1` disk | Flush the disk's write cache |
+
+Disk numbers count from 0 in the order of the last subfunction 0. Errors:
+1 bad subfunction, 15 bad disk number (or no drive letter left), 21 device
+error, 87 a range outside the disk, 4 no attach slot left.
 
 ### Devices
 

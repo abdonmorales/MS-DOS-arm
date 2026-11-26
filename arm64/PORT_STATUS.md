@@ -35,4 +35,4 @@ listed with what replaces it.
 | XMA2EMS, XMAEM, SMARTDRV EMS paths | x86 expanded/extended memory | Flat 64-bit memory |
 | GRAFTABL, GRAPHICS, DISPLAY, KEYB, MODE (video/keyboard parts) | CGA/EGA/VGA and PC keyboard hardware | Serial/ANSI console; MODE keeps serial settings |
 | FASTOPEN, IFSFUNC, NLSFUNC, SHARE as TSRs | x86 resident programs hooking INT 21h | Built into the kernel where the behaviour is kept |
-| FDISK (MBR CHS editing) | BIOS geometry | MBR/GPT partition listing, optional |
+| FDISK (MBR CHS editing), SELECT (the DOS 4 installer) | BIOS geometry and INT 13h; x86 menus | `INSTALL.EXE` partitions (one MBR partition, type EFh), formats and copies ARM DOS to a disk the firmware offers |

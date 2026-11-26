@@ -92,6 +92,7 @@ The utilities from `v4.0/src/CMD` are separate native programs on the image:
 `APPEND`, `ASSIGN`, `ATTRIB`, `BACKUP`, `CHKDSK`, `COMP`, `DISKCOMP`,
 `DISKCOPY`, `EDLIN`, `FC`, `FIND`, `FORMAT`, `JOIN`, `LABEL`, `MEM`, `MORE`,
 `RECOVER`, `REPLACE`, `RESTORE`, `SORT`, `SUBST`, `SYS`, `TREE` and `XCOPY`.
+`INSTALL` puts ARM DOS on another disk (see [Live ISO and INSTALL](#live-iso-and-install)).
 The `CONFIG.SYS` fixture loads `RAMDRIVE.SYS` twice and `VDISK.SYS` once, so
 drives B:, C: and D: are RAM disks for the multi-drive tools (`B:` switches
 drive, as in DOS). It also loads `ANSI.SYS` (DOS escape sequences, cursor
@@ -126,7 +127,7 @@ batch ends), `ECHO.`, `@`, `REM`, `CALL`, `GOTO`, `SHIFT`,
 `IF [NOT] EXIST/ERRORLEVEL/string1==string2`, `PAUSE`, and `EXIT /B`. Commands
 are limited to 255 bytes and `CALL` nesting to 16 scripts; a batch file started
 from another without `CALL` replaces it, so restart loops run indefinitely.
-Internal command names end at `= / + ; , . \\ " [` as in COMMAND (`cd..`,
+Internal command names end at `= / + ; , . \ " [` as in COMMAND (`cd..`,
 `dir/w`, `echo.text`). `DATE` and `TIME` show the
 clock in the country's format and prompt for a new value. `EXIT` powers the
 machine off in native mode (the firmware is gone) and returns to UEFI in
@@ -189,11 +190,70 @@ over two mounts, and must pass `fsck.fat -n` and match an mtools read-back.
 | --- | --- | --- |
 | `build/msdos-arm64.img` | 64 MiB MBR/FAT16, ARM64 EFI application | Boots in QEMU `virt`; API and console tests pass |
 | `build/msdos-arm64-pi3.img` | 128 MiB MBR/FAT32, Pi 3 boot files and UEFI firmware | Firmware/package structure checked; same payload tested through ARM64 UEFI; physical Pi boot unverified |
+| `build/armdos.iso` | Live ISO: UEFI El Torito, 30 MiB FAT16 boot image (also MBR partition 2) | Boots in QEMU `virt` as a CD and as a USB stick; `INSTALL` to a blank disk, which then boots (`make iso-test`) |
 
 Both images include `EFI/BOOT/BOOTAA64.EFI`, `NATIVE.EXE`, `DOSTEST.EXE`, batch fixtures,
 `ARMTEST.TXT`, a SHA-256 sidecar and a JSON manifest. The manifests record that physical hardware is
 unverified (`complete_msdos_port` stays false until a real Pi 3 boots). Raw build products are ignored by Git. Compressed, validated image snapshots
 and their checksums are published in [images](images/README.md) on the `arm` branch.
+
+## Live ISO and INSTALL
+
+`make -C arm64 iso` builds `build/armdos.iso` from the generic disk image
+(it needs `xorriso` as well as mtools and dosfstools). The ISO boots on any
+ARM64 UEFI machine or VM, such as QEMU `virt` or UTM, from a virtual CD or
+written to a USB stick. A Raspberry Pi 3 does not boot it: use the SD-card
+image there.
+
+The ISO starts the normal ARM DOS prompt as a live system, so you can look
+around and run programs before installing anything:
+
+- Drive A: is the ISO itself and is **read-only**. Writes to it fail and
+  nothing on A: changes between boots.
+- `CONFIG.SYS` on the ISO loads one 1 MiB RAM disk, B:, for scratch files.
+  It is empty again after a restart.
+- The ISO holds the release file set: the disk image's test fixtures
+  (`TESTDRV.SYS`, `DOSTEST.EXE`, the sample text and batch files, and the
+  test `CONFIG.SYS`) are left out or replaced.
+
+`INSTALL` (`INSTALL.EXE`) copies ARM DOS to a writable disk, as SELECT did
+for DOS 4. It lists the disks the firmware offers, apart from the one ARM
+DOS started from, and asks which one to use and for confirmation. Then it
+writes an MBR with one partition of type EFh (from 1 MiB, at most 2000 MB,
+the FAT16 limit of FORMAT), formats it with `FORMAT d: /SELECT /V:ARMDOS`,
+and copies every file from A: with `XCOPY`, `\EFI\BOOT\BOOTAA64.EFI`
+included. **Everything on the chosen disk is erased.** `INSTALL n /Y` picks
+disk n without asking, for scripts. INSTALL needs UEFI boot services, so it
+runs from the live ISO (or any firmware-mode boot). Under the native kernel
+it finds no disks.
+
+To install in QEMU:
+
+```sh
+qemu-img create -f raw armdos-disk.img 512M
+qemu-system-aarch64 -machine virt -cpu cortex-a72 -m 256 -nographic \
+  -bios /usr/share/qemu-efi-aarch64/QEMU_EFI.fd \
+  -device virtio-scsi-pci -drive file=arm64/build/armdos.iso,if=none,id=cd,media=cdrom,readonly=on \
+  -device scsi-cd,drive=cd \
+  -drive file=armdos-disk.img,if=none,id=hd,format=raw -device virtio-blk-pci,drive=hd
+```
+
+At the `A:\>` prompt run `INSTALL`. When it finishes, quit QEMU and start
+it again with only the `armdos-disk.img` lines; ARM DOS boots from the disk
+with A: writable.
+
+To install in UTM (untested; the same steps work in QEMU): create a new
+virtual machine with **Virtualize** (on Apple Silicon) or **Emulate** with the
+ARM64 architecture, choose **Other**, and pick `armdos.iso` as the boot ISO.
+Keep UEFI boot on and give it a VirtIO disk of at least 64 MB. Start it, run
+`INSTALL` at the prompt, shut the VM down, remove the ISO from its CD drive
+and start it again.
+
+`make -C arm64 iso-test FIRMWARE=...` checks all of this in QEMU: the live
+system as a CD and as a read-only USB stick (A: refuses writes, B: takes
+them), `INSTALL /Y` onto a blank 128 MiB disk, `fsck.fat` on the result, a
+boot of the installed disk alone that keeps a file written to A:, and that
+INSTALL does not offer the writable USB stick it booted from.
 
 Build the Pi image with:
 
