@@ -1,7 +1,8 @@
 # Validated AArch64 development disk snapshots
 
-These snapshots are an **incomplete MS-DOS 4.0 AArch64 port**, using UEFI Boot
-Services. They contain native ARM64 assembly, a separately linked native test
+These snapshots are the MS-DOS 4.0 AArch64 port with every software
+milestone done; physical hardware (milestone 8) is not yet verified, so their
+manifests still record the port as incomplete. They contain native ARM64 assembly, a separately linked native test
 program and batch fixtures. They do not run historical x86 executables.
 
 | Download | Expanded size | Intended platform |
@@ -10,7 +11,8 @@ program and batch fixtures. They do not run historical x86 executables.
 | [msdos-arm64-pi3.img.xz](msdos-arm64-pi3.img.xz) | 128 MiB | Pi 3B/3B+ with bundled Pi UEFI firmware |
 
 Each image passed FAT consistency checks, build-payload comparisons, native API
-integration checks and 183 console checks under QEMU AArch64 `virt`/UEFI,
+integration checks and the console checks counted in
+[validation.json](validation.json) under QEMU AArch64 `virt`/UEFI,
 with the native kernel (firmware exited) serving the disk and `fsck.fat` clean
 afterwards.
 For the Pi image, this validates FAT32 and the DOS payload through generic UEFI;

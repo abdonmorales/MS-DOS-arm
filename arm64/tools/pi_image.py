@@ -11,6 +11,7 @@ import subprocess
 import tempfile
 import urllib.request
 import zipfile
+from payloads import payload_paths
 
 FIRMWARE_VERSION = '1.53.1'
 FIRMWARE_SHA256 = '1d2b94c48461216808e6b6081ea7567653e9818a659f61e97e69a9b526cc0b60'
@@ -61,9 +62,8 @@ def main():
         boot_dir = source / 'EFI/BOOT'
         boot_dir.mkdir(parents=True)
         shutil.copyfile(args.efi, boot_dir / 'BOOTAA64.EFI')
-        for payload in sorted(args.efi.parent.iterdir()):
-            if payload.suffix in ('.EXE', '.SYS'):
-                shutil.copyfile(payload, source / payload.name)
+        for payload in payload_paths(args.efi.parent):
+            shutil.copyfile(payload, source / payload.name)
         shutil.copyfile(Path(__file__).parent.parent.parent / 'LICENSE', source / 'DOS-MIT.TXT')
         for fixture in sorted((Path(__file__).parent.parent / 'fixtures').iterdir()):
             shutil.copyfile(fixture, source / fixture.name)

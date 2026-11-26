@@ -441,6 +441,11 @@ def main():
             command('chcp', b'Active code page: 850')
             command('chcp 865', b'Invalid code page')
             command('chcp 437')
+            # The UEFI console shows ESC as '?': ANSI sequences must become
+            # ConOut calls in firmware mode, never reach it as text.
+            if b'?[' in output:
+                raise RuntimeError('an ANSI sequence reached the UEFI console')
+            checks += 1
             print(f'PASS: ARM64 UEFI disk boot, native API self-tests, {checks} console checks.')
         finally:
             selector.close()

@@ -39,9 +39,134 @@ plat_putc:
     str w0, [x1]
     ret
 2:
+    // The UEFI console shows ESC as '?', so ANSI sequences (from ANSI.SYS)
+    // become ConOut calls: ESC[2J clear, ESC[r;cH/f position, ESC[..m
+    // colours. Other sequences are dropped.
+    and w0, w0, #0xff
+    address x9, fw_esc_state
+    ldr x10, [x9]
+    cbnz x10, 5f
+    cmp w0, #27
+    b.ne plat_fw_output
+    mov x10, #1
+    str x10, [x9]
+    str xzr, [x9, #8]           // parameter count
+    stp xzr, xzr, [x9, #16]     // parameters
+    stp xzr, xzr, [x9, #32]
+    ret
+5:
+    cmp x10, #1
+    b.ne 6f
+    cmp w0, #'['
+    csel x10, xzr, x10, ne      // ESC 7, ESC 8 and the like: dropped
+    mov x11, #2
+    csel x10, x11, x10, eq
+    str x10, [x9]
+    ret
+6:
+    sub w11, w0, #'0'
+    cmp w11, #9
+    b.hi 7f
+    ldr x12, [x9, #8]           // a digit of the current parameter
+    cmp x12, #3
+    b.hi 61f
+    add x13, x9, #16
+    ldr x14, [x13, x12, lsl #3]
+    mov x15, #10
+    madd x14, x14, x15, x11
+    str x14, [x13, x12, lsl #3]
+61:
+    ret
+7:
+    cmp w0, #';'
+    b.ne 71f
+    ldr x12, [x9, #8]
+    add x12, x12, #1
+    str x12, [x9, #8]
+    ret
+71:
+    cmp w0, #'='                // ESC[=7h and ESC[?..: parameters too
+    b.eq 61b
+    cmp w0, #'?'
+    b.eq 61b
+    str xzr, [x9]               // the final letter
+    address x10, system_table
+    ldr x10, [x10]
+    ldr x10, [x10, #64]         // ConOut
+    cmp w0, #'J'
+    b.ne 72f
+    ldr x2, [x10, #48]          // ClearScreen
+    mov x0, x10
+    br x2
+72:
+    cmp w0, #'H'
+    b.eq 73f
+    cmp w0, #'f'
+    b.ne 74f
+73:
+    ldp x11, x12, [x9, #16]     // row, column (1-based; 0 means 1)
+    subs x11, x11, #1
+    csel x11, xzr, x11, lo
+    subs x12, x12, #1
+    csel x12, xzr, x12, lo
+    mov x0, x10
+    mov x1, x12
+    mov x2, x11
+    ldr x3, [x10, #56]          // SetCursorPosition(column, row)
+    br x3
+74:
+    cmp w0, #'m'
+    b.ne 79f
+    address x11, fw_attribute
+    ldr x12, [x11]
+    ldr x13, [x9, #8]
+    add x13, x13, #1            // parameters given
+    mov x14, #0
+75:
+    add x15, x9, #16
+    ldr x15, [x15, x14, lsl #3]
+    cbnz x15, 751f
+    mov x12, #0x07              // 0: normal
+    b 76f
+751:
+    cmp x15, #1
+    b.ne 752f
+    orr x12, x12, #0x08         // bold: bright
+    b 76f
+752:
+    sub x16, x15, #30
+    cmp x16, #7
+    b.hi 753f
+    address x17, fw_ansi_colour
+    ldrb w16, [x17, x16]
+    and x12, x12, #0xf8
+    orr x12, x12, x16
+    b 76f
+753:
+    sub x16, x15, #40
+    cmp x16, #7
+    b.hi 76f
+    address x17, fw_ansi_colour
+    ldrb w16, [x17, x16]
+    bic x12, x12, #0x70
+    orr x12, x12, x16, lsl #4
+76:
+    add x14, x14, #1
+    cmp x14, x13
+    b.hs 77f
+    cmp x14, #4
+    b.lo 75b
+77:
+    str x12, [x11]
+    mov x0, x10
+    mov x1, x12
+    ldr x2, [x10, #40]          // SetAttribute
+    br x2
+79:
+    ret
+plat_fw_output:
     frame
     sub sp, sp, #16
-    and w0, w0, #0xff
     strh w0, [sp]
     strh wzr, [sp, #2]
     mov x1, sp
@@ -1080,6 +1205,7 @@ plat_print_hex:
     unframe
 
 .section .rodata
+fw_ansi_colour: .byte 0, 4, 2, 6, 1, 5, 3, 7   // ANSI colour -> EFI colour
 .balign 8
 acpi20_guid:
     .long 0x8868e871
@@ -1099,7 +1225,12 @@ plat_pi_message: .asciz "Platform: native AArch64 kernel (firmware exited; Raspb
 plat_pi_marker: .asciz "A:\\NATIVE.ON"
 plat_firmware_message: .asciz "Platform: UEFI firmware services (no native drivers for this board)\r\n"
 
+.section .data
+.balign 8
+fw_attribute: .quad 0x07
 .section .bss
+.balign 8
+fw_esc_state: .skip 48          // state, parameter count, 4 parameters
 .balign 16
 platform_native: .skip 8
 plat_uart: .skip 8

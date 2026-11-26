@@ -5,6 +5,7 @@ import hashlib
 import json
 from pathlib import Path
 import struct
+from payloads import payload_paths
 
 SECTOR = 512
 TOTAL_SECTORS = 131072  # 64 MiB, power of two for QEMU and physical media.
@@ -113,8 +114,7 @@ def main():
         return stem.ljust(8).encode() + ext.ljust(3).encode()
 
     fixtures = Path(__file__).parent.parent / 'fixtures'
-    payloads = sorted(p for p in args.efi.parent.iterdir()
-                      if p.suffix in ('.EXE', '.SYS'))
+    payloads = payload_paths(args.efi.parent)
     for name, data in [
         (b'LICENSE TXT', (Path(__file__).parent.parent.parent / 'LICENSE').read_bytes()),
         *[(short(p), p.read_bytes()) for p in payloads],

@@ -34,7 +34,23 @@ def run(qemu, kernel, card, directory):
         raise SystemExit('Pi driver test failed:\n' + text)
     if 'MU OK' not in mini.read_text(errors='replace'):
         raise SystemExit('Pi mini UART output missing')
+    check_card(card)
     return text
+
+
+def check_card(card):
+    """The driver must have written sectors 100-103 of the card itself: a
+    wrong addressing mode (bytes for blocks or the reverse) would read back
+    its own data from elsewhere and still pass inside QEMU."""
+    with card.open('rb') as f:
+        mbr = f.read(512)
+        f.seek(100 * 512)
+        data = f.read(2048)
+    expected = bytes(((0x5a ^ i) + (i >> 9)) & 0xff for i in range(2048))
+    if mbr[510:512] != b'\x55\xaa':
+        raise SystemExit('Pi driver test: sector 0 lost its MBR')
+    if data != expected:
+        raise SystemExit('Pi driver test: sectors 100-103 not written at that address')
 
 
 def main():

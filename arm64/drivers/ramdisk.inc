@@ -86,6 +86,10 @@ efi_main:
     add x4, x4, x21
     sub x4, x4, #1
     udiv x4, x4, x21            // root sectors
+    sub x5, x3, #4              // at most half the disk, so the data area
+    lsr x5, x5, #1              // and FAT always fit (16 KB of 1 KB
+    cmp x4, x5                  // sectors with 1024 entries: 6 sectors)
+    csel x4, x5, x4, hi
     mul x5, x4, x21
     lsr x22, x5, #5             // entries
     address x9, rd_dirs

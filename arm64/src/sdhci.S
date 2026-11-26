@@ -34,6 +34,24 @@
 .equ SD_ASSUMED_BASE, 250000000 // when the capabilities give no clock
 .equ SD_POLL, 0x2000000
 
+// After a failed command or transfer the CMD and DAT circuits must be
+// reset (CONTROL1 bits 25, 26) before the next command. x10 = base.
+.macro sd_reset_lines
+    ldr w4, [x10, #SD_CONTROL1]
+    orr w4, w4, #(6 << 24)
+    str w4, [x10, #SD_CONTROL1]
+    mov x3, #SD_POLL
+9876:
+    ldr w4, [x10, #SD_CONTROL1]
+    tst w4, #(6 << 24)
+    b.eq 9877f
+    subs x3, x3, #1
+    b.ne 9876b
+9877:
+    mov w4, #-1
+    str w4, [x10, #SD_INTERRUPT]
+.endm
+
 .section .text
 
 // x0 = controller base. Returns x0 = 0 when a card is ready, or the step
@@ -44,6 +62,31 @@ sd_init:
     address x9, sd_base
     str x0, [x9]
     mov x10, x0
+    // The card slot (GPIO 48-53) goes to this controller: ALT3, with
+    // pull-ups on CMD and DAT0-3. Firmware may have given it to SDHost.
+    sub x9, x10, #0x100000      // GPIO block, 1 MB below the EMMC
+    ldr w1, [x9, #0x10]         // GPFSEL4: pins 48, 49
+    mov w2, #(0x3f << 24)
+    orr w1, w1, w2
+    str w1, [x9, #0x10]
+    ldr w1, [x9, #0x14]         // GPFSEL5: pins 50-53
+    mov w2, #0xfff
+    orr w1, w1, w2
+    str w1, [x9, #0x14]
+    mov w1, #2                  // GPPUD: pull up
+    str w1, [x9, #0x94]
+    mov x2, #300
+1:
+    subs x2, x2, #1
+    b.ne 1b
+    mov w1, #(0x1f << 17)       // GPPUDCLK1: pins 49-53
+    str w1, [x9, #0x9c]
+    mov x2, #300
+1:
+    subs x2, x2, #1
+    b.ne 1b
+    str wzr, [x9, #0x94]
+    str wzr, [x9, #0x9c]
     ldr w1, [x10, #SD_CONTROL1] // reset the whole controller
     orr w1, w1, #(1 << 24)
     str w1, [x10, #SD_CONTROL1]
@@ -276,11 +319,14 @@ sd_command:
     mov x3, #SD_POLL
 5:
     ldr w4, [x10, #SD_INTERRUPT]
+    tst w4, #SD_INT_ERROR
+    b.ne 8f
     tbnz w4, #1, 51f
     ldr w4, [x10, #SD_STATUS]
-    tbz w4, #20, 51f            // DAT0 high: not busy
+    tbnz w4, #20, 51f           // DAT0 high: no longer busy
     subs x3, x3, #1
     b.ne 5b
+    b 8f                        // still busy: an error, not success
 51:
     mov w5, #SD_INT_DATA_DONE
     str w5, [x10, #SD_INTERRUPT]
@@ -289,17 +335,9 @@ sd_command:
     mov x0, #0
     ret
 8:
-    // A failed command leaves the CMD (and DAT) circuits to be reset.
-    ldr w4, [x10, #SD_CONTROL1]
-    orr w4, w4, #(6 << 24)
-    str w4, [x10, #SD_CONTROL1]
-    mov x3, #SD_POLL
-81:
-    ldr w4, [x10, #SD_CONTROL1]
-    tst w4, #(6 << 24)
-    b.eq 9f
-    subs x3, x3, #1
-    b.ne 81b
+    sd_reset_lines              // a failed command
+    mov x0, #1
+    ret
 9:
     mov w4, #-1
     str w4, [x10, #SD_INTERRUPT]
@@ -373,8 +411,7 @@ sd_block:
     mov x0, #0
     br x12
 8:
-    mov w4, #-1
-    str w4, [x10, #SD_INTERRUPT]
+    sd_reset_lines              // a data error or timeout
 9:
     mov x0, #1
     br x12
@@ -421,8 +458,7 @@ sd_command_data:
     mov x0, #0
     ret
 8:
-    mov w4, #-1
-    str w4, [x10, #SD_INTERRUPT]
+    sd_reset_lines
 9:
     mov x0, #1
     ret

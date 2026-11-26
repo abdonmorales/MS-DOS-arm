@@ -194,7 +194,9 @@ Raspberry Pi Imager's custom-image workflow. Use a card of at least 128 MiB.
 The firmware console can use HDMI/USB input or a supported serial console.
 The Pi image's payload has been booted in QEMU only, not yet on real hardware.
 To try the native Pi drivers on a board, create an empty `NATIVE.ON` in the
-card's root; the banner then reads `Raspberry Pi 3 UART console, SD card`. If
+card's root; the banner then reads `Raspberry Pi 3 UART console, SD card`.
+In that mode the console is the serial UART only (GPIO 14/15): HDMI and USB
+keyboards stop working once firmware is left, so attach a serial adapter. If
 the card cannot be started after leaving firmware, the kernel prints `Boot disk
 did not restart after leaving firmware` and halts; delete `NATIVE.ON` to go
 back to firmware mode.
@@ -255,9 +257,11 @@ These adapt selected public contracts from `CPMIO.ASM`, `GETSET.ASM`,
 not been fully translated. In native mode no UEFI boot service is used after
 startup; UEFI runtime services are used only for power-off.
 
-The complete MS-DOS 4.0 rewrite remains unfinished; [PORT_STATUS.md](PORT_STATUS.md)
-tracks it. Outstanding work is physical hardware bring-up: booting the Pi 3
-image, and its native drivers, on a real board. The checked-in historical source archives
+[PORT_STATUS.md](PORT_STATUS.md) tracks the port: milestones 1-7 (kernel,
+COMMAND, every utility, drivers, NLS) are done. What remains is milestone 8's
+physical hardware bring-up: booting the Pi 3 image, and its native drivers, on
+a real board. Until that is verified the manifests keep `complete_msdos_port`
+false. The checked-in historical source archives
 remain x86 assembly. All-model native Apple Silicon support also remains unmet
 because required boot-stack/driver support and hardware validation are absent.
 These image snapshots are development artifacts, with incomplete status recorded
