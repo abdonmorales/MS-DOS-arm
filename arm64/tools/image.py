@@ -112,6 +112,8 @@ def main():
         (b'DOSTEST EXE', (args.efi.parent / 'DOSTEST.EXE').read_bytes()),
         (b'SCRIPT  BAT', (Path(__file__).parent.parent / 'fixtures/SCRIPT.BAT').read_bytes()),
         (b'CHILD   BAT', (Path(__file__).parent.parent / 'fixtures/CHILD.BAT').read_bytes()),
+        (b'AUTOEXECBAT', (Path(__file__).parent.parent / 'fixtures/AUTOEXEC.BAT').read_bytes()),
+        (b'FEATURESBAT', (Path(__file__).parent.parent / 'fixtures/FEATURES.BAT').read_bytes()),
         (b'ARMTEST TXT', b'ARM64 FAT read\r\n'),
         (b'README  TXT', b'MS-DOS 4.0 AArch64 development runtime.\r\n'
          b'This is a partial native port, not the full MS-DOS system.\r\n'

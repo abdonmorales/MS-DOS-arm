@@ -30,6 +30,9 @@ batch_run:
     add x1, x1, #1
     str x1, [x0]
     str xzr, [x21, #96]
+    address x0, batch_echo_enabled  // ECHO state is restored when it ends
+    ldr x0, [x0]
+    str x0, [x21, #112]
     mov x0, x19
     add x1, x21, #1152
     bl copy_cstring
@@ -106,6 +109,9 @@ batch_command_error:
 batch_finish:
     ldr x0, [x21, #8]
     bl dos_close
+    ldr x0, [x21, #112]
+    address x1, batch_echo_enabled
+    str x0, [x1]
     address x0, batch_context
     ldr x1, [x21]
     str x1, [x0]

@@ -10,7 +10,7 @@ program and batch fixtures. They do not run historical x86 executables.
 | [msdos-arm64-pi3.img.xz](msdos-arm64-pi3.img.xz) | 128 MiB | Pi 3B/3B+ with bundled Pi UEFI firmware |
 
 Each image passed FAT consistency checks, build-payload comparisons, native API
-integration checks and 136 console checks under QEMU AArch64 `virt`/UEFI,
+integration checks and 178 console checks under QEMU AArch64 `virt`/UEFI,
 with the native kernel (firmware exited) serving the disk and `fsck.fat` clean
 afterwards.
 For the Pi image, this validates FAT32 and the DOS payload through generic UEFI;

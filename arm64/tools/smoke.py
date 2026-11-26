@@ -97,6 +97,8 @@ def main():
             text = until(b'A:\\>')
             if b'SELFTEST PASS' not in text:
                 raise RuntimeError('Boot self-test did not complete')
+            if b'AUTOEXEC.BAT ran' not in text:
+                raise RuntimeError('AUTOEXEC.BAT did not run at boot')
             if b'Storage: native FAT' not in text:
                 raise RuntimeError('Native FAT driver did not mount the boot volume')
             platform = (b'Platform: native AArch64 kernel' if args.mode == 'native'
@@ -185,27 +187,27 @@ def main():
             for _ in range(70):
                 command('native', b'Native AArch64 program OK')
             command('selftest', b'SELFTEST PASS')
-            command('dir', b'ARMTEST.TXT')
-            command('del DOESNOT.TXT', b'File/device error.')
+            command('dir', b'ARMTEST  TXT')
+            command('del DOESNOT.TXT', b'File not found')
             command('type DOESNOT.TXT', b'File/device error.')
-            command('invalidcommand', b'Bad command or unsupported port feature.')
-            command('MISSING.BAT', b'Bad command or unsupported port feature.')
+            command('invalidcommand', b'Bad command or file name')
+            command('MISSING.BAT', b'Bad command or file name')
             command('md "WORK DIR"')
             command('cd "WORK DIR"', prompt=b'A:\\WORK DIR>')
             command('selftest', b'SELFTEST PASS', prompt=b'A:\\WORK DIR>')
-            command('copy ..\\ARMTEST.TXT "COPY FILE.TXT"', b'1 file(s) copied.',
+            command('copy ..\\ARMTEST.TXT "COPY FILE.TXT"', b'1 File(s) copied',
                     prompt=b'A:\\WORK DIR>')
             command('type "COPY FILE.TXT"', b'ARM64 FAT read', prompt=b'A:\\WORK DIR>')
-            command('copy "COPY FILE.TXT" ".\\copy file.txt"', b'File/device error.',
+            command('copy "COPY FILE.TXT" ".\\copy file.txt"', b'File cannot be copied onto itself',
                     prompt=b'A:\\WORK DIR>')
             command('type "COPY FILE.TXT"', b'ARM64 FAT read', prompt=b'A:\\WORK DIR>')
             command('ren "COPY FILE.TXT" RENAMED.TXT', prompt=b'A:\\WORK DIR>')
-            command('dir re?amed.*', b'RENAMED.TXT', prompt=b'A:\\WORK DIR>')
+            command('dir re?amed.*', b'RENAMED  TXT', prompt=b'A:\\WORK DIR>')
             command('attrib +r RENAMED.TXT', prompt=b'A:\\WORK DIR>')
-            command('del RENAMED.TXT', b'File/device error.', prompt=b'A:\\WORK DIR>')
+            command('del RENAMED.TXT', b'Access denied', prompt=b'A:\\WORK DIR>')
             command('attrib -r RENAMED.TXT', prompt=b'A:\\WORK DIR>')
             command('cd ..')
-            command('dir "WORK DIR"', b'RENAMED.TXT')
+            command('dir "WORK DIR"', b'RENAMED  TXT')
             command('rd "WORK DIR"', b'File/device error.')
             command('del "WORK DIR\\RENAMED.TXT"')
             command('rd "WORK DIR"')
@@ -220,8 +222,70 @@ def main():
             # Long names written natively must survive for other FAT readers.
             command('md "Native Long Directory"')
             command('copy ARMTEST.TXT "Native Long Directory\\Mixed Case Name.txt"',
-                    b'1 file(s) copied.')
+                    b'1 File(s) copied')
             command('dir "Native Long Directory"', b'Mixed Case Name.txt')
+            # Milestone 4: COMMAND parity.
+            text = command('features alpha beta', b'end-features')
+            for expected in [b'item:one', b'item:three', b'txt:ARMTEST.TXT', b'arg:alpha',
+                             b'arg:beta', b'env-ok', b'compare-ok']:
+                if expected not in text:
+                    raise RuntimeError('FOR/SHIFT/IF failed: ' + repr(expected))
+            command('set', b'ARMDOS=1')
+            command('set GREETING=hello')
+            command('echo %GREETING%', b'\nhello\n')
+            command('set GREETING=')
+            if b'GREETING' in command('set', b'PATH=A:\\'):
+                raise RuntimeError('SET did not remove a variable')
+            command('path', b'PATH=A:\\')
+            command('prompt $N$G', prompt=b'\nA>')
+            command('prompt', prompt=b'A:\\>')
+            command('echo.', b'echo.\n\n')
+            command('type ARMTEST.TXT | native readin', b'Native AArch64 program OK')
+            command('dir %PIPE*.*', b'File not found')
+            text = command('dir', b'bytes free')
+            if not re.search(rb'ARMTEST  TXT +16 ', text) or b'Directory of  A:\\' not in text:
+                raise RuntimeError('DIR format')
+            command('md WILD')
+            command('copy *.BAT WILD', b'4 File(s) copied')
+            command('dir WILD /w', b'FEATURES BAT')
+            command('ren WILD\\*.BAT *.CMD')
+            command('dir WILD\\*.CMD', b'4 File(s)')
+            command('copy WILD\\CHILD.CMD+ARMTEST.TXT WILD\\JOINED.TXT', b'1 File(s) copied')
+            command('type WILD\\JOINED.TXT', b'ARM64 FAT read')
+            command('del WILD\\*.CMD')
+            command('dir WILD\\*.CMD', b'File not found')
+            process.stdin.write(b'del WILD\r')
+            process.stdin.flush()
+            until(b'Are you sure (Y/N)?')
+            process.stdin.write(b'y')
+            process.stdin.flush()
+            until(b'A:\\>')
+            checks += 1
+            command('rd WILD')
+            command('vol', b'Volume in drive A is ARMDOS')
+            command('verify on')
+            command('verify', b'VERIFY is on')
+            command('verify off')
+            command('break', b'BREAK is off')
+            command('truename armtest.txt', b'A:\\ARMTEST.TXT')
+            command('chcp', b'Active code page: 437')
+            process.stdin.write(b'pause\r')
+            process.stdin.flush()
+            until(b'Press any key to continue')
+            process.stdin.write(b'x')
+            process.stdin.flush()
+            until(b'A:\\>')
+            checks += 1
+            command('ctty BOGUS', b'Invalid device')
+            process.stdin.write(b'copy con TYPED.TXT\r')
+            process.stdin.flush()
+            time.sleep(0.5)
+            process.stdin.write(b'typed at the console\r\x1a')
+            process.stdin.flush()
+            until(b'A:\\>')
+            checks += 1
+            command('type TYPED.TXT', b'typed at the console\n')
+            command('del TYPED.TXT')
             print(f'PASS: ARM64 UEFI disk boot, native API self-tests, {checks} console checks.')
         finally:
             selector.close()

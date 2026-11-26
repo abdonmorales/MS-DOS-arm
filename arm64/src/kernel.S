@@ -55,6 +55,7 @@ efi_main:
     bl fat_print_backend
     bl selftest
     cbnz x0, boot_failed
+    bl run_autoexec
 shell_loop:
     bl shell_prompt
     address x0, command_buffer
@@ -857,16 +858,6 @@ type_return:
     unframe
 cmd_selftest:
     b selftest
-cmd_del:
-    frame
-    bl next_word
-    mov w8, #0x41
-    bl dos_call
-    cbz x1, 1f
-    address x0, file_error
-    bl puts
-1:
-    unframe
 // Actual API/read checks, not just reaching a prompt.
 selftest:
     frame
@@ -1115,7 +1106,7 @@ prompt: .asciz "A:\\> "
 newline: .asciz "\r\n"
 erase_char: .asciz "\b \b"
 ctrl_c_mark: .asciz "^C"
-unknown_message: .asciz "Bad command or unsupported port feature.\r\n"
+unknown_message: .asciz "Bad command or file name\r\n"
 help_message: .asciz "HELP VER ECHO CLS DIR TYPE DEL ERASE CD MD RD COPY REN ATTRIB DATE TIME VOL\r\nSET PATH PROMPT FOR SHIFT REM CALL GOTO IF PAUSE VERIFY BREAK CTTY CHCP TRUENAME\r\nSELFTEST EXIT. Native ARM64 EXE and BAT files; quote paths containing spaces.\r\nRedirection: < input, > output, >> append, | pipe. A: is the boot volume.\r\n"
 version_message: .asciz "MS-DOS API baseline 4.00; AArch64 development port (partial).\r\n"
 passed_message: .asciz "SELFTEST PASS: file/FCB APIs, directories/search, memory, clock, native processes.\r\n"
@@ -1167,3 +1158,4 @@ selftest_saved_cwd: .skip 256
 .include "src/dos3.S"
 .include "src/env.S"
 .include "src/cmd2.S"
+.include "src/cmd3.S"

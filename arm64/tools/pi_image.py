@@ -64,7 +64,7 @@ def main():
         shutil.copyfile(args.efi.parent / 'NATIVE.EXE', source / 'NATIVE.EXE')
         shutil.copyfile(args.efi.parent / 'DOSTEST.EXE', source / 'DOSTEST.EXE')
         shutil.copyfile(Path(__file__).parent.parent.parent / 'LICENSE', source / 'DOS-MIT.TXT')
-        for name in ['SCRIPT.BAT', 'CHILD.BAT']:
+        for name in ['SCRIPT.BAT', 'CHILD.BAT', 'AUTOEXEC.BAT', 'FEATURES.BAT']:
             shutil.copyfile(Path(__file__).parent.parent / 'fixtures' / name, source / name)
         (source / 'ARMTEST.TXT').write_bytes(b'ARM64 FAT read\r\n')
         (source / 'ARMDOS.TXT').write_bytes(

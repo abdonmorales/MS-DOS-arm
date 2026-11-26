@@ -57,26 +57,39 @@ HVF and UTM have not been tested here. UTM can use an ARM64 VM with UEFI firmwar
 and the raw disk as a writable VirtIO drive. This image requires a writable FAT
 volume for its boot self-test.
 
-Commands: `HELP`, `VER`, `ECHO`, `CLS`, `DIR`, `TYPE`, `DEL`, `CD`/`CHDIR`,
-`MD`/`MKDIR`, `RD`/`RMDIR`, `COPY`, `REN`/`RENAME`, `ATTRIB`, `DATE`, `TIME`,
-`REM`, `CALL`, `GOTO`, `IF`, `SELFTEST`, `EXIT`. Native AArch64 `.EXE` and `.BAT`
-files also run from the shell; `NATIVE.EXE` is a separately linked example and
-`DOSTEST.EXE` exercises the DOS function set from a loaded program.
+Commands: `HELP`, `VER`, `ECHO`, `CLS`, `DIR`, `TYPE`, `DEL`/`ERASE`,
+`CD`/`CHDIR`, `MD`/`MKDIR`, `RD`/`RMDIR`, `COPY`, `REN`/`RENAME`, `ATTRIB`,
+`DATE`, `TIME`, `VOL`, `SET`, `PATH`, `PROMPT`, `FOR`, `SHIFT`, `REM`, `CALL`,
+`GOTO`, `IF`, `PAUSE`, `VERIFY`, `BREAK`, `CTTY`, `CHCP`, `TRUENAME`,
+`SELFTEST`, `EXIT`. Native AArch64 `.EXE` and `.BAT` files run from the shell,
+found through the current directory and then `PATH`; `NATIVE.EXE` is a
+separately linked example and `DOSTEST.EXE` exercises the DOS function set
+from a loaded program. `\AUTOEXEC.BAT` runs at boot; without it the shell asks
+for the date and time, as COMMAND did.
 
-Paths support quotes, relative components, `.`/`..`, and drive `A:`. `DIR` accepts
-directories and case-insensitive `*`/`?` glob patterns, including DOS `*.*`.
-This is not the full DOS 8.3 wildcard algorithm. Long ASCII filenames are
-read and written as VFAT long-name entries by the native driver. Redirection supports `<`, `>`, `>>`, including nested scripts
-and native programs. Pipes, `2>` and DOS device names remain unsupported.
-`COPY` currently takes a single source and destination filename.
+Paths support quotes, relative components, `.`/`..`, drive `A:`, and DOS device
+names (`CON`, `AUX`, `PRN`, `NUL`, `CLOCK$`). `DIR` prints the DOS 4.0 layout
+(volume header, `Directory of`, name/extension/size/date/time columns, file
+count and bytes free) and accepts `/W` and `/P`. `COPY` takes wildcards,
+directory destinations, rename templates (`COPY *.TXT *.BAK`), `+`
+concatenation, and device sources such as `COPY CON FILE` (ended by ^Z); files
+keep their date and time. `DEL` takes wildcards and `/P`, and asks
+`Are you sure (Y/N)?` for `*.*`; `REN` takes templates (`REN *.TXT *.OLD`). Long
+ASCII filenames are read and written as VFAT long-name entries and shown whole
+by `DIR`. Redirection supports `<`, `>`, `>>`, and pipes (`a | b`) run through
+temporary files in the root, as COMMAND did. `2>` is not a DOS 4.0 feature.
 
-Batch files support `%0`–`%9`, `%*`, `%%`, `%ERRORLEVEL%`, `%PATH%`, `%COMSPEC%`,
-`ECHO ON/OFF`, `@`, `REM`, `CALL`, `GOTO`, `IF [NOT] EXIST/ERRORLEVEL`, and
-`EXIT /B`. Commands are limited to 255 bytes and nesting to 16 scripts.
-`FOR`, `SHIFT`, `SET`, string-comparison `IF`, and general environment editing
-remain unimplemented. `DATE`/`TIME` display the DOS clock; API setters change
-only the runtime clock. `EXIT` powers the machine off in native mode (the
-firmware is gone) and returns to UEFI in firmware mode.
+The environment holds `COMSPEC`, `PATH`, `PROMPT` and anything set with `SET`;
+it is passed to every program (descriptor +40). `PROMPT` supports `$P $G $L $B
+$Q $$ $E $H $N $_ $D $T $V`. Batch files support `%0`–`%9`, `%*`, `%%`,
+`%NAME%` environment expansion, `%ERRORLEVEL%`, `ECHO ON/OFF` (restored when the
+batch ends), `ECHO.`, `@`, `REM`, `CALL`, `GOTO`, `SHIFT`,
+`FOR %%v IN (set) DO command` (with wildcards in the set),
+`IF [NOT] EXIST/ERRORLEVEL/string1==string2`, `PAUSE`, and `EXIT /B`. Commands
+are limited to 255 bytes and nesting to 16 scripts. `DATE` and `TIME` show the
+clock in the country's format and prompt for a new value. `EXIT` powers the
+machine off in native mode (the firmware is gone) and returns to UEFI in
+firmware mode.
 
 Each boot runs native API integration tests against actual files on disk:
 FCB records, partial EOF padding, paths, search buffers, attributes, file times,
