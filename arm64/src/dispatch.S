@@ -222,7 +222,7 @@ dos2_init:
     str x1, [x0, #24]
     address x1, kernel_empty_tail
     str x1, [x0, #32]
-    address x1, process_environment
+    address x1, env_block
     str x1, [x0, #40]
     address x1, current_directory
     str x1, [x0, #48]

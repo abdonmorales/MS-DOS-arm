@@ -83,7 +83,7 @@ def main():
 
         checks = 0
 
-        def command(line, expected=b'', prompt=b'A:\\> '):
+        def command(line, expected=b'', prompt=b'A:\\>'):
             nonlocal checks
             process.stdin.write(line.encode() + b'\r')
             process.stdin.flush()
@@ -94,7 +94,7 @@ def main():
             return text
 
         try:
-            text = until(b'A:\\> ')
+            text = until(b'A:\\>')
             if b'SELFTEST PASS' not in text:
                 raise RuntimeError('Boot self-test did not complete')
             if b'Storage: native FAT' not in text:
@@ -110,10 +110,10 @@ def main():
             command('native.exe nested', b'Native AArch64 program OK')
             process.stdin.write(b'native input\r')
             process.stdin.flush()
-            until(b'INPUT> ')
+            until(b'INPUT>')
             process.stdin.write(b'ab\bcd\r')
             process.stdin.flush()
-            edited = until(b'A:\\> ')
+            edited = until(b'A:\\>')
             if b'Native AArch64 program OK' not in edited:
                 raise RuntimeError('Buffered DOS console input/editing failed')
             checks += 1
@@ -126,7 +126,7 @@ def main():
             until(b'WAIT>')
             process.stdin.write(b'\x03')
             process.stdin.flush()
-            text = until(b'A:\\> ')
+            text = until(b'A:\\>')
             if b'^C' not in text or b'CTRL-C OK' not in text:
                 raise RuntimeError('Ctrl-C did not end the program with type 1')
             checks += 1
@@ -162,12 +162,24 @@ def main():
             command('echo 50% done', b'\n50% done\n')
             command('cd NOSUCH', b'File/device error.')
             command('echo code:%ERRORLEVEL%', b'code:3')
-            date = command('date')
-            if not re.search(rb'\n\d\d\d\d-\d\d-\d\d\n', date):
+            process.stdin.write(b'date\r')
+            process.stdin.flush()
+            date = until(b'Enter new date (mm-dd-yy): ').replace(b'\r', b'')
+            if not re.search(rb'Current date is \w\w\w \d\d-\d\d-\d\d\d\d\n', date):
                 raise RuntimeError('Invalid DATE output')
-            clock = command('time')
-            if not re.search(rb'\n\d\d:\d\d:\d\d\.\d\d\n', clock):
+            command('', b'')
+            process.stdin.write(b'time\r')
+            process.stdin.flush()
+            clock = until(b'Enter new time: ').replace(b'\r', b'')
+            if not re.search(rb'Current time is +\d?\d:\d\d:\d\d\.\d\d', clock):
                 raise RuntimeError('Invalid TIME output')
+            command('', b'')
+            command('date 12-31-2026')
+            command('date', b'12-31-2026', prompt=b'(mm-dd-yy): ')
+            command('', b'')
+            command('date 13-01-2026', b'Invalid date', prompt=b'(mm-dd-yy): ')
+            command('', b'')
+            command('time 12:00:00', b'')
             # Each child deliberately leaves an allocation and file open.
             # More launches than arena slots prove the parent reclaims them.
             for _ in range(70):
@@ -179,19 +191,19 @@ def main():
             command('invalidcommand', b'Bad command or unsupported port feature.')
             command('MISSING.BAT', b'Bad command or unsupported port feature.')
             command('md "WORK DIR"')
-            command('cd "WORK DIR"', prompt=b'A:\\WORK DIR> ')
-            command('selftest', b'SELFTEST PASS', prompt=b'A:\\WORK DIR> ')
+            command('cd "WORK DIR"', prompt=b'A:\\WORK DIR>')
+            command('selftest', b'SELFTEST PASS', prompt=b'A:\\WORK DIR>')
             command('copy ..\\ARMTEST.TXT "COPY FILE.TXT"', b'1 file(s) copied.',
-                    prompt=b'A:\\WORK DIR> ')
-            command('type "COPY FILE.TXT"', b'ARM64 FAT read', prompt=b'A:\\WORK DIR> ')
+                    prompt=b'A:\\WORK DIR>')
+            command('type "COPY FILE.TXT"', b'ARM64 FAT read', prompt=b'A:\\WORK DIR>')
             command('copy "COPY FILE.TXT" ".\\copy file.txt"', b'File/device error.',
-                    prompt=b'A:\\WORK DIR> ')
-            command('type "COPY FILE.TXT"', b'ARM64 FAT read', prompt=b'A:\\WORK DIR> ')
-            command('ren "COPY FILE.TXT" RENAMED.TXT', prompt=b'A:\\WORK DIR> ')
-            command('dir re?amed.*', b'RENAMED.TXT', prompt=b'A:\\WORK DIR> ')
-            command('attrib +r RENAMED.TXT', prompt=b'A:\\WORK DIR> ')
-            command('del RENAMED.TXT', b'File/device error.', prompt=b'A:\\WORK DIR> ')
-            command('attrib -r RENAMED.TXT', prompt=b'A:\\WORK DIR> ')
+                    prompt=b'A:\\WORK DIR>')
+            command('type "COPY FILE.TXT"', b'ARM64 FAT read', prompt=b'A:\\WORK DIR>')
+            command('ren "COPY FILE.TXT" RENAMED.TXT', prompt=b'A:\\WORK DIR>')
+            command('dir re?amed.*', b'RENAMED.TXT', prompt=b'A:\\WORK DIR>')
+            command('attrib +r RENAMED.TXT', prompt=b'A:\\WORK DIR>')
+            command('del RENAMED.TXT', b'File/device error.', prompt=b'A:\\WORK DIR>')
+            command('attrib -r RENAMED.TXT', prompt=b'A:\\WORK DIR>')
             command('cd ..')
             command('dir "WORK DIR"', b'RENAMED.TXT')
             command('rd "WORK DIR"', b'File/device error.')
@@ -200,8 +212,8 @@ def main():
             command('cd "WORK DIR"', b'File/device error.')
             # RD must refuse the current directory however it is spelled.
             command('md CASEDIR')
-            command('cd \\casedir', prompt=b'A:\\casedir> ')
-            command('rd \\CASEDIR', b'File/device error.', prompt=b'A:\\casedir> ')
+            command('cd \\casedir', prompt=b'A:\\casedir>')
+            command('rd \\CASEDIR', b'File/device error.', prompt=b'A:\\casedir>')
             command('cd \\')
             command('rd casedir')
             command('selftest', b'SELFTEST PASS')

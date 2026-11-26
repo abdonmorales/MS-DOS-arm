@@ -41,6 +41,7 @@ efi_main:
     bl memory_init
     bl clock_init
     bl dos2_init
+    bl env_init
     bl platform_go_native
     address x0, banner
     bl puts
@@ -1057,6 +1058,19 @@ commands:
     .long name_time - ., cmd_time - (. - 4)
     .long name_selftest - ., cmd_selftest - (. - 4)
     .long name_exit - ., cmd_exit - (. - 4)
+    .long name_set - ., cmd_set - (. - 4)
+    .long name_path - ., cmd_path - (. - 4)
+    .long name_prompt - ., cmd_prompt - (. - 4)
+    .long name_for - ., cmd_for - (. - 4)
+    .long name_shift - ., cmd_shift - (. - 4)
+    .long name_vol - ., cmd_vol - (. - 4)
+    .long name_verify - ., cmd_verify - (. - 4)
+    .long name_break - ., cmd_break - (. - 4)
+    .long name_ctty - ., cmd_ctty - (. - 4)
+    .long name_pause - ., cmd_pause - (. - 4)
+    .long name_chcp - ., cmd_chcp - (. - 4)
+    .long name_truename - ., cmd_truename - (. - 4)
+    .long name_erase - ., cmd_del - (. - 4)
     .long 0, 0
 name_help: .asciz "HELP"
 name_ver: .asciz "VER"
@@ -1083,13 +1097,26 @@ name_date: .asciz "DATE"
 name_time: .asciz "TIME"
 name_selftest: .asciz "SELFTEST"
 name_exit: .asciz "EXIT"
+name_set: .asciz "SET"
+name_path: .asciz "PATH"
+name_prompt: .asciz "PROMPT"
+name_for: .asciz "FOR"
+name_shift: .asciz "SHIFT"
+name_vol: .asciz "VOL"
+name_verify: .asciz "VERIFY"
+name_break: .asciz "BREAK"
+name_ctty: .asciz "CTTY"
+name_pause: .asciz "PAUSE"
+name_chcp: .asciz "CHCP"
+name_truename: .asciz "TRUENAME"
+name_erase: .asciz "ERASE"
 banner: .asciz "\r\nMS-DOS 4.0 AArch64 port development runtime\r\nNative ARM64 assembly. x86 programs are not supported (native port).\r\n"
 prompt: .asciz "A:\\> "
 newline: .asciz "\r\n"
 erase_char: .asciz "\b \b"
 ctrl_c_mark: .asciz "^C"
 unknown_message: .asciz "Bad command or unsupported port feature.\r\n"
-help_message: .asciz "HELP VER ECHO CLS DIR TYPE DEL CD MD RD COPY REN ATTRIB DATE TIME\r\nREM CALL GOTO IF SELFTEST EXIT\r\nNative ARM64 EXE and BAT files; quote paths containing spaces.\r\nRedirection: < input, > output, >> append. A: is the boot volume.\r\n"
+help_message: .asciz "HELP VER ECHO CLS DIR TYPE DEL ERASE CD MD RD COPY REN ATTRIB DATE TIME VOL\r\nSET PATH PROMPT FOR SHIFT REM CALL GOTO IF PAUSE VERIFY BREAK CTTY CHCP TRUENAME\r\nSELFTEST EXIT. Native ARM64 EXE and BAT files; quote paths containing spaces.\r\nRedirection: < input, > output, >> append, | pipe. A: is the boot volume.\r\n"
 version_message: .asciz "MS-DOS API baseline 4.00; AArch64 development port (partial).\r\n"
 passed_message: .asciz "SELFTEST PASS: file/FCB APIs, directories/search, memory, clock, native processes.\r\n"
 failed_message: .asciz "SELFTEST FAIL\r\n"
@@ -1138,3 +1165,5 @@ selftest_saved_cwd: .skip 256
 .include "src/nls.S"
 .include "src/disk.S"
 .include "src/dos3.S"
+.include "src/env.S"
+.include "src/cmd2.S"

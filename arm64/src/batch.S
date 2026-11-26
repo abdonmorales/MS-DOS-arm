@@ -51,6 +51,7 @@ batch_run:
     add x22, x22, #1
     cmp x22, #10
     b.lo 1b
+    str x0, [x21, #104]
 batch_next_line:
     ldr x0, [x21, #96]
     cbnz x0, batch_finish
@@ -370,68 +371,6 @@ goto_return:
     ldp x19, x20, [sp], #16
     unframe
 
-cmd_if:
-    frame
-    stp x19, x20, [sp, #-16]!
-    stp x21, x22, [sp, #-16]!
-    mov x21, #0
-    bl next_word
-    mov x19, x0
-    mov x20, x1
-    address x1, not_keyword
-    bl strcasecmp
-    cbnz x0, 1f
-    mov x21, #1
-    mov x0, x20
-    bl next_word
-    mov x19, x0
-    mov x20, x1
-1:
-    mov x0, x19
-    address x1, errorlevel_keyword
-    bl strcasecmp
-    cbnz x0, 2f
-    mov x0, x20
-    bl next_word
-    mov x20, x1
-    bl parse_unsigned
-    cbnz x1, if_error
-    address x2, shell_errorlevel
-    ldr x2, [x2]
-    and x2, x2, #255
-    cmp x2, x0
-    cset x22, hs
-    b if_evaluate
-2:
-    mov x0, x19
-    address x1, exist_keyword
-    bl strcasecmp
-    cbnz x0, if_error
-    mov x0, x20
-    bl next_word
-    mov x20, x1
-    mov x1, #1
-    mov x2, #0
-    bl open_path_object
-    mov x22, #0
-    cbnz x1, if_evaluate
-    mov x22, #1
-    ldr x3, [x0, #16]
-    blr x3
-if_evaluate:
-    eor x22, x22, x21
-    cbz x22, if_return
-    mov x0, x20
-    bl shell_execute
-    b if_return
-if_error:
-    address x0, file_error
-    bl puts
-if_return:
-    ldp x21, x22, [sp], #16
-    ldp x19, x20, [sp], #16
-    unframe
-
 shell_exit:
     frame
     stp x19, x20, [sp, #-16]!
@@ -518,20 +457,7 @@ environment_get:
     b 3f
 1:
     mov x0, x19
-    address x1, path_keyword
-    bl strcasecmp
-    cbnz x0, 2f
-    address x0, default_path
-    b 3f
-2:
-    mov x0, x19
-    address x1, comspec_keyword
-    bl strcasecmp
-    cbnz x0, 4f
-    address x0, default_comspec
-    b 3f
-4:
-    mov x0, #0
+    bl env_get
 3:
     ldr x19, [sp], #16
     unframe

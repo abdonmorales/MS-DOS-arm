@@ -311,7 +311,7 @@ dos_exec:
     address x1, dos_call
     str x1, [x28, #24]
     str x20, [x28, #32]
-    address x1, process_environment
+    address x1, env_block
     str x1, [x28, #40]
     address x1, current_directory
     str x1, [x28, #48]

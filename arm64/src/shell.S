@@ -6,6 +6,13 @@ shell_execute:
     stp x21, x22, [sp, #-16]!
     sub sp, sp, #128
     mov x19, x0
+    bl line_has_pipe
+    cbz x0, 7f
+    mov x0, x19
+    bl pipe_execute
+    b shell_execute_return
+7:
+    mov x0, x19
     mov x1, sp
     bl redirect_begin
     cbnz x1, shell_redirect_failed
@@ -31,6 +38,29 @@ shell_execute:
     cbz w2, shell_execute_done
     cmp w2, #':'
     b.eq shell_execute_done
+    cmp w2, #'@'
+    b.ne 8f
+    add x19, x19, #1              // @command: no echo (batch handles it)
+    ldrb w2, [x19]
+    cbz w2, shell_execute_done
+8:
+    ldrb w2, [x19, #4]
+    cmp w2, #'.'
+    b.ne 9f
+    strb wzr, [x19, #4]
+    mov x0, x19
+    address x1, name_echo
+    bl strcmp
+    cbnz x0, 10f
+    add x0, x19, #5               // ECHO.text prints text (or a blank line)
+    bl puts
+    address x0, newline
+    bl puts
+    b shell_execute_done
+10:
+    mov w2, #'.'
+    strb w2, [x19, #4]
+9:
     address x21, commands
 4:
     ldrsw x1, [x21]
@@ -68,91 +98,14 @@ shell_execute_return:
 
 shell_external:
     frame
-    stp x19, x20, [sp, #-16]!
-    stp x21, x22, [sp, #-16]!
-    mov x19, x0
-    mov x20, x1
-    mov x2, #0
-1:
-    ldrb w3, [x19, x2]
-    cbz w3, 2f
-    add x2, x2, #1
-    cmp x2, #251
-    b.hi external_error
-    b 1b
-2:
-    cmp x2, #4
-    b.lo 3f
-    add x0, x19, x2
-    sub x0, x0, #4
-    address x1, bat_suffix
-    bl strcasecmp
-    cbnz x0, 3f
-    mov x0, x19
-    mov x1, x20
-    bl batch_run
-    cbnz x1, external_error
-    b external_return
-3:
-    mov x0, x19
-    mov x1, x20
-    bl dos_exec
-    cbz x1, external_success
-    cmp x0, #2
-    b.ne external_error
-    mov x0, x19
-    address x1, external_path
-    bl copy_cstring
-    address x21, external_path
-    mov x22, #0
-1:
-    ldrb w2, [x21, x22]
-    cbz w2, 2f
-    add x22, x22, #1
-    b 1b
-2:
-    cmp x22, #251
-    b.hi external_error
-    address x0, exe_suffix
-    add x1, x21, x22
-    bl copy_cstring
-    mov x0, x21
-    mov x1, x20
-    bl dos_exec
-    cbz x1, external_success
-    cmp x0, #2
-    b.ne external_error
-    address x0, bat_suffix
-    add x1, x21, x22
-    bl copy_cstring
-    mov x0, x21
-    mov x1, x20
-    bl batch_run
-    cbnz x1, external_error
-    b external_return
-external_success:
-    bl dos_get_exit_code
-    address x2, shell_errorlevel
-    str x0, [x2]
-    b external_return
-external_error:
+    bl path_search_run
+    cbz x1, 1f
     mov x0, #1
     address x2, shell_errorlevel
     str x0, [x2]
     address x0, unknown_message
     bl puts
-external_return:
-    ldp x21, x22, [sp], #16
-    ldp x19, x20, [sp], #16
-    unframe
-shell_prompt:
-    frame
-    address x0, drive_prefix
-    bl puts
-    address x0, current_directory
-    bl puts
-    address x0, prompt_suffix
-    bl puts
+1:
     unframe
 
 // In-place tokenization, supporting quoted filenames. x0=token, x1=tail.

@@ -269,62 +269,6 @@ days_to_date:
     add x2, x10, #1
     ret
 
-cmd_date:
-    frame
-    stp x19, x20, [sp, #-16]!
-    str x21, [sp, #-16]!
-    bl dos_get_date
-    mov x19, x0
-    mov x20, x2
-    mov x21, x3
-    mov x1, #4
-    bl print_padded_number
-    mov x0, #'-'
-    bl stdout_putc
-    mov x0, x20
-    mov x1, #2
-    bl print_padded_number
-    mov x0, #'-'
-    bl stdout_putc
-    mov x0, x21
-    mov x1, #2
-    bl print_padded_number
-    address x0, newline
-    bl puts
-    ldr x21, [sp], #16
-    ldp x19, x20, [sp], #16
-    unframe
-cmd_time:
-    frame
-    stp x19, x20, [sp, #-16]!
-    stp x21, x22, [sp, #-16]!
-    bl dos_get_time
-    mov x19, x0
-    mov x20, x2
-    mov x21, x3
-    mov x22, x4
-    mov x1, #2
-    bl print_padded_number
-    mov x0, #':'
-    bl stdout_putc
-    mov x0, x20
-    mov x1, #2
-    bl print_padded_number
-    mov x0, #':'
-    bl stdout_putc
-    mov x0, x21
-    mov x1, #2
-    bl print_padded_number
-    mov x0, #'.'
-    bl stdout_putc
-    mov x0, x22
-    mov x1, #2
-    bl print_padded_number
-    address x0, newline
-    bl puts
-    ldp x21, x22, [sp], #16
-    ldp x19, x20, [sp], #16
-    unframe
 print_padded_number:
     frame
     stp x19, x20, [sp, #-16]!
