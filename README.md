@@ -24,3 +24,16 @@ trademarks or logos is subject to and must follow
 [Microsoft's Trademark & Brand Guidelines](https://www.microsoft.com/legal/intellectualproperty/trademarks/usage/general).
 Use of Microsoft trademarks or logos in modified versions of this project must not cause confusion or imply Microsoft sponsorship.
 Any use of third-party trademarks or logos are subject to those third-party's policies.
+
+# AArch64 port
+
+[arm64](arm64/README.md) holds a partial native ARM64 port of the MS-DOS 4.0
+services as a UEFI application, with disk image tooling. None of the original
+sources above are modified. The complete MS-DOS 4.0 port and
+all-model native Apple Silicon support remain unfinished; see that document for
+implemented services, tested boot paths, Raspberry Pi packaging, and limitations.
+
+Compressed development images are in [arm64/images](arm64/images/README.md).
+Raspberry Pi images include third-party firmware under its own upstream licenses;
+those notices are preserved inside the disk image and apply to the bundled
+firmware. The new DOS assembly remains MIT licensed.
