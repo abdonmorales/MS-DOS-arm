@@ -70,6 +70,12 @@ def main():
             (tree / name).unlink(missing_ok=True)
         (tree / 'CONFIG.SYS').write_bytes(CONFIG_SYS)
         (tree / 'AUTOEXEC.BAT').write_bytes(AUTOEXEC_BAT)
+        # Files written here (and directories) get the fixed build date, so
+        # the FAT entries mcopy -m stores are the same on every build.
+        epoch = int(env['SOURCE_DATE_EPOCH'])
+        for path in [tree / 'CONFIG.SYS', tree / 'AUTOEXEC.BAT',
+                     *(p for p in tree.rglob('*') if p.is_dir())]:
+            os.utime(path, (epoch, epoch))
         efi = work / 'efiboot.img'
         subprocess.run(['mkfs.fat', '-C', '-F', '16', '-n', 'ARMDOS', '-i', '41524d44',
                         '--invariant', str(efi), str(FAT_KIB)],
@@ -78,6 +84,8 @@ def main():
         subprocess.run(['mcopy', '-s', '-m', '-i', str(efi), *map(str, files), '::'],
                        env=env, check=True)
         (root / 'README.TXT').write_bytes(README)
+        os.utime(root / 'README.TXT', (epoch, epoch))
+        os.utime(root, (epoch, epoch))
         output = args.output.with_suffix('.tmp')
         if output.exists():
             output.unlink()

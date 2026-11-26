@@ -110,7 +110,7 @@ $(BUILD)/msdos-arm64.img: $(BUILD)/BOOTAA64.EFI $(PAYLOADS) $(FIXTURES) tools/im
 $(BUILD)/armdos.iso: $(BUILD)/msdos-arm64.img tools/iso.py
 	$(PYTHON) tools/iso.py $< $@
 iso-test: $(BUILD)/armdos.iso
-	$(PYTHON) tools/iso_test.py $< --firmware $(FIRMWARE)
+	$(PYTHON) tools/iso_test.py $< --firmware $(FIRMWARE) --image $(BUILD)/msdos-arm64.img
 
 $(BUILD)/msdos-arm64-pi3.img: $(BUILD)/BOOTAA64.EFI $(PAYLOADS) $(FIXTURES) tools/pi_image.py
 	$(PYTHON) tools/pi_image.py $< $@ --replace-generated $(if $(PI_FIRMWARE),--firmware "$(PI_FIRMWARE)")

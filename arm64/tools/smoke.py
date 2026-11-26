@@ -397,6 +397,7 @@ def main():
                 raise RuntimeError('FORMAT /SELECT asked a question')
             command('install', b'No disk to install on')
             command('install /x', b'Usage: INSTALL [disk] [/Y]')
+            command('install /y', b'needs the disk number')
             command('sys c:', b'System transferred')
             command('diskcopy b: c:', b'Insert TARGET diskette in drive C:', prompt=b'continue . . .')
             if b'Copying' not in keys(b' ', b'(Y/N)? '):

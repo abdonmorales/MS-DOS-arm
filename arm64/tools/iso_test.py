@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
 """Boot the ARM DOS live ISO in QEMU `virt` and check it, then INSTALL.
 
-1. As a CD (virtio-scsi) with a blank disk attached: the live prompt comes
-   up, A: refuses writes, the RAM disk B: takes them, and INSTALL /Y puts
-   ARM DOS on the blank disk.
+0. With --image: rebuilding the ISO gives the same bytes.
+1. As a CD (virtio-scsi) with two blank disks: the live prompt comes up, A:
+   refuses writes, the RAM disk B: takes them. INSTALL /Y without a disk
+   number refuses; the menu cancels with ENTER and at the confirmation
+   with nothing written; INSTALL 2 /Y installs on disk 2 (disk 1 stays
+   zero), and a second run reuses the same drive.
 2. The installed disk alone boots ARM DOS (native FAT driver, self-test)
    and keeps a file written to A:. fsck.fat finds its partition clean.
 3. As a read-only USB stick: the same live system.
@@ -18,6 +21,7 @@ import re
 import selectors
 import shutil
 import struct
+import sys
 import subprocess
 import tempfile
 import time
@@ -61,6 +65,11 @@ class Session:
             raise RuntimeError(f'{line!r}: expected {expected!r} in {text!r}')
         return text
 
+    def send(self, text, expected, timeout=None, enter=True):
+        self.process.stdin.write(text.encode() + (b'\r' if enter else b''))
+        self.process.stdin.flush()
+        return self.until(expected, timeout)
+
     def close(self):
         # Let the guest's last writes reach the disk image before QEMU stops.
         self.process.terminate()
@@ -98,24 +107,52 @@ def main():
     parser.add_argument('--firmware', required=True, type=Path)
     parser.add_argument('--qemu', default='qemu-system-aarch64')
     parser.add_argument('--timeout', type=float, default=60)
+    parser.add_argument('--image', type=Path,
+                        help='the disk image the ISO came from: rebuild and compare')
     args = parser.parse_args()
     env = dict(os.environ, MTOOLS_SKIP_CHECK='1')
     drive = f'file={args.iso},if=none,id=live,format=raw,readonly=on'
     with tempfile.TemporaryDirectory(prefix='arm64-iso-test-') as name:
         work = Path(name)
-        target = work / 'target.img'
-        with target.open('wb') as f:
-            f.truncate(128 << 20)
+        if args.image:
+            # Reproducible: a rebuild a few seconds later is byte-identical.
+            time.sleep(2)
+            again = work / 'again.iso'
+            subprocess.run([sys.executable, str(Path(__file__).with_name('iso.py')),
+                            str(args.image), str(again)], check=True,
+                           stdout=subprocess.DEVNULL)
+            if digest(again) != digest(args.iso):
+                raise RuntimeError('the ISO is not reproducible: a rebuild differs')
+        first, target = work / 'first.img', work / 'target.img'
+        for disk in (first, target):
+            with disk.open('wb') as f:
+                f.truncate(128 << 20)
 
         s = Session(args, ['-device', 'virtio-scsi-pci', '-drive', drive + ',media=cdrom',
-                           '-device', 'scsi-cd,drive=live', *blk(target, 'target')])
+                           '-device', 'scsi-cd,drive=live',
+                           *blk(first, 'first'), *blk(target, 'target')])
         try:
             live_checks(s)
-            text = s.command('INSTALL /Y', b'ARM DOS is installed on disk 1', timeout=300)
-            letter = re.search(rb'\(drive ([C-Z]):', text).group(1).decode()
-            s.command(f'dir {letter}:\\EFI\\BOOT', b'BOOTAA64 EFI')
+            s.command('INSTALL /Y', b'needs the disk number')
+            s.send('INSTALL', b'ENTER to cancel)? ')
+            s.command('', b'nothing was written')
+            s.send('INSTALL', b'ENTER to cancel)? ')
+            s.send('2', b'(Y/N)?')
+            s.send('n', b'nothing was written', enter=False)
+            s.until(b'A:\\>')
+            text = s.command('INSTALL 2 /Y', b'ARM DOS is installed on disk 2', timeout=300)
+            letter = re.search(rb'\(drive ([C-Z]):', text).group(1)
+            s.command(f'dir {letter.decode()}:\\EFI\\BOOT', b'BOOTAA64 EFI')
+            # Again in the same session: the same partition, the same drive.
+            text = s.command('INSTALL 2 /Y', b'ARM DOS is installed on disk 2', timeout=300)
+            if re.search(rb'\(drive ([C-Z]):', text).group(1) != letter:
+                raise RuntimeError('a second INSTALL attached the partition twice')
         finally:
             s.close()
+        with first.open('rb') as f:
+            while chunk := f.read(1 << 20):
+                if any(chunk):
+                    raise RuntimeError('INSTALL wrote to disk 1')
 
         mbr = target.read_bytes()[:512]
         kind, start, count = mbr[446 + 4], *struct.unpack_from('<II', mbr, 446 + 8)
@@ -157,7 +194,7 @@ def main():
         try:
             s.until(b'Platform: UEFI firmware services')
             s.until(b'A:\\>')
-            s.command('INSTALL /Y', b'No disk to install on')
+            s.command('INSTALL 1 /Y', b'No disk to install on')
         finally:
             s.close()
     # The evidence snapshot.py requires before it packages this ISO.
@@ -165,7 +202,8 @@ def main():
               'source_files_sha256': source_digest(Path(__file__).resolve().parent.parent)}
     args.iso.with_suffix('.test.json').write_text(json.dumps(record, indent=2) + '\n')
     print('PASS: live ISO boots as a CD and as a USB stick (A: read-only, B: writable); '
-          'INSTALL puts a bootable ARM DOS on a blank disk and skips the boot disk.')
+          'INSTALL puts a bootable ARM DOS on the chosen disk only and skips the boot disk; '
+          'the ISO rebuilds byte for byte.')
 
 
 if __name__ == '__main__':

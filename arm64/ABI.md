@@ -141,21 +141,27 @@ binary's table matches this list.
 DOS reached whole disks through INT 13h; this call stands in for it while
 UEFI boot services run (firmware mode, as on the live ISO). A disk is a
 firmware Block I/O device that is a whole disk, present, writable, at least
-8 MiB, with 512–4096-byte blocks, and not the disk ARM DOS booted from (its
-device path is not a prefix of the boot partition's). `INSTALL.EXE` is the
-user.
+8 MiB, with 512–4096-byte power-of-two blocks and an IoAlign of at most
+4 KiB, and provably not the disk ARM DOS booted from: its device path is
+readable and not a prefix of the boot partition's. If the boot device's path
+cannot be read, no disk is offered. `INSTALL.EXE` is the user.
 
 | `x0` | Arguments | Result |
 | --- | --- | --- |
 | 0 | None | Finds the disks; `x0` their count (0 under the native kernel) |
 | 1 | `x1` disk, `x2` 32-byte buffer | u64 block size, u64 blocks, u64 flags (1 removable), u64 0 |
-| 2, 3 | `x1` disk, `x2` first block, `x3` blocks, `x4` buffer | Read / write (any alignment; 64 KiB at a time through a kernel buffer) |
-| 4 | `x1` disk, `x2` first block, `x3` blocks | Attaches that range (a partition) as the next drive letter, as a block device driver's unit; `x0` the drive (0 = A:). Up to 4 per boot. FORMAT then works on it |
+| 2, 3 | `x1` disk, `x2` first block, `x3` blocks, `x4` buffer | Read / write (any alignment; 64 KiB at a time through a kernel buffer). The range must lie on the disk. These bypass the FAT sector cache |
+| 4 | `x1` disk, `x2` first block, `x3` blocks | Attaches that range (a partition) as a drive letter, as a block device driver's unit; `x0` the drive (0 = A:). The same range attached again returns its drive (re-reading its boot record); a range overlapping an attached one fails. Up to 4 per boot. The drive cannot reach outside the range, and a boot record claiming more sectors than the range is not mounted. FORMAT then works on it |
 | 5 | `x1` disk | Flush the disk's write cache |
+| 6 | As 4 | Probe: changes nothing; `x0` the drive 4 would return, or the error it would give |
 
-Disk numbers count from 0 in the order of the last subfunction 0. Errors:
-1 bad subfunction, 15 bad disk number (or no drive letter left), 21 device
-error, 87 a range outside the disk, 4 no attach slot left.
+Disk numbers count from 0 in the order of the last subfunction 0 (the
+firmware's order). Each disk's MediaId is recorded by subfunction 0 and each
+partition's by subfunction 4: a transfer to a different or missing medium
+fails with error 34 (invalid disk change), and a write to a now read-only one
+with error 19. Other errors: 1 bad subfunction, 15 bad disk number or no
+drive letter left, 21 device error, 87 a range outside the disk, 4 no attach
+slot or volume left, 5 the range overlaps an attached one, 8 no sector cache.
 
 ### Devices
 

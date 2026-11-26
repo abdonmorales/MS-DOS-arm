@@ -197,6 +197,11 @@ fat_mount_parse:
     cbnz w20, 2f
     ldr w20, [x25, #32]
 2:
+    ldv x2, fat_total_sectors   // a block device's size, when known: a
+    cbz x2, 21f                 // boot record claiming more is not ours
+    cmp x20, x2                 // (an old file system on a new partition)
+    b.hi fat_parse_fail
+21:
     le16 w21, x25, 22, w3       // sectors per FAT (16-bit)
     mov x23, x21                // remember whether the BPB is FAT32-shaped
     cbnz w21, 3f

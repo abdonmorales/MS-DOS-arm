@@ -222,8 +222,11 @@ DOS started from, and asks which one to use and for confirmation. Then it
 writes an MBR with one partition of type EFh (from 1 MiB, at most 2000 MB,
 the FAT16 limit of FORMAT), formats it with `FORMAT d: /SELECT /V:ARMDOS`,
 and copies every file from A: with `XCOPY`, `\EFI\BOOT\BOOTAA64.EFI`
-included. **Everything on the chosen disk is erased.** `INSTALL n /Y` picks
-disk n without asking, for scripts. INSTALL needs UEFI boot services, so it
+included. **Everything on the chosen disk is erased.** Disks are numbered in
+the firmware's order. Before writing anything INSTALL checks that the
+partition can become a drive, and ENTER at the disk question or N at the
+confirmation leaves the disks untouched. `INSTALL n /Y` picks disk n without
+asking, for scripts; `/Y` without a disk number is refused. INSTALL needs UEFI boot services, so it
 runs from the live ISO (or any firmware-mode boot). Under the native kernel
 it finds no disks.
 
@@ -251,9 +254,11 @@ and start it again.
 
 `make -C arm64 iso-test FIRMWARE=...` checks all of this in QEMU: the live
 system as a CD and as a read-only USB stick (A: refuses writes, B: takes
-them), `INSTALL /Y` onto a blank 128 MiB disk, `fsck.fat` on the result, a
-boot of the installed disk alone that keeps a file written to A:, and that
-INSTALL does not offer the writable USB stick it booted from.
+them); with two blank 128 MiB disks, the menu, cancelling, the `/Y` guard,
+`INSTALL 2 /Y` (disk 1 must stay all zeros) and a second run in the same
+session; `fsck.fat` on the result; a boot of the installed disk alone that
+keeps a file written to A:; that INSTALL does not offer the writable USB
+stick it booted from; and that rebuilding the ISO gives the same bytes.
 
 Build the Pi image with:
 

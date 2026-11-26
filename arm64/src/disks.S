@@ -3,8 +3,11 @@
 // disks through INT 13h (FDISK, FORMAT); here the firmware's Block I/O
 // protocol plays that part. It is only available while UEFI boot services
 // run (firmware mode, as the live ISO always is). A disk is a whole-disk
-// Block I/O handle that is present, writable and not the one ARM DOS booted
-// from.
+// Block I/O handle that is present, writable and provably not the one ARM
+// DOS booted from: when either device path cannot be read, no disk is
+// offered. Every transfer checks the medium against the MediaId recorded
+// when the disk was found (or the partition attached), so a swapped medium
+// is refused, not written.
 //
 // x0 = subfunction:
 //   0  find disks: x0 = their count (0 in native mode)
@@ -12,11 +15,14 @@
 //      u64 flags (1 removable), u64 reserved
 //   2  read, 3 write: x1 = disk, x2 = first block, x3 = blocks, x4 = buffer
 //   4  attach: x1 = disk, x2 = first block, x3 = blocks: mounts that range
-//      (a partition) as the next drive letter; x0 = the drive (0 = A:)
+//      (a partition) as a drive letter; x0 = the drive (0 = A:). The same
+//      range attached again returns its drive; an overlapping one fails.
 //   5  flush: x1 = disk
+//   6  probe: as 4, but changes nothing; x0 = the drive 4 would return
 .equ DISK_MAX, 8
 .equ DISK_PARTS, 4
 .equ DISK_BOUNCE_PAGES, 16      // 64 KiB, page aligned for any IoAlign
+.equ DISK_CHANGED, 34           // DOS error: invalid disk change
 
 .macro ldv_bs reg
     adrp \reg, boot_services
@@ -28,17 +34,21 @@
 disk_services:
     cmp x0, #0
     b.eq disk_find
-    cmp x0, #5
+    cmp x0, #6
     b.hi disk_bad_function
     adrp x9, disk_count
     ldr x9, [x9, :lo12:disk_count]
     cmp x1, x9
     b.hs disk_bad_disk
+    address x9, disk_media
+    ldr x10, [x9, x1, lsl #3]   // MediaId when the disk was found
     address x9, disk_bio
     ldr x9, [x9, x1, lsl #3]    // the disk's EFI_BLOCK_IO_PROTOCOL
     cmp x0, #1
     b.eq disk_info
     cmp x0, #4
+    b.eq disk_attach
+    cmp x0, #6
     b.eq disk_attach
     cmp x0, #5
     b.eq disk_flush
@@ -50,18 +60,32 @@ disk_services:
     mov x21, x2                 // block
     mov x22, x3                 // blocks left
     mov x23, x4                 // caller's buffer
+    mov x26, x10                // MediaId
+    mov x0, x19
+    mov x1, x26
+    mov x2, x20
+    bl disk_media_check
+    cbnz x0, 7f
+    ldr x9, [x19, #8]
+    ldr x10, [x9, #24]          // LastBlock
+    add x10, x10, #1
+    adds x11, x21, x22          // the range must lie on the disk
+    b.cs 6f
+    cmp x11, x10
+    b.hi 6f
     bl disk_bounce_buffer
     cbz x0, 9f
     mov x24, x0
     ldr x2, [x19, #8]
     ldr w25, [x2, #12]          // BlockSize
-    mov x26, #(DISK_BOUNCE_PAGES * 4096)
-    udiv x26, x26, x25          // blocks per transfer
+    mov x27, #(DISK_BOUNCE_PAGES * 4096)
+    udiv x27, x27, x25          // blocks per transfer
 1:
     cbz x22, 8f
-    cmp x22, x26
-    csel x27, x22, x26, lo
-    mul x28, x27, x25           // bytes this time
+    cmp x22, x27
+    csel x9, x22, x27, lo
+    str x9, [sp, #-16]!
+    mul x28, x9, x25            // bytes this time
     cbz x20, 2f
     mov x0, x23
     mov x1, x24
@@ -69,21 +93,32 @@ disk_services:
     bl disk_copy
     mov x0, #32                 // WriteBlocks
     bl disk_transfer
-    cbnz x0, 9f
+    cbnz x0, 5f
     b 3f
 2:
     mov x0, #24                 // ReadBlocks
     bl disk_transfer
-    cbnz x0, 9f
+    cbnz x0, 5f
     mov x0, x24
     mov x1, x23
     mov x2, x28
     bl disk_copy
 3:
-    add x21, x21, x27
-    sub x22, x22, x27
+    ldr x9, [sp], #16
+    add x21, x21, x9
+    sub x22, x22, x9
     add x23, x23, x28
     b 1b
+5:
+    add sp, sp, #16
+    b 9f
+6:
+    mov x0, #87                 // invalid parameter
+    mov x1, #1
+    leave
+7:
+    mov x1, #1                  // x0 = the media check's error
+    leave
 8:
     mov x0, #0
     mov x1, #0
@@ -94,13 +129,12 @@ disk_services:
     leave
 
 // x0 = Block I/O offset (24 read, 32 write); x19 protocol, x21 block,
-// x24 bounce buffer, x28 bytes. Returns the EFI status.
+// x24 bounce buffer, x26 MediaId, x28 bytes. Returns the EFI status.
 disk_transfer:
     frame
     mov x9, x0
     mov x0, x19
-    ldr x1, [x19, #8]
-    ldr w1, [x1]                // MediaId
+    mov x1, x26
     mov x2, x21
     mov x3, x28
     mov x4, x24
@@ -108,7 +142,29 @@ disk_transfer:
     blr x5
     unframe
 
-// x0 = source, x1 = destination, x2 = bytes (a multiple of 8). Leaf.
+// x0 = protocol, x1 = expected MediaId, x2 = 1 for a write. Returns x0 = 0
+// when the same medium is present (and writable for a write), else the
+// DOS error. Leaf.
+disk_media_check:
+    ldr x9, [x0, #8]
+    ldrb w10, [x9, #5]          // MediaPresent
+    cbz w10, 1f
+    ldr w10, [x9]               // MediaId
+    cmp x10, x1
+    b.ne 1f
+    cbz x2, 2f
+    ldrb w10, [x9, #7]          // ReadOnly
+    cbz w10, 2f
+    mov x0, #19                 // write protected
+    ret
+1:
+    mov x0, #DISK_CHANGED
+    ret
+2:
+    mov x0, #0
+    ret
+
+// x0 = source, x1 = destination, x2 = bytes (a multiple of 512). Leaf.
 disk_copy:
     cbz x2, 2f
 1:
@@ -139,7 +195,6 @@ disk_bounce_buffer:
 1:
     mov x0, x2
     unframe
-
 
 disk_info:
     ldr x10, [x9, #8]           // EFI_BLOCK_IO_MEDIA
@@ -176,57 +231,131 @@ disk_bad_disk:
     mov x1, #1
     ret
 
-// Attach: a partition slot records the protocol and its first block; its
+// Attach (x0 = 4) or probe (6): x9 protocol, x10 MediaId, x2 first block,
+// x3 blocks. A partition slot records the protocol, range and MediaId; its
 // rw entry (disk_part_rwN) is what the drive table calls.
 disk_attach:
-    frame
-    address x10, disk_part_bio
-    mov x11, #0
-1:
-    ldr x12, [x10, x11, lsl #3]
-    cbz x12, 2f
-    add x11, x11, #1
-    cmp x11, #DISK_PARTS
-    b.lo 1b
-    mov x0, #4                  // too many open files: no slot left
-    mov x1, #1
-    unframe
-2:
-    ldr x12, [x9, #8]
-    ldr w13, [x12, #12]         // BlockSize
+    enter
+    cmp x0, #4
+    cset x19, eq                // 1: attach, 0: probe
+    mov x20, x9
+    mov x21, x10
+    mov x22, x2
+    mov x23, x3
+    mov x0, x20
+    mov x1, x21
+    mov x2, #1
+    bl disk_media_check
+    cbnz x0, 97f
+    adrp x9, fat_cache_buffers  // no sector cache: no block drives at all
+    ldr x9, [x9, :lo12:fat_cache_buffers]
+    cbz x9, 95f
+    ldr x12, [x20, #8]
+    ldr w24, [x12, #12]         // BlockSize
     ldr x14, [x12, #24]         // LastBlock
     add x14, x14, #1
-    adds x15, x2, x3            // the range must lie on the disk
-    b.cs 8f
+    cbz x23, 98f
+    adds x15, x22, x23          // the range must lie on the disk
+    b.cs 98f
     cmp x15, x14
-    b.hi 8f
-    cbz x3, 8f
-    str x9, [x10, x11, lsl #3]
-    address x10, disk_part_start
-    str x2, [x10, x11, lsl #3]
-    stp x11, x9, [sp, #-16]!
-    adr x0, disk_part_rw0
-    add x0, x0, x11, lsl #3     // each entry is two instructions
-    mov x1, x13
-    mov x2, x3
-    bl drive_add_block
-    ldp x11, x9, [sp], #16
-    cbz x1, 3f
-    address x10, disk_part_bio  // no letter or volume left: free the slot
-    str xzr, [x10, x11, lsl #3]
-    mov x0, #15
-    mov x1, #1
-    unframe
+    b.hi 98f
+    // The same range again: its drive. An overlapping range: refused.
+    address x10, disk_part_bio
+    address x11, disk_part_start
+    address x12, disk_part_len
+    mov x25, #-1                // a free slot
+    mov x13, #0
+1:
+    ldr x14, [x10, x13, lsl #3]
+    cbnz x14, 2f
+    cmn x25, #1
+    csel x25, x13, x25, eq
+    b 4f
+2:
+    cmp x14, x20
+    b.ne 4f
+    ldr x16, [x11, x13, lsl #3]
+    ldr x17, [x12, x13, lsl #3]
+    cmp x16, x22
+    b.ne 3f
+    cmp x17, x23
+    b.eq 50f
 3:
+    add x17, x16, x17           // overlap: start < s + l and s < end
+    cmp x22, x17
+    b.hs 4f
+    cmp x16, x15
+    b.lo 96f
+4:
+    add x13, x13, #1
+    cmp x13, #DISK_PARTS
+    b.lo 1b
+    cmn x25, #1
+    b.eq 94f
+    bl drive_next_free
+    cmp x0, #DRIVES
+    b.hs 99f
+    adrp x9, fat_vol_count
+    ldr x9, [x9, :lo12:fat_vol_count]
+    cmp x9, #FAT_VOLS
+    b.hs 94f
+    cbz x19, 90f                // probe: that letter
+    address x10, disk_part_bio
+    str x20, [x10, x25, lsl #3]
+    address x10, disk_part_start
+    str x22, [x10, x25, lsl #3]
+    address x10, disk_part_len
+    str x23, [x10, x25, lsl #3]
+    address x10, disk_part_media
+    str x21, [x10, x25, lsl #3]
+    adr x0, disk_part_rw0
+    add x0, x0, x25, lsl #3     // each entry is two instructions
+    mov x1, x24
+    mov x2, x23
+    bl drive_add_block
+    cbnz x1, 5f
+    address x10, disk_part_drive
+    str x0, [x10, x25, lsl #3]
+    b 90f
+5:
+    address x10, disk_part_bio  // no letter or volume left: free the slot
+    str xzr, [x10, x25, lsl #3]
+    b 99f
+50:
+    address x10, disk_part_drive
+    ldr x24, [x10, x13, lsl #3]
+    cbz x19, 51f
+    address x10, disk_part_media
+    str x21, [x10, x13, lsl #3]
+    mov x0, x24                 // re-read whatever is there now
+    bl drive_remount
+51:
+    mov x0, x24
+90:
     mov x1, #0
-    unframe
-8:
+    leave
+94:
+    mov x0, #4                  // no partition slot or volume left
+    b 9f
+95:
+    mov x0, #8                  // insufficient memory
+    b 9f
+96:
+    mov x0, #5                  // access denied: overlaps an attached range
+    b 9f
+97:
+    b 9f                        // x0 = the media check's error
+98:
     mov x0, #87                 // invalid parameter
+    b 9f
+99:
+    mov x0, #15                 // no drive letter left
+9:
     mov x1, #1
-    unframe
+    leave
 
 // rw(x0 = sector, x1 = buffer, x2 = count, x3 = 1 to write) for each slot.
-// The buffer is a page-aligned sector cache slot.
+// The buffer is a page-aligned sector cache slot. Returns x0 = 0, or 1.
 disk_part_rw0:
     mov x9, #0
     b disk_part_rw
@@ -237,21 +366,40 @@ disk_part_rw0:
     mov x9, #3
     b disk_part_rw
 disk_part_rw:
-    stp x29, x30, [sp, #-32]!
+    stp x29, x30, [sp, #-48]!
     mov x29, sp
     stp x19, x20, [sp, #16]
+    stp x21, x22, [sp, #32]
+    mov x20, x3
+    mov x21, x1
     address x10, disk_part_bio
     ldr x19, [x10, x9, lsl #3]
+    cbz x19, 8f
+    address x10, disk_part_len  // stay inside the partition
+    ldr x10, [x10, x9, lsl #3]
+    adds x11, x0, x2
+    b.cs 8f
+    cmp x11, x10
+    b.hi 8f
     address x10, disk_part_start
     ldr x10, [x10, x9, lsl #3]
-    mov x20, x3
-    add x10, x10, x0
-    mov x4, x1
+    add x22, x10, x0            // disk block
+    address x10, disk_part_media
+    ldr x10, [x10, x9, lsl #3]
+    str x10, [sp, #-16]!
+    str x2, [sp, #8]
+    mov x0, x19
+    mov x1, x10
+    mov x2, x20
+    bl disk_media_check
+    ldr x2, [sp, #8]
+    ldr x1, [sp], #16
+    cbnz x0, 8f
     ldr x11, [x19, #8]
-    ldr w1, [x11]               // MediaId
     ldr w12, [x11, #12]
     mul x3, x2, x12             // bytes
-    mov x2, x10
+    mov x2, x22
+    mov x4, x21
     mov x0, x19
     mov x9, #24                 // ReadBlocks
     cbz x20, 1f
@@ -259,18 +407,28 @@ disk_part_rw:
 1:
     ldr x5, [x19, x9]
     blr x5
-    cbnz x0, 2f
-    cbz x20, 2f
-    mov x0, x19                 // writes are written through to the disk
+    cbnz x0, 8f
+    cbz x20, 7f
+    ldr x11, [x19, #8]
+    ldrb w11, [x11, #8]         // WriteCaching: written through
+    cbz w11, 7f
+    mov x0, x19
     ldr x5, [x19, #40]          // FlushBlocks
     blr x5
-2:
+    cbnz x0, 8f
+7:
+    mov x0, #0
+    b 9f
+8:
+    mov x0, #1
+9:
+    ldp x21, x22, [sp, #32]
     ldp x19, x20, [sp, #16]
-    ldp x29, x30, [sp], #32
+    ldp x29, x30, [sp], #48
     ret
 
 // Find: every Block I/O handle that is a whole, present, writable disk
-// whose device path is not a prefix of the boot device's.
+// whose device path is known and not a prefix of the boot device's.
 disk_find:
     enter
     sub sp, sp, #32
@@ -280,28 +438,29 @@ disk_find:
     adrp x9, platform_native
     ldr x9, [x9, :lo12:platform_native]
     cbnz x9, 8f                 // no firmware left: no disks to offer
-    // The boot device's path (the partition ARM DOS was loaded from).
-    str xzr, [sp, #24]
+    // The boot device's path (the partition ARM DOS was loaded from). If
+    // it cannot be read, no disk can be shown not to hold it: offer none.
     adrp x0, image_handle
     ldr x0, [x0, :lo12:image_handle]
     address x1, loaded_image_guid
     add x2, sp, #16
     ldr x3, [x19, #152]         // HandleProtocol
     blr x3
-    cbnz x0, 1f
+    cbnz x0, 8f
     ldr x0, [sp, #16]
     ldr x0, [x0, #24]           // DeviceHandle
+    cbz x0, 8f
     address x1, disk_path_guid
     add x2, sp, #24
     ldr x3, [x19, #152]
     blr x3
-    cbz x0, 1f
-    str xzr, [sp, #24]
-1:
-    ldr x26, [sp, #24]          // boot device path, or 0
+    cbnz x0, 8f
+    ldr x26, [sp, #24]          // boot device path
+    cbz x26, 8f
     mov x0, x26
     bl disk_path_length
     mov x27, x0
+    cbz x27, 8f
     // LocateHandleBuffer(ByProtocol, BlockIo, NULL, &count, &buffer)
     mov x0, #2
     address x1, block_io_guid
@@ -336,24 +495,34 @@ disk_find:
     cbnz w10, 2b
     ldrb w10, [x9, #7]          // ReadOnly
     cbnz w10, 2b
-    ldr w10, [x9, #12]
+    ldr w10, [x9, #12]          // BlockSize: 512-4096, a power of two
     cmp x10, #512
     b.lo 2b
     cmp x10, #4096
     b.hi 2b
-    ldr x10, [x9, #24]          // a disk of at least 8 MiB
-    cmp x10, #16384
+    sub x11, x10, #1
+    tst x10, x11
+    b.ne 2b
+    ldr w11, [x9, #16]          // IoAlign: the bounce buffer is 4 KiB aligned
+    cmp x11, #4096
+    b.hi 2b
+    ldr x11, [x9, #24]          // a disk of at least 8 MiB
+    add x11, x11, #1
+    mul x11, x11, x10
+    cmp x11, #0x800000
     b.lo 2b
-    cbz x26, 4f
+    // A disk whose path is unknown or empty cannot be told apart from the
+    // boot disk: skip it.
     mov x0, x24
     address x1, disk_path_guid
     add x2, sp, #16
     ldr x3, [x19, #152]
     blr x3
-    cbnz x0, 4f
+    cbnz x0, 2b
     ldr x0, [sp, #16]
+    cbz x0, 2b
     bl disk_path_length
-    cbz x0, 4f
+    cbz x0, 2b
     cmp x0, x27
     b.hi 4f
     ldr x9, [sp, #16]           // the boot partition lies on this disk?
@@ -370,6 +539,10 @@ disk_find:
 4:
     address x9, disk_bio
     str x25, [x9, x23, lsl #3]
+    ldr x10, [x25, #8]
+    ldr w10, [x10]              // MediaId now: later transfers must match
+    address x9, disk_media
+    str x10, [x9, x23, lsl #3]
     add x23, x23, #1
     b 2b
 7:
@@ -404,10 +577,12 @@ disk_path_length:
     ldrb w13, [x0, x11]
     orr w12, w12, w13, lsl #8
     cmp w12, #4
-    b.lo 2f
+    b.lo 4f
     add x9, x9, x12
     cmp x9, #4096               // a sane bound
     b.lo 1b
+4:
+    mov x9, #0                  // malformed: treated as unknown
 2:
     mov x0, x9
     ret
@@ -422,7 +597,11 @@ disk_path_guid:                 // EFI_DEVICE_PATH_PROTOCOL
 .balign 8
 disk_count: .skip 8
 disk_bio: .skip DISK_MAX * 8
+disk_media: .skip DISK_MAX * 8
 disk_bounce: .skip 8
 disk_part_bio: .skip DISK_PARTS * 8
 disk_part_start: .skip DISK_PARTS * 8
+disk_part_len: .skip DISK_PARTS * 8
+disk_part_media: .skip DISK_PARTS * 8
+disk_part_drive: .skip DISK_PARTS * 8
 .section .text
