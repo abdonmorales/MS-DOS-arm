@@ -40,8 +40,17 @@ efi_main:
     bl search_init
     bl memory_init
     bl clock_init
+    bl platform_go_native
     address x0, banner
     bl puts
+    address x0, plat_firmware_message
+    adrp x1, platform_native
+    ldr x1, [x1, :lo12:platform_native]
+    cbz x1, 1f
+    address x0, plat_native_message
+1:
+    bl puts
+    bl fat_print_backend
     bl selftest
     cbnz x0, boot_failed
 shell_loop:
@@ -68,6 +77,14 @@ boot_failed:
 efi_exit:
     mov x0, #0
 efi_return:
+    mov x19, x0
+    bl fat_unmount
+    adrp x1, platform_native
+    ldr x1, [x1, :lo12:platform_native]
+    cbz x1, 1f
+    b plat_shutdown             // firmware is gone: power off instead
+1:
+    mov x0, x19
     ldp x21, x22, [sp], #16
     ldp x19, x20, [sp], #16
     unframe
@@ -579,9 +596,12 @@ delete_return:
     ldr x19, [sp], #16
     unframe
 
+// Prefer the native FAT driver; firmware SimpleFileSystem is the fallback.
 filesystem_init:
     frame
     str x19, [sp, #-16]!
+    bl fat_mount
+    cbz x0, fs_return
     address x19, boot_services
     ldr x19, [x19]
     address x0, image_handle
@@ -610,18 +630,7 @@ fs_return:
 
 // Firmware console backend. All stacks remain 16-byte aligned (AAPCS64).
 putc:
-    frame
-    sub sp, sp, #16
-    strh w0, [sp]
-    strh wzr, [sp, #2]
-    mov x1, sp
-    address x0, system_table
-    ldr x0, [x0]
-    ldr x0, [x0, #64]
-    ldr x2, [x0, #8]            // OutputString
-    blr x2
-    add sp, sp, #16
-    unframe
+    b plat_putc
 puts:
     frame
     mov x1, x0
@@ -671,28 +680,7 @@ read_key_pending:
     mov x0, x1
     b read_key_return
 read_key_firmware:
-    address x19, system_table
-    ldr x19, [x19]
-    ldr x19, [x19, #48]         // ConIn
-1:
-    mov x0, x19
-    mov x1, sp
-    ldr x2, [x19, #8]           // ReadKeyStroke
-    blr x2
-    cbz x0, 2f
-    ldr x0, [x19, #16]          // WaitForKey event
-    str x0, [sp, #8]
-    mov x0, #1
-    add x1, sp, #8
-    add x2, sp, #16
-    address x3, boot_services
-    ldr x3, [x3]
-    ldr x3, [x3, #96]           // WaitForEvent
-    blr x3
-    b 1b
-2:
-    ldrh w0, [sp, #2]           // UnicodeChar; ignore scan-only keys
-    cbz w0, 1b
+    bl plat_read_key
 read_key_return:
     add sp, sp, #32
     ldp x19, x20, [sp], #16
@@ -810,13 +798,7 @@ cmd_ver:
     address x0, version_message
     b puts
 cmd_cls:
-    frame
-    address x0, system_table
-    ldr x0, [x0]
-    ldr x0, [x0, #64]
-    ldr x1, [x0, #48]           // ClearScreen
-    blr x1
-    unframe
+    b plat_clear_screen
 cmd_exit:
     b shell_exit
 cmd_type:
@@ -1086,7 +1068,7 @@ name_date: .asciz "DATE"
 name_time: .asciz "TIME"
 name_selftest: .asciz "SELFTEST"
 name_exit: .asciz "EXIT"
-banner: .asciz "\r\nMS-DOS 4.0 AArch64 port development runtime\r\nNative ARM64 assembly / UEFI platform backend\r\nPartial port: x86 applications and the full DOS kernel are not implemented.\r\n"
+banner: .asciz "\r\nMS-DOS 4.0 AArch64 port development runtime\r\nNative ARM64 assembly. x86 programs are not supported (native port).\r\n"
 prompt: .asciz "A:\\> "
 newline: .asciz "\r\n"
 erase_char: .asciz "\b \b"
@@ -1119,6 +1101,8 @@ file_info_buffer: .skip 1024
 selftest_saved_cwd: .skip 256
 
 .include "src/files.S"
+.include "src/fat.S"
+.include "src/platform.S"
 .include "src/api_test.S"
 .include "src/search.S"
 

@@ -1,19 +1,23 @@
-# Native AArch64 DOS ABI, version 1
+# Native AArch64 DOS ABI, version 2
 
 This ABI adapts selected DOS 4.0 public operations to flat pointers and AAPCS64.
 It does not run x86 DOS binaries or recreate segment registers, interrupt 21h,
-the original PSP, or DOS memory-control blocks. Runtime services require UEFI
-Boot Services; programs run at the firmware's privilege level in one address
-space. Resource ownership provides cleanup, not memory isolation.
+the original PSP, or DOS memory-control blocks. Programs run at the kernel's
+privilege level (EL1) in one flat address space, like DOS programs share real
+mode. Resource ownership provides cleanup, not memory isolation. A CPU
+exception in a program terminates that program (termination type 2).
+
+Version 2 (this document) drops UEFI from the program interface: the kernel
+loads programs itself and passes the descriptor directly.
 
 ## Program entry and API discovery
 
-Programs are position-independent AArch64 PE32+ UEFI applications (machine
-`0xaa64`, optional-header magic `0x20b`, subsystem 10), conventionally named
-`.EXE`. Their entry receives `x0=EFI image handle`, `x1=EFI system table`.
-Obtain `EFI_LOADED_IMAGE_PROTOCOL` for the handle through `HandleProtocol`.
-Its `LoadOptionsSize` is at byte 48 and `LoadOptions` at 56. The DOS loader
-installs this 64-byte descriptor:
+Programs are AArch64 PE32+ images (machine `0xaa64`, optional-header magic
+`0x20b`), conventionally named `.EXE`. The kernel copies the headers and
+sections into a 64 KiB-aligned block (images use ADRP, so the block keeps
+their page offsets), applies `IMAGE_REL_BASED_DIR64` relocations, and calls
+the entry point with `x0` = this 64-byte descriptor (`x1` = 0). Returning
+from the entry point ends the program with exit code 0.
 
 | Offset | Value |
 | --- | --- |
@@ -24,7 +28,7 @@ installs this 64-byte descriptor:
 | 32 | Pointer to NUL-terminated ASCII command tail |
 | 40 | Pointer to double-NUL-terminated environment (`COMSPEC`, `PATH`) |
 | 48 | Pointer to the runtime's current directory string |
-| 56 | Child's EFI image handle |
+| 56 | Process identifier (the image's load address) |
 
 Validate the signature/version before using pointers. Keep the function pointer
 in a callee-saved register; invoke it with `blr`. Set `w8` to the function number.
@@ -52,7 +56,7 @@ measure completion of the original operating system.
 | `09h` | `x0` pointer | Print until `$` or NUL; `x0=24h` |
 | `0Ah` | `x0` DOS line buffer | Byte 0 capacity, byte 1 count, bytes 2+ input followed by CR; capacity includes CR |
 | `0Bh` | None | `x0=FFh` available, otherwise 0; console polling retains the character |
-| `0Ch` | `x0` follow-up function, `x1` its argument | Flush firmware keyboard; optional `01/06/07/08/0A` call |
+| `0Ch` | `x0` follow-up function, `x1` its argument | Flush console type-ahead; optional `01/06/07/08/0A` call |
 | `0Dh` | None | Flush all open file objects |
 | `0Eh` | `x0` drive, zero based | Only A: (0); result `x0=1` configured drive |
 | `0Fh`, `10h` | `x0` standard FCB | Open / close; FCB status below |

@@ -13,17 +13,7 @@ efi_main:
     stp x19, x20, [sp, #-16]!
     stp x21, x22, [sp, #-16]!
     sub sp, sp, #16
-    ldr x3, [x1, #96]
-    address x1, loaded_image_guid
-    mov x2, sp
-    ldr x3, [x3, #152]
-    blr x3
-    cbnz x0, program_failed
-    ldr x0, [sp]
-    ldr w1, [x0, #48]
-    cmp w1, #64
-    b.lo program_failed
-    ldr x0, [x0, #56]
+    // Native process ABI: x0 = ARMDOS64 process descriptor.
     cbz x0, program_failed
     ldr x1, [x0]
     address x2, signature
@@ -130,6 +120,14 @@ program_check_readin:
     cmp x0, #7
     b.ne program_failed
 program_print:
+    cbz x20, 3f
+    ldrb w0, [x20]
+    cmp w0, #'f'               // "fault": touch unmapped memory on purpose
+    b.ne 3f
+    mov x0, #0xdead0000
+    movk x0, #0xbeef, lsl #32
+    ldr x0, [x0]
+3:
     address x0, message
     mov w8, #0x09
     blr x19
@@ -154,10 +152,6 @@ program_return:
     ret
 .section .rodata
 .balign 8
-loaded_image_guid:
-    .long 0x5b1b31a1
-    .short 0x9562, 0x11d2
-    .byte 0x8e,0x3f,0x00,0xa0,0xc9,0x69,0x72,0x3b
 signature: .ascii "ARMDOS64"
 filename: .asciz "\\ARMTEST.TXT"
 own_name: .asciz "\\NATIVE.EXE"

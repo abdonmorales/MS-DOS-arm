@@ -9,7 +9,7 @@ BUILD ?= build
 SOURCES := $(wildcard src/*.S)
 FIXTURES := $(wildcard fixtures/*)
 
-.PHONY: all image pi-image unit smoke check validate snapshot clean
+.PHONY: all image pi-image unit smoke smoke-firmware check validate snapshot fat-test clean
 all: $(BUILD)/BOOTAA64.EFI $(BUILD)/NATIVE.EXE
 image: $(BUILD)/msdos-arm64.img
 pi-image: $(BUILD)/msdos-arm64-pi3.img
@@ -22,11 +22,25 @@ unit: $(BUILD)/kernel.elf $(BUILD)/kernel.bin
 smoke: image
 	$(PYTHON) tools/smoke.py $(BUILD)/msdos-arm64.img --firmware $(FIRMWARE) --log $(BUILD)/smoke.log
 
+# Same checks with ACPI hidden, so the kernel must keep using UEFI services.
+smoke-firmware: image
+	$(PYTHON) tools/smoke.py $(BUILD)/msdos-arm64.img --firmware $(FIRMWARE) --mode firmware --log $(BUILD)/smoke-firmware.log
+
 check: unit
 	$(MAKE) smoke
 
 validate: image pi-image
 	$(PYTHON) tools/validate.py --build $(BUILD) --firmware $(FIRMWARE)
+
+# Host stress test of src/fat.S (needs an AArch64 Linux cross compiler and
+# qemu-user): FAT12/16/32 images checked with fsck.fat and mtools.
+HOST_CC ?= aarch64-linux-gnu-gcc
+QEMU_USER ?= qemu-aarch64
+fat-test: $(BUILD)/fat_host
+	$(PYTHON) tools/fat_test.py --host $(BUILD)/fat_host --qemu $(QEMU_USER)
+
+$(BUILD)/fat_host: tests/fat_host.c tests/fat_host_glue.S src/fat.S | $(BUILD)
+	$(HOST_CC) -static -O1 -Wall -Wa,-I. -o $@ tests/fat_host.c tests/fat_host_glue.S
 
 snapshot: validate
 	$(PYTHON) tools/snapshot.py --build $(BUILD) --output images
