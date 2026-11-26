@@ -5,7 +5,7 @@
 // device handles here instead of to the filesystem.
 //
 // AUX shares the console UART. PRN has no printer behind it on QEMU virt and
-// discards output (prn_target 0) until a PRINTER driver selects a target.
+// discards output until PRINTER.SYS takes it over.
 .equ DEV_CON, 0
 .equ DEV_AUX, 1
 .equ DEV_PRN, 2
@@ -261,6 +261,9 @@ dev_read:
     mov x20, x2
     ldr x9, [x0, #DEV_DRV_READ]
     cbz x9, 1f
+    ldr x10, [x0, #DEV_ID]
+    cmp x10, #DEV_CON
+    b.eq 1f                     // CON drivers supply keys to the line editor
     mov x0, x19
     mov x1, x20
     blr x9
@@ -389,26 +392,9 @@ dev_write_return:
     ldp x19, x20, [sp], #16
     unframe
 
-// x0 = bytes, x1 = count. The PRINTER driver redirects this; by default
-// output is discarded (no parallel port on the supported boards).
+// x0 = bytes, x1 = count. Without PRINTER.SYS output is discarded (no
+// parallel port on the supported boards).
 prn_output:
-    address x9, prn_target
-    ldr x9, [x9]
-    cbz x9, 2f
-    frame
-    stp x19, x20, [sp, #-16]!
-    mov x19, x0
-    mov x20, x1
-1:
-    cbz x20, 3f
-    ldrb w0, [x19], #1
-    bl plat_putc
-    sub x20, x20, #1
-    b 1b
-3:
-    ldp x19, x20, [sp], #16
-    unframe
-2:
     ret
 
 // 03h: read one byte from AUX (the console UART), no echo.
@@ -527,4 +513,3 @@ dev_installed: .skip 8
 dev_installed_names: .skip 8 * (DEV_MAX - DEV_COUNT)
 
 con_direct: .skip 8
-prn_target: .skip 8

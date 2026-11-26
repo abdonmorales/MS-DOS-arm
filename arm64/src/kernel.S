@@ -617,8 +617,27 @@ fs_return:
     unframe
 
 // Firmware console backend. All stacks remain 16-byte aligned (AAPCS64).
+// w0 = byte. A DEVICE= driver that took over CON (ANSI.SYS) sees every
+// console byte; its own output goes straight to the UART (see con_busy).
 putc:
-    b plat_putc
+    address x9, dev_objects
+    ldr x9, [x9, #DEV_DRV_WRITE]
+    cbz x9, plat_putc
+    address x10, con_busy
+    ldr x11, [x10]
+    cbnz x11, plat_putc
+    frame
+    sub sp, sp, #16
+    mov x11, #1
+    str x11, [x10]
+    strb w0, [sp]
+    mov x0, sp
+    mov x1, #1
+    blr x9
+    address x10, con_busy
+    str xzr, [x10]
+    add sp, sp, #16
+    unframe
 puts:
     frame
     mov x1, x0
@@ -674,7 +693,7 @@ read_key_pending:
     mov x0, x1
     b read_key_return
 read_key_firmware:
-    bl plat_read_key
+    bl con_read_key
     cmp x0, #3
     b.ne read_key_return
     address x1, process_frames

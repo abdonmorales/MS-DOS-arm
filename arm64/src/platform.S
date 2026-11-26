@@ -103,9 +103,13 @@ plat_flush_input:
 
 plat_clear_screen:
     frame
+    address x1, dev_objects     // a CON driver (ANSI.SYS) clears the screen
+    ldr x1, [x1, #DEV_DRV_WRITE]
+    cbnz x1, 2f
     adrp x1, platform_native
     ldr x1, [x1, :lo12:platform_native]
     cbz x1, 1f
+2:
     address x0, plat_cls_sequence
     bl puts
     unframe

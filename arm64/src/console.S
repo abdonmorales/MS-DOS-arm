@@ -94,7 +94,7 @@ dos_console_flush:
     mov x20, x1
     address x0, pending_key
     str xzr, [x0]
-    bl plat_flush_input
+    bl con_flush_input
     mov w8, w19
     mov x0, x20
     cmp w8, #1
@@ -124,7 +124,7 @@ poll_key:
     ldr x0, [x0]
     cbnz x0, 2f
 1:
-    bl plat_poll_key
+    bl con_poll_key
     cbz x0, 3f
     address x2, pending_key
     str x0, [x2]
@@ -176,7 +176,46 @@ read_console_handle:
     ldp x21, x22, [sp], #16
     ldp x19, x20, [sp], #16
     unframe
+
+// The keyboard as CON delivers it: a CON driver's read(buffer, 1) is
+// non-blocking (0 bytes when no key is waiting), otherwise the UART.
+// Returns x0 = byte, or 0 when none is waiting.
+con_poll_key:
+    address x9, dev_objects
+    ldr x9, [x9, #DEV_DRV_READ]
+    cbz x9, plat_poll_key
+    frame
+    sub sp, sp, #16
+    strb wzr, [sp]
+    mov x0, sp
+    mov x1, #1
+    blr x9
+    cbz x0, 1f
+    ldrb w0, [sp]
+1:
+    add sp, sp, #16
+    unframe
+
+// Blocking. Returns x0 = byte.
+con_read_key:
+    frame
+1:
+    bl con_poll_key
+    cbnz x0, 2f
+    yield
+    b 1b
+2:
+    unframe
+
+con_flush_input:
+    frame
+1:
+    bl con_poll_key
+    cbnz x0, 1b
+    unframe
+
 .section .bss
 .balign 16
 pending_key: .skip 8
+con_busy: .skip 8
 stdin_buffer: .skip 256

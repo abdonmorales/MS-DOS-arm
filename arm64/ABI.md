@@ -253,6 +253,8 @@ Its entry point is called once with `x0` pointing to a 96-byte init request:
 | 48 | out | Block device: total sectors (nonzero makes it a drive) |
 | 56 | out | Block device: bytes per sector |
 | 64 | in | Block device: the drive it will get (0 = A:) |
+| 72 | in | `putc(w0 byte)`: the console UART itself |
+| 80 | in | `poll()`: the next key from the UART in `x0`, or 0 (non-blocking) |
 
 A block device (RAMDRIVE.SYS, VDISK.SYS) sets +48 and puts
 `rw(x0 sector, x1 buffer, x2 count, x3 0 read / 1 write)`, returning `x0=0`
@@ -264,6 +266,13 @@ a standard device (`CON`, `AUX`, `PRN`, `NUL`, `CLOCK$`) takes over that
 device's reads and writes; any other name adds a device that opens like a file
 from any directory, with any extension. Up to 11 drivers can be added.
 Functions may be left 0 (reads then report end of file, writes discard).
+
+A driver that takes over `CON` (ANSI.SYS) sees every console byte: COMMAND's
+output, `02h`, `06h`, `09h` and handle writes all reach its `write`. Its
+`read(buffer, 1)` is called for one key at a time and must not block (return
+0 when no key is waiting); the kernel keeps doing line editing on top of it.
+Such a driver writes to the screen and reads keys through +72 and +80, never
+through DOS calls. PRINTER.SYS takes over `PRN` the same way.
 
 ## DTA and FCB layout
 

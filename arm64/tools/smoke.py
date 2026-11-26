@@ -384,6 +384,24 @@ def main():
                 raise RuntimeError('RESTORE failed')
             checks += 1
             command('type XC\\SUB\\FC1.TXT', b'alpha')
+            # Milestone 7: PRINTER.SYS sends PRN to the serial line; ANSI.SYS
+            # reassigns keys (x types "ver" and Enter) and reports the cursor.
+            command('echo printed>PRN', b'PRN\nprinted\n')
+            command('prompt $e[120;"ver";13p$p$g')
+            command('prompt $p$g')
+            if b'MS-DOS API baseline' not in keys(b'x', b'A:\\>'):
+                raise RuntimeError('ANSI.SYS key reassignment failed')
+            checks += 1
+            command('prompt $e[120p$p$g')
+            command('prompt $p$g')
+            command('echo x', b'echo x\nx\n')
+            command('cls')
+            # The report is typed into the next command line; erase it.
+            if b'[2;1R' not in keys(b'prompt $e[6n$p$g\r', b'1R'):
+                raise RuntimeError('ANSI.SYS cursor report failed')
+            keys(b'\b' * 8 + b'prompt $p$g\r', b'A:\\>')
+            checks += 1
+            command('echo done', b'echo done\ndone')
             print(f'PASS: ARM64 UEFI disk boot, native API self-tests, {checks} console checks.')
         finally:
             selector.close()

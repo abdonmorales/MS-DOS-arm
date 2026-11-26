@@ -395,6 +395,10 @@ config_device:
     str x0, [x22]
     bl drive_next_free          // a block driver's unit gets this letter
     str x0, [x22, #64]
+    address x0, plat_putc       // the UART itself, for CON and PRN drivers
+    str x0, [x22, #72]
+    address x0, plat_poll_key
+    str x0, [x22, #80]
     mov x0, x20
     bl skip_blanks
     mov x1, x0
