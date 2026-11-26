@@ -9,6 +9,7 @@ program and batch fixtures. They do not run historical x86 executables.
 | --- | --- | --- |
 | [msdos-arm64.img.xz](msdos-arm64.img.xz) | 64 MiB | AArch64 UEFI VM; candidate external payload on supported, preconfigured Apple m1n1/U-Boot |
 | [msdos-arm64-pi3.img.xz](msdos-arm64-pi3.img.xz) | 128 MiB | Pi 3B/3B+ with bundled Pi UEFI firmware |
+| [armdos.iso.xz](armdos.iso.xz) | 31 MiB | Live ISO for any ARM64 UEFI machine or VM (QEMU, UTM): read-only A:, `INSTALL` to a disk. Not for the Pi |
 
 Each image passed FAT consistency checks, build-payload comparisons, native API
 integration checks and the console checks counted in
@@ -21,6 +22,10 @@ it does not validate Pi ROM/VideoCore boot or physical hardware drivers.
 **Physical Pi and native Apple hardware have not been tested. Native boot on
 all Apple Silicon models remains unsupported.** The generic image does not
 install Apple's boot authorization, m1n1 or U-Boot.
+
+The ISO is packaged only after `make iso-test` passed on its exact bytes
+(live boot as a CD and USB stick, `INSTALL` to a blank disk and a boot of
+that disk); see [Live ISO and INSTALL](../README.md#live-iso-and-install).
 
 Verify the `.img.xz.sha256` sidecar, then decompress with `xz -dk image.img.xz`
 and verify the `.img.sha256` sidecar. Use the raw generic image as a writable

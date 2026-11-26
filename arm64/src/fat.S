@@ -83,6 +83,24 @@ fat_mount:
     enter
     address x19, boot_services
     ldr x19, [x19]
+    // Sector cache buffers come from firmware pages (4 KiB aligned for DMA).
+    mov x0, #0                  // AllocateAnyPages
+    mov x1, #2                  // EfiLoaderData
+    mov x2, #FAT_SLOTS
+    address x3, fat_cache_buffers
+    ldr x4, [x19, #40]          // AllocatePages
+    blr x4
+    cbnz x0, fat_mount_fail
+    address x2, fat_cache_lba
+    address x3, fat_cache_stamp
+    mov x4, #0
+    mov x5, #-1
+1:
+    str x5, [x2, x4, lsl #3]
+    str xzr, [x3, x4, lsl #3]
+    add x4, x4, #1
+    cmp x4, #FAT_SLOTS
+    b.lo 1b
     address x0, image_handle
     ldr x0, [x0]
     address x1, loaded_image_guid
@@ -106,7 +124,12 @@ fat_mount:
     ldrb w2, [x22, #5]          // MediaPresent
     cbz w2, fat_mount_fail
     ldrb w2, [x22, #7]          // ReadOnly: leave such media to firmware
-    cbnz w2, fat_mount_fail
+    cbz w2, 1f
+    mov x2, #1                  // a CD or other read-only boot: live mode
+    adrp x3, boot_read_only
+    str x2, [x3, :lo12:boot_read_only]
+    b fat_mount_fail
+1:
     ldr w23, [x22]              // MediaId
     ldr w24, [x22, #12]         // BlockSize
     cmp x24, #512
@@ -119,24 +142,6 @@ fat_mount:
     stv x21, fat_blockio, x2
     stv x23, fat_media_id, x2
     stv x24, fat_bps, x2
-    // Sector cache buffers come from firmware pages (4 KiB aligned for DMA).
-    mov x0, #0                  // AllocateAnyPages
-    mov x1, #2                  // EfiLoaderData
-    mov x2, #FAT_SLOTS
-    address x3, fat_cache_buffers
-    ldr x4, [x19, #40]          // AllocatePages
-    blr x4
-    cbnz x0, fat_mount_fail
-    address x2, fat_cache_lba
-    address x3, fat_cache_stamp
-    mov x4, #0
-    mov x5, #-1
-1:
-    str x5, [x2, x4, lsl #3]
-    str xzr, [x3, x4, lsl #3]
-    add x4, x4, #1
-    cmp x4, #FAT_SLOTS
-    b.lo 1b
     bl fat_mount_parse
     cbnz x0, fat_mount_fail
     ldv x0, fat_root_obj
@@ -192,6 +197,11 @@ fat_mount_parse:
     cbnz w20, 2f
     ldr w20, [x25, #32]
 2:
+    ldv x2, fat_total_sectors   // a block device's size, when known: a
+    cbz x2, 21f                 // boot record claiming more is not ours
+    cmp x20, x2                 // (an old file system on a new partition)
+    b.hi fat_parse_fail
+21:
     le16 w21, x25, 22, w3       // sectors per FAT (16-bit)
     mov x23, x21                // remember whether the BPB is FAT32-shaped
     cbnz w21, 3f
@@ -3444,6 +3454,9 @@ fat_backend_sd: .asciz " over the native SD card driver\r\n"
 fat_backend_firmware: .asciz "Storage: UEFI firmware file system (native FAT driver unavailable)\r\n"
 
 .section .bss
+.balign 8
+.global boot_read_only
+boot_read_only: .skip 8
 .balign 16
 fat_mounted: .skip 8
 fat_device: .skip 8

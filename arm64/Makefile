@@ -10,9 +10,10 @@ SOURCES := $(wildcard src/*.S)
 FIXTURES := $(wildcard fixtures/*)
 
 .SECONDARY:
-.PHONY: all payloads image pi-image unit smoke smoke-firmware check validate snapshot fat-test pi-test clean
+.PHONY: all payloads image pi-image unit smoke smoke-firmware check validate snapshot fat-test pi-test iso iso-test clean
 all: $(BUILD)/BOOTAA64.EFI payloads
 image: $(BUILD)/msdos-arm64.img
+iso: $(BUILD)/armdos.iso
 payloads: $(PAYLOADS)
 pi-image: $(BUILD)/msdos-arm64-pi3.img
 
@@ -44,7 +45,7 @@ fat-test: $(BUILD)/fat_host
 $(BUILD)/fat_host: tests/fat_host.c tests/fat_host_glue.S src/fat.S | $(BUILD)
 	$(HOST_CC) -static -O1 -Wall -Wa,-I. -o $@ tests/fat_host.c tests/fat_host_glue.S
 
-snapshot: validate
+snapshot: validate iso-test
 	$(PYTHON) tools/snapshot.py --build $(BUILD) --output images
 
 $(BUILD):
@@ -104,6 +105,12 @@ $(foreach p,$(DRIVER_NAMES),$(eval $(call payload_rule,$(p),$(call upper,$(p)).S
 
 $(BUILD)/msdos-arm64.img: $(BUILD)/BOOTAA64.EFI $(PAYLOADS) $(FIXTURES) tools/image.py
 	$(PYTHON) tools/image.py $< $@
+
+# Live ISO (UEFI El Torito) for VMs; needs xorriso. iso-test boots it as a CD.
+$(BUILD)/armdos.iso: $(BUILD)/msdos-arm64.img tools/iso.py
+	$(PYTHON) tools/iso.py $< $@
+iso-test: $(BUILD)/armdos.iso
+	$(PYTHON) tools/iso_test.py $< --firmware $(FIRMWARE) --image $(BUILD)/msdos-arm64.img
 
 $(BUILD)/msdos-arm64-pi3.img: $(BUILD)/BOOTAA64.EFI $(PAYLOADS) $(FIXTURES) tools/pi_image.py
 	$(PYTHON) tools/pi_image.py $< $@ --replace-generated $(if $(PI_FIRMWARE),--firmware "$(PI_FIRMWARE)")

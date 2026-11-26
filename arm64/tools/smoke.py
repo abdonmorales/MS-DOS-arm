@@ -390,6 +390,14 @@ def main():
             if b'Format complete.' not in text:
                 raise RuntimeError('FORMAT failed')
             checks += 1
+            # FORMAT /SELECT (INSTALL's call) asks nothing; INSTALL offers no
+            # disk here: the only disk is the boot disk (or the native kernel).
+            text = command('format c: /select /v:WORK', b'Format complete.')
+            if b'(Y/N)' in text or b'Volume label' in text:
+                raise RuntimeError('FORMAT /SELECT asked a question')
+            command('install', b'No disk to install on')
+            command('install /x', b'Usage: INSTALL [disk] [/Y]')
+            command('install /y', b'needs the disk number')
             command('sys c:', b'System transferred')
             command('diskcopy b: c:', b'Insert TARGET diskette in drive C:', prompt=b'continue . . .')
             if b'Copying' not in keys(b' ', b'(Y/N)? '):

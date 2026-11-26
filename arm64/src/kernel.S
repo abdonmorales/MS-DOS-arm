@@ -58,8 +58,16 @@ efi_main:
 1:
     bl puts
     bl fat_print_backend
+    adrp x0, boot_read_only     // live system (CD/ISO): A: cannot be written,
+    ldr x0, [x0, :lo12:boot_read_only]  // so the write self-test is skipped
+    cbz x0, 2f
+    address x0, live_message
+    bl puts
+    b 3f
+2:
     bl selftest
     cbnz x0, boot_failed
+3:
     bl config_process
     address x0, config_shell_program
     ldr x0, [x0]
@@ -1176,6 +1184,7 @@ erase_char: .asciz "\b \b"
 ctrl_c_mark: .asciz "^C"
 unknown_message: .asciz "Bad command or file name\r\n"
 help_message: .asciz "HELP VER ECHO CLS DIR TYPE DEL ERASE CD MD RD COPY REN DATE TIME VOL\r\nSET PATH PROMPT FOR SHIFT REM CALL GOTO IF PAUSE VERIFY BREAK CTTY CHCP TRUENAME\r\nSELFTEST EXIT. Native ARM64 EXE and BAT files; quote paths containing spaces.\r\nRedirection: < input, > output, >> append, | pipe. A: is the boot volume.\r\n"
+live_message: .asciz "Live system: drive A: is read-only, and files on RAM disks last until\r\npower-off. Run INSTALL to put ARM DOS on a writable disk.\r\n"
 version_message: .asciz "ARM DOS Version 4.00 (AArch64), MS-DOS 4.00 API\r\n"
 passed_message: .asciz "SELFTEST PASS: file/FCB APIs, directories/search, memory, clock, native processes.\r\n"
 failed_message: .asciz "SELFTEST FAIL\r\n"
@@ -1205,6 +1214,7 @@ selftest_saved_cwd: .skip 256
 .include "src/files.S"
 .include "src/drives.S"
 .include "src/fat.S"
+.include "src/disks.S"
 .include "src/platform.S"
 .include "src/sdhci.S"
 .include "src/api_test.S"
