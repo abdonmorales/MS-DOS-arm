@@ -57,7 +57,7 @@ python3 arm64/tools/run.py arm64/build/msdos-arm64.img --firmware /path/to/QEMU_
 
 The runner chooses QEMU's `hvf` accelerator and `host` CPU on Apple Silicon
 macOS, or `tcg` and Cortex-A72 elsewhere. The cloud validation used TCG on x86_64;
-HVF and UTM have not been tested here. UTM can use an ARM64 VM with UEFI firmware
+HVF was tested on an Apple M3 Pro (macOS 27.2, QEMU 11.1 from Homebrew, its `edk2-aarch64-code.fd`): `make smoke` passes all 255 checks in native mode and 253 in firmware mode, with the same output as TCG. UTM has not been tested. UTM can use an ARM64 VM with UEFI firmware
 and the raw disk as a writable VirtIO drive. This image requires a writable FAT
 volume for its boot self-test.
 
