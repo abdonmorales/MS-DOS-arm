@@ -175,7 +175,7 @@ static status rename_to(const char *from, const char *to) {
 }
 
 int main(int argc, char **argv) {
-    if (argc != 4) { fprintf(stderr, "usage: fat_host IMAGE SECTOR phase1|phase2\n"); return 2; }
+    if (argc != 4) { fprintf(stderr, "usage: fat_host IMAGE SECTOR phase1|phase2|shortfat|badcluster\n"); return 2; }
     int fd = open(argv[1], O_RDWR); struct stat st; fstat(fd, &st);
     disk_bytes = st.st_size;
     disk = mmap(NULL, disk_bytes, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
@@ -291,11 +291,81 @@ int main(int argc, char **argv) {
         CHECK(f->setinfo(f, file_info_guid, *(uint64_t *)info, info) == 0, "truncate to 0"); f->close(f);
         write_all("\\Sub Dir\\moved.txt", "content 1\r\n", 11, 3);
 
+        // A second handle on a deleted file must not reach the file that
+        // reuses its directory slot (and maybe its freed clusters).
+        write_all("\\VICTIM.TXT", "victim", 6, 6);
+        file *h1 = NULL, *h2 = NULL;
+        CHECK(op("\\VICTIM.TXT", RW, 0, &h1) == 0 && op("\\VICTIM.TXT", RW, 0, &h2) == 0,
+              "open victim twice");
+        if (h1 && h2) {
+            CHECK(h1->del(h1) == 0, "delete victim");
+            write_all("\\NEWFILE.TXT", "newdata", 7, 7);
+            uint64_t k = 5; CHECK(h2->write(h2, &k, "STALE") != 0, "stale handle write refused");
+            k = 8; CHECK(h2->read(h2, &k, tmp) != 0, "stale handle read refused");
+            CHECK(get_info(h2) != 0, "stale handle getinfo refused");
+            h2->close(h2);
+            expect_file("\\NEWFILE.TXT", "newdata", 7);
+        }
+        // A second handle on a renamed or moved file follows it.
+        write_all("\\FOLLOW.TXT", "follow", 6, 6);
+        CHECK(op("\\FOLLOW.TXT", RD, 0, &h1) == 0, "open follow");
+        CHECK(rename_to("\\FOLLOW.TXT", "\\Sub Dir\\followed name.txt") == 0, "move follow");
+        write_all("\\TAKESLOT.TXT", "other", 5, 5);
+        if (h1) {
+            uint64_t k = 6; memset(tmp, 0, 8);
+            CHECK(h1->read(h1, &k, tmp) == 0 && k == 6 && !memcmp(tmp, "follow", 6),
+                  "moved file read through old handle");
+            char nm[64]; CHECK(get_info(h1) == 0, "moved getinfo"); info_name(nm);
+            CHECK(!strcmp(nm, "followed name.txt"), "moved name %s", nm);
+            h1->close(h1);
+        }
+
+        // A long name with characters outside ASCII is shown by its alias,
+        // but deleting the file must still remove its long-name entries
+        // (fsck.fat afterwards would report them as orphans).
+        n = list_dir("\\", names, 400);
+        int deleted = 0;
+        for (int i = 0; i < n && i < 400; i++) {
+            if (strncmp(names[i], "CAF", 3) || !strchr(names[i], '~')) continue;
+            char alias[80]; snprintf(alias, sizeof alias, "\\%.70s", names[i]);
+            CHECK(op(alias, RW, 0, &f) == 0 && f->del(f) == 0, "delete %s", alias);
+            deleted++;
+        }
+        CHECK(deleted == 1, "non-ASCII long name alias listed %d times", deleted);
+
         // Volume information.
         uint64_t fsn = 200;
         CHECK(root()->getinfo(root(), fs_info_guid, &fsn, info) == 0, "fs info");
         CHECK(*(uint64_t *)(info + 16) > *(uint64_t *)(info + 24) && *(uint32_t *)(info + 32) >= 512,
               "fs sizes");
+    } else if (!strcmp(argv[3], "shortfat")) {
+        // The BPB claims more clusters than its FAT can describe:
+        // allocation must stop at the FAT's end, not spill into the root.
+        file *f; CHECK(op("\\FILL.BIN", CR, 0, &f) == 0, "create fill");
+        status full = 0;
+        for (int i = 0; f && i < 100 && !full; i++) {    // up to 30 MB: past the FAT's reach
+            uint64_t k = sizeof big; full = f->write(f, &k, big);
+        }
+        CHECK(full == ERR(11), "short FAT fills up with VOLUME_FULL, got %llx",
+              (unsigned long long)full);
+        if (f) f->close(f);
+        expect_file("\\KEEP.TXT", "keep\r\n", 6);
+        int n = list_dir("\\", names, 400);
+        CHECK(in_list(names, n, "KEEP.TXT"), "root listing after filling a short FAT");
+    } else if (!strcmp(argv[3], "badcluster")) {
+        // BAD.TXT's directory entry names a first cluster past the volume:
+        // every operation must refuse it without writing anywhere.
+        file *f; CHECK(op("\\BAD.TXT", RW, 0, &f) == 0, "open bad");
+        if (f) {
+            uint64_t k = 16; CHECK(f->read(f, &k, tmp) != 0, "read bad refused");
+            get_info(f); *(uint64_t *)(info + 8) = 100;
+            CHECK(f->setinfo(f, file_info_guid, *(uint64_t *)info, info) != 0, "truncate bad refused");
+            f->setpos(f, 5000); k = 4;
+            CHECK(f->write(f, &k, "evil") != 0, "write bad refused");
+            f->close(f);
+        }
+        CHECK(op("\\BADDIR\\NEW.TXT", CR, 0, &f) != 0, "create in bad directory refused");
+        expect_file("\\KEEP.TXT", "keep\r\n", 6);
     } else {
         // Second boot: everything persisted, and the image is still usable.
         expect_file("\\BIG.BIN", NULL, 0);

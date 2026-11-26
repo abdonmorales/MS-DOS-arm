@@ -32,7 +32,7 @@ def expected_big():
 
 
 def run(cmd, env=None, check=True):
-    result = subprocess.run(cmd, capture_output=True, text=True, env=env)
+    result = subprocess.run(cmd, capture_output=True, text=True, errors='replace', env=env)
     if check and result.returncode:
         raise RuntimeError(f'{cmd[0]} failed ({result.returncode}):\n'
                            f'{result.stdout}{result.stderr}')
@@ -46,7 +46,7 @@ def mtools(env, *args, binary=False):
     return result.stdout if binary else result.stdout.decode(errors='replace')
 
 
-def fsck(image, sector):
+def fsck(image):
     # fsck.fat reads the logical sector size from the boot sector itself.
     result = run(['fsck.fat', '-n', '-v', str(image)], check=False)
     text = result.stdout + result.stderr
@@ -61,11 +61,12 @@ def check_config(host, qemu, work, name, bits, mib, sector, spc):
         f.truncate(mib * 1024 * 1024)
     run(['mkfs.fat', '-F', str(bits), '-S', str(sector), '-s', str(spc),
          '-n', 'ARMTEST', str(image)])
-    env = dict(os.environ, MTOOLS_SKIP_CHECK='1', MTOOLS_NO_VFAT='0')
+    env = dict(os.environ, MTOOLS_SKIP_CHECK='1', MTOOLS_NO_VFAT='0', LC_ALL='C.UTF-8')
     src = work / f'{name}-src'
     src.mkdir()
     files = {'UPPER.TXT': b'upper\r\n', 'Hello.txt': b'hello\r\n',
-             'A long file name.text': b'long\r\n'}
+             'A long file name.text': b'long\r\n',
+             'Caf\u2603 menu.txt': b'non-ascii\r\n'}   # phase1 deletes it by its alias
     for filename, data in files.items():
         (src / filename).write_bytes(data)
         mtools(env, 'mcopy', '-i', str(image), str(src / filename), '::/' + filename)
@@ -73,13 +74,13 @@ def check_config(host, qemu, work, name, bits, mib, sector, spc):
     inner = bytes(pattern(3, i) for i in range(100000))
     (src / 'inner.dat').write_bytes(inner)
     mtools(env, 'mcopy', '-i', str(image), str(src / 'inner.dat'), '::/Sub Dir/inner.dat')
-    fsck(image, sector)
+    fsck(image)
 
     for phase in ['phase1', 'phase2']:
         result = run([qemu, str(host), str(image), str(sector), phase], check=False)
         if result.returncode:
             raise RuntimeError(f'{name} {phase}:\n{result.stdout}{result.stderr}')
-        fsck(image, sector)
+        fsck(image)
 
     # Independent read-back of what the native driver wrote.
     big = mtools(env, 'mtype', '-i', str(image), '::/BIG.BIN', binary=True)
@@ -102,6 +103,8 @@ def check_config(host, qemu, work, name, bits, mib, sector, spc):
     if count != 100:
         raise RuntimeError(f'{name}: mtools sees {count} entries in New Dir')
     root = mtools(env, 'mdir', '-i', str(image), '-b', '::/')
+    if 'Caf' in root:
+        raise RuntimeError(f'{name}: deleted non-ASCII long name still listed:\n{root}')
     for expected in ['lower.txt', 'MiXed.TXT', 'upper.txt', 'Child Moved']:
         if '/' + expected not in root:
             raise RuntimeError(f'{name}: {expected!r} missing from mtools listing:\n{root}')
@@ -109,6 +112,55 @@ def check_config(host, qemu, work, name, bits, mib, sector, spc):
     if 'R' not in attrib.split('::')[0]:
         raise RuntimeError(f'{name}: read-only attribute not visible to mtools')
     return f'{name}: FAT{bits}, {sector}-byte sectors, {sector * spc}-byte clusters'
+
+
+def corrupt_image(work, name, patch):
+    """A small FAT16 image holding KEEP.TXT, BAD.TXT and BADDIR, then patched."""
+    image = work / f'{name}.img'
+    with image.open('wb') as f:
+        f.truncate(8 * 1024 * 1024)
+    run(['mkfs.fat', '-F', '16', '-S', '512', '-s', '1', '-n', 'CORRUPT', str(image)])
+    env = dict(os.environ, MTOOLS_SKIP_CHECK='1')
+    src = work / f'{name}-src'
+    src.mkdir()
+    for filename, data in [('KEEP.TXT', b'keep\r\n'), ('BAD.TXT', bytes(10000))]:
+        (src / filename).write_bytes(data)
+        mtools(env, 'mcopy', '-i', str(image), str(src / filename), '::/' + filename)
+    mtools(env, 'mmd', '-i', str(image), '::/BADDIR')
+    data = bytearray(image.read_bytes())
+    reserved = int.from_bytes(data[14:16], 'little')
+    fats, fat_size = data[16], int.from_bytes(data[22:24], 'little')
+    root = (reserved + fats * fat_size) * 512
+    entries = {bytes(data[root + i:root + i + 11]): root + i for i in range(0, 512 * 32, 32)}
+    patch(data, entries)
+    image.write_bytes(data)
+    return image
+
+
+def check_corrupt(host, qemu, work):
+    """Metadata that would steer writes outside the FAT or the volume."""
+    def short_fat(data, entries):
+        # Claim a 30 MiB volume (about 61,000 clusters, still FAT16) while
+        # the FATs stay sized for 8 MiB (about 16,000 entries).
+        data.extend(bytes(30 * 1024 * 1024 - len(data)))
+        data[19:21] = bytes(2)
+        data[32:36] = (30 * 2048).to_bytes(4, 'little')
+
+    def bad_cluster(data, entries):
+        bad = entries[b'BAD     TXT']
+        data[bad + 26:bad + 28] = (0xfff0).to_bytes(2, 'little')   # past the volume
+        baddir = entries[b'BADDIR     ']
+        data[baddir + 26:baddir + 28] = (1).to_bytes(2, 'little')  # reserved cluster
+
+    for phase, patch in [('shortfat', short_fat), ('badcluster', bad_cluster)]:
+        image = corrupt_image(work, phase, patch)
+        before = image.read_bytes()
+        result = run([qemu, str(host), str(image), '512', phase], check=False)
+        if result.returncode:
+            raise RuntimeError(f'{phase}:\n{result.stdout}{result.stderr}')
+        if phase == 'badcluster' and image.read_bytes() != before:
+            raise RuntimeError('badcluster: the driver wrote to a volume it should refuse')
+    return 'corrupt metadata: short FAT and out-of-range clusters are contained'
 
 
 def main():
@@ -119,6 +171,7 @@ def main():
     with tempfile.TemporaryDirectory(prefix='fat-test-') as directory:
         for config in CONFIGS:
             print('PASS:', check_config(args.host.resolve(), args.qemu, Path(directory), *config))
+        print('PASS:', check_corrupt(args.host.resolve(), args.qemu, Path(directory)))
     print('PASS: native FAT driver host tests, fsck.fat clean, mtools read-back matches.')
 
 

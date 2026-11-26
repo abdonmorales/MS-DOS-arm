@@ -27,6 +27,7 @@
 .equ OF_DIR, 2
 .equ OF_ROOT, 4
 .equ OF_PERM, 8
+.equ OF_GONE, 16             // entry deleted through another handle
 .equ NO_INDEX, 0xffffffff
 .equ FAT_EOC, 0x0fffffff
 
@@ -198,7 +199,24 @@ fat_mount:
     b.lo 4f
     mov x4, #32
 4:
-    stv x4, fat_type, x2
+    // Never trust the cluster count beyond what the FAT can describe: with a
+    // short FAT, entries for the extra clusters would land past the FAT.
+    mul x5, x21, x24
+    lsl x5, x5, #3
+    udiv x5, x5, x4             // entries one FAT copy holds
+    subs x5, x5, #2             // minus the two reserved entries
+    b.le fat_mount_fail
+    cmp x4, #32
+    b.ne 41f
+    mov x6, #0xfff4             // FAT32: highest data cluster is 0x0FFFFFF5
+    movk x6, #0x0fff, lsl #16
+    cmp x5, x6
+    csel x5, x5, x6, ls
+41:
+    cmp x2, x5
+    csel x2, x2, x5, ls
+    stv x2, fat_clusters, x3
+    stv x4, fat_type, x3
     cmp x4, #32
     b.eq 5f
     cbz x19, fat_mount_fail     // FAT12/16 need a fixed root directory
@@ -207,8 +225,13 @@ fat_mount:
     cbnz x19, fat_mount_fail
     cbnz x23, fat_mount_fail
     ldr w2, [x25, #44]          // root cluster
+    and w2, w2, #0x0fffffff
     cmp x2, #2
     b.lo fat_mount_fail
+    ldv x3, fat_clusters
+    add x3, x3, #2
+    cmp x2, x3
+    b.hs fat_mount_fail
     stv x2, fat_root_cluster, x3
     le16 w19, x25, 48, w3       // FSInfo sector
     mov x2, #2
@@ -451,6 +474,8 @@ fat_locate:
 fat_get:
     enter
     mov x19, x0
+    bl fat_check_cluster        // corrupt chains must not index past the FAT
+    cbnz x0, 9f
     ldv x20, fat_type
     cmp x20, #12
     b.eq 3f
@@ -531,6 +556,8 @@ fat_set:
     enter
     mov x19, x0
     mov x20, x1
+    bl fat_check_cluster        // never write outside this volume's FAT
+    cbnz x0, 9f
     ldv x21, fat_type
     cmp x21, #12
     b.eq 4f
@@ -750,6 +777,9 @@ fat_dir_entry:
 1:
     ldv x19, fat_root_cluster
 2:
+    mov x0, x19                 // directory cluster from disk: range-check it
+    bl fat_check_cluster
+    cbnz x0, 9f
     ldv x2, fat_cluster_bytes
     lsr x2, x2, #5
     udiv x22, x20, x2
@@ -872,15 +902,18 @@ fat_dr_loop:
     b.ne fat_dr_short
     cmp w0, w22
     b.ne fat_dr_short
-    cbnz x24, fat_dr_short
+    // A valid long-name set stays part of the entry (x23 = its first slot)
+    // even when its name cannot be shown, so delete and rename remove it.
+    cbnz x24, fat_dr_alias
     address x0, fat_lfn_buf
     ldrb w2, [x0]
-    cbz w2, fat_dr_short
+    cbz w2, fat_dr_alias
     address x1, fat_de_name
     bl fat_strcpy
     b fat_dr_found
 fat_dr_short:
     mov x23, x20
+fat_dr_alias:
     address x0, fat_de_entry
     address x1, fat_de_name
     bl fat_format_short
@@ -1576,6 +1609,7 @@ fat_entry_get_cluster:
     b.ne 1f
     ldrh w2, [x0, #20]
     orr w1, w1, w2, lsl #16
+    and w1, w1, #0x0fffffff     // FAT32 cluster numbers are 28 bits
 1:
     mov x0, x1
     ret
@@ -1701,6 +1735,8 @@ fat_obj_alloc:
 // x0=object (not root). Returns x0=status, x1=its cached short entry.
 fat_obj_entry:
     frame
+    ldrb w2, [x0, #OBJ_FLAGS]
+    tbnz w2, #4, 1f             // OF_GONE: the slot may now hold another file
     ldr w1, [x0, #OBJ_INDEX]
     ldr w0, [x0, #OBJ_PARENT]
     bl fat_dir_entry
@@ -1736,6 +1772,9 @@ fat_obj_cluster:
 fat_obj_load_name:
     enter
     mov x19, x0
+    efierr x0, 7
+    ldrb w2, [x19, #OBJ_FLAGS]
+    tbnz w2, #4, 9f             // OF_GONE
     ldr w0, [x19, #OBJ_PARENT]
     ldr w1, [x19, #OBJ_FIRST]
     bl fat_dir_read
@@ -2399,6 +2438,11 @@ fat_efi_delete:
     ldr w2, [x19, #OBJ_INDEX]
     bl fat_dir_delete_set
     cbnz x0, 8f
+    mov x0, x19
+    mov x1, #0
+    mov x2, #0
+    mov x3, #NO_INDEX
+    bl fat_obj_retarget
     mov x0, x20
     bl fat_free_chain
     mov x0, x19
@@ -2812,6 +2856,45 @@ fat_set_denied:
 fat_set_return:
     leave
 
+// Other open objects naming the same directory slot as x0 must follow it:
+// x1=new parent, x2=new first entry, x3=new index (NO_INDEX: the entry was
+// deleted, so mark them OF_GONE). Without this a second handle on a deleted
+// or moved file would read or write whatever file next reuses the slot.
+fat_obj_retarget:
+    ldr w4, [x0, #OBJ_PARENT]
+    ldr w5, [x0, #OBJ_INDEX]
+    address x6, fat_objects
+    mov x7, #0
+1:
+    cmp x6, x0
+    b.eq 3f
+    ldr x8, [x6, #OBJ_MAGIC]
+    cbz x8, 3f
+    ldrb w8, [x6, #OBJ_FLAGS]
+    tbnz w8, #2, 3f             // the root object has no slot
+    ldr w9, [x6, #OBJ_PARENT]
+    cmp w9, w4
+    b.ne 3f
+    ldr w9, [x6, #OBJ_INDEX]
+    cmp w9, w5
+    b.ne 3f
+    mov w9, #NO_INDEX
+    cmp w3, w9
+    b.ne 2f
+    orr w8, w8, #OF_GONE
+    strb w8, [x6, #OBJ_FLAGS]
+    b 3f
+2:
+    str w1, [x6, #OBJ_PARENT]
+    str w2, [x6, #OBJ_FIRST]
+    str w3, [x6, #OBJ_INDEX]
+3:
+    add x6, x6, #OBJ_SIZE
+    add x7, x7, #1
+    cmp x7, #FAT_OBJECTS
+    b.lo 1b
+    ret
+
 // x0=object; fat_open_path holds the new name (bare, or absolute path).
 fat_rename:
     enter
@@ -2989,6 +3072,11 @@ fat_rename:
     bl fat_cache_commit
     cbnz x0, fat_ren_return
 10:
+    mov x0, x19
+    mov x1, x21
+    mov x2, x27
+    mov x3, x28
+    bl fat_obj_retarget
     str w21, [x19, #OBJ_PARENT]
     str w27, [x19, #OBJ_FIRST]
     str w28, [x19, #OBJ_INDEX]
