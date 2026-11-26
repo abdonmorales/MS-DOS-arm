@@ -95,6 +95,9 @@ main:
     strb w1, [x0]
     bl read_console_line
     bl skip_blanks
+    mov x26, x0
+    bl rtrim
+    mov x0, x26
     ldrb w1, [x0]
     cbz w1, cancelled
     bl parse_dec
@@ -158,16 +161,19 @@ main:
     mov x0, #0
     mov x1, x26
     bl zero_blocks
+    cbnz x1, write_error
     mov x0, #ZERO_BUF
     udiv x1, x0, x24
     cmp x1, x27
     csel x1, x27, x1, hi
     mov x0, x26
     bl zero_blocks
+    cbnz x1, write_error
     mov x0, #ZERO_BUF
     udiv x1, x0, x24
     sub x0, x25, x1
     bl zero_blocks
+    cbnz x1, write_error
     // The MBR: one bootable partition of type EFh (EFI).
     address x9, mbr
     mov w10, #0x4d44            // disk signature "DMRA"
@@ -261,7 +267,7 @@ main:
     leave
 
 // x0 = first block, x1 = blocks: writes zeros there (disk x23, block size
-// x24). Leaves through write_error on a failure.
+// x24). Returns x1 = 0, or 1 when a write failed.
 zero_blocks:
     frame
     stp x19, x20, [sp, #-16]!
@@ -280,9 +286,11 @@ zero_blocks:
     mov x1, x23
     address x4, zeros
     dos 0xe0
-    cbnz x1, write_error
+    cbnz x1, 3f
     b 1b
 2:
+    mov x1, #0
+3:
     ldp x19, x20, [sp], #16
     unframe
 
@@ -338,8 +346,31 @@ failed:
     mov x0, #3
     leave
 cannot_attach:
-    say "That disk cannot be used now (a part of it is in use as a drive, or\r\n"
-    say "no drive letter is free). Nothing was written.\r\n"
+    mov x19, x0
+    say "That disk cannot be used now: "
+    cmp x19, #5
+    b.ne 1f
+    say "part of it is already a drive"
+    b 9f
+1:
+    cmp x19, #34
+    b.ne 2f
+    say "its medium was changed; run INSTALL again"
+    b 9f
+2:
+    cmp x19, #19
+    b.ne 3f
+    say "it is write-protected"
+    b 9f
+3:
+    cmp x19, #8
+    b.ne 4f
+    say "not enough memory"
+    b 9f
+4:
+    say "no drive letter is free"
+9:
+    say ".\r\nNothing was written.\r\n"
     mov x0, #3
     leave
 write_error:

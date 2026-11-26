@@ -327,8 +327,12 @@ disk_attach:
     cbz x19, 51f
     address x10, disk_part_media
     str x21, [x10, x13, lsl #3]
-    mov x0, x24                 // re-read whatever is there now
-    bl drive_remount
+    mov x0, x24                 // re-read whatever is there now, from
+    bl drive_remount            // its root directory
+    mov x0, x24
+    bl drive_entry
+    mov w9, #'\\'
+    strh w9, [x0, #DRV_CWD]
 51:
     mov x0, x24
 90:

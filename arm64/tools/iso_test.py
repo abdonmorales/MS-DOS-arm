@@ -10,6 +10,8 @@
 2. The installed disk alone boots ARM DOS (native FAT driver, self-test)
    and keeps a file written to A:. fsck.fat finds its partition clean.
 3. As a read-only USB stick: the same live system.
+3b. With a disk that fails every write: INSTALL says so and ARM DOS keeps
+   running.
 4. As a writable USB stick (the ISO written to one): INSTALL must not
    offer the disk ARM DOS booted from.
 """
@@ -178,6 +180,23 @@ def main():
                                  capture_output=True).stdout
         if b'kept' not in listing:
             raise RuntimeError('a file written on the installed disk was not kept')
+
+        # A disk whose every write fails: INSTALL reports it and the system
+        # keeps running (no crash on the error path).
+        broken, rules = work / 'broken.img', work / 'blkdebug.conf'
+        with broken.open('wb') as f:
+            f.truncate(64 << 20)
+        rules.write_text('[inject-error]\nevent = "write_aio"\nerrno = "5"\n')
+        s = Session(args, ['-device', 'virtio-scsi-pci', '-drive', drive + ',media=cdrom',
+                           '-device', 'scsi-cd,drive=live', '-drive',
+                           f'file=blkdebug:{rules}:{broken},if=none,id=broken,format=raw',
+                           '-device', 'virtio-blk-pci,drive=broken'])
+        try:
+            s.until(b'A:\\>')
+            s.command('INSTALL 1 /Y', b'Cannot write to the disk', timeout=120)
+            s.command('ver', b'ARM DOS Version 4.00')
+        finally:
+            s.close()
 
         s = Session(args, ['-device', 'qemu-xhci', '-drive', drive,
                            '-device', 'usb-storage,drive=live,removable=on'])
