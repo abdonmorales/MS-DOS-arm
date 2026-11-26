@@ -93,6 +93,7 @@ main:
     say "\r\nWARNING, ALL DATA ON NON-REMOVABLE DISK\r\nDRIVE "
     add x0, x20, #'A'
     bl putc
+    say ": WILL BE LOST!\r\n"
     address x0, proceed
     bl ask_yn
     cbnz x0, 4f
@@ -609,7 +610,7 @@ copy:
     ret
 
 .section .rodata
-proceed: .asciz ": WILL BE LOST!\r\nProceed with Format (Y/N)?"
+proceed: .asciz "Proceed with Format (Y/N)?"
 geometry_switches: .asciz "148BNTF"
 oem: .ascii "MSDOS4.0"
 no_name: .ascii "NO NAME    "

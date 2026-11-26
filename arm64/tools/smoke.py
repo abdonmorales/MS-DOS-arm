@@ -337,6 +337,53 @@ def main():
             checks += 1
             keys(b'e\r', b'A:\\>')
             command('type ED.TXT', b'second line\n')
+            # Drives B:-D: come from RAMDRIVE/VDISK in the CONFIG.SYS fixture.
+            command('b:', prompt=b'B:\\>')
+            command('echo on b>B.TXT', prompt=b'B:\\>')
+            command('dir', b'Volume in drive B is MS-RAMDRIVE', prompt=b'B:\\>')
+            command('a:')
+            command('format c: /v:WORK', b'DRIVE C: WILL BE LOST!', prompt=b'(Y/N)?')
+            text = keys(b'y', b'A:\\>')
+            if b'Format complete.' not in text:
+                raise RuntimeError('FORMAT failed')
+            checks += 1
+            command('sys c:', b'System transferred')
+            command('diskcopy b: c:', b'Insert TARGET diskette in drive C:', prompt=b'continue . . .')
+            if b'Copying' not in keys(b' ', b'(Y/N)? '):
+                raise RuntimeError('DISKCOPY failed')
+            keys(b'n', b'A:\\>')
+            checks += 1
+            command('diskcomp b: c:', b'Insert SECOND diskette in drive C:', prompt=b'continue . . .')
+            if b'Compare OK' not in keys(b' ', b'(Y/N) ? '):
+                raise RuntimeError('DISKCOMP failed')
+            keys(b'n', b'A:\\>')
+            checks += 1
+            command('md SB')
+            command('subst e: a:\\sb')
+            command('subst', b'E: => A:\\SB')
+            command('copy FC1.TXT e:', b'1 File(s) copied')
+            command('type SB\\FC1.TXT', b'alpha')
+            command('subst e: /d')
+            command('assign d=b')
+            command('type d:\\B.TXT', b'on b')
+            command('assign')
+            command('join c: a:\\cj')
+            command('join', b'C: => A:\\CJ')
+            command('dir a:\\cj', b'B        TXT')
+            command('join c: /d')
+            command('backup a:\\xc\\*.* b: /s', b'B:\\ root directory will be erased',
+                    prompt=b'continue . . .')
+            if b'\\XC\\SUB\\FC1.TXT' not in keys(b' ', b'A:\\>'):
+                raise RuntimeError('BACKUP failed')
+            checks += 1
+            command('del XC\\SUB\\FC1.TXT')
+            command('restore b: a:\\xc\\*.* /s', b'Insert backup diskette 01 in drive B:',
+                    prompt=b'continue . . .')
+            text = keys(b' ', b'A:\\>')
+            if b'*** Restoring files from drive B: ***' not in text or b'\\XC\\SUB\\FC1.TXT' not in text:
+                raise RuntimeError('RESTORE failed')
+            checks += 1
+            command('type XC\\SUB\\FC1.TXT', b'alpha')
             print(f'PASS: ARM64 UEFI disk boot, native API self-tests, {checks} console checks.')
         finally:
             selector.close()

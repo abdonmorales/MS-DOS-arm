@@ -63,7 +63,7 @@ binary's table matches this list.
 | `0Bh` | None | `x0=FFh` available, otherwise 0; console polling retains the character |
 | `0Ch` | `x0` follow-up function, `x1` its argument | Flush console type-ahead; optional `01/06/07/08/0A` call |
 | `0Dh` | None | Flush all writable open file objects (read-only ones are skipped) |
-| `0Eh` | `x0` drive, zero based | Only A: (0); result `x0=1` configured drive |
+| `0Eh` | `x0` drive, zero based | Selects it if valid (else keeps the current drive); `x0` number of drives (LASTDRIVE) |
 | `0Fh`, `10h` | `x0` FCB | Open / close; FCB status below |
 | `11h`, `12h` | `x0` FCB with `?` wildcards | Find first / next 8.3 name in the current directory; result FCB in the DTA |
 | `13h` | `x0` FCB with `?` wildcards | Delete every matching file; `x0=0` if any was deleted |
@@ -71,7 +71,7 @@ binary's table matches this list.
 | `16h` | `x0` FCB | Create/truncate; an extended FCB supplies the attribute |
 | `17h` | `x0` FCB: old name at 1, new name at 17 | Rename all matches; `?` in the new name keeps the old character |
 | `18h`, `1Dh`, `1Eh`, `20h`, `61h`, `64h`, `6Bh` | None | Reserved (CP/M, network, IFS): `x0=0`, no effect |
-| `19h` | None | Default drive `x0=0` (A:) |
+| `19h` | None | Current drive in `x0` (0 = A:) |
 | `1Ah` | `x0` DTA pointer, `x1` byte capacity | Select transfer/search buffer |
 | `1Bh`, `1Ch` | `1Ch`: `x0` drive (0 default, 1 A:) | `x0` sectors per cluster, `x2` bytes per sector, `x3` clusters, `x4` media byte, `x5` pointer to it |
 | `1Fh`, `32h` | `32h`: `x0` drive | `x0` native drive parameter block (below) |
@@ -105,7 +105,7 @@ binary's table matches this list.
 | `43h` | `x0` path, `x1` get 0/set 1, `x2` attributes | Get returns attributes in `x0` |
 | `44h` | `x0` handle or drive, `x1` subfunction, `x2`, `x3` | IOCTL 00h–0Fh (below) |
 | `45h`, `46h` | `x0` source handle; `46h`: `x1` destination | Duplicate / force duplicate; an unredirected 0–2 duplicates as CON |
-| `47h` | `x0` output pointer, `x1` capacity | Current path without drive or leading slash |
+| `47h` | `x0` output pointer, `x1` capacity, `x2` drive (0 default, 1 A:) | That drive's current path without drive or leading slash |
 | `48h` | `x0` byte size | `x0` allocation; 64 slots, 16 MiB maximum request; 64 KiB granules |
 | `49h` | `x0` allocation | Free an owned block (error 9 otherwise) |
 | `4Ah` | `x0` allocation, `x1` byte size | Resize in place within reserved capacity; error 8 includes capacity in `x2` |
@@ -165,10 +165,10 @@ Process exit releases its locks.
 | 01h | Set device information from `x2` (devices only; only raw bit 20h changes; DH must be 0) |
 | 02h–05h, 0Ch | Control strings: no driver accepts them (error 1) |
 | 06h, 07h | Input / output status: `x0=FFh` ready |
-| 08h | `x0` drive: `x0=1` fixed |
+| 08h | `x0` drive: `x0=1` fixed (every drive, RAM disks included) |
 | 09h, 0Ah | Remote drive / handle: `x2=0` (local) |
 | 0Bh | Sharing retry count: accepted |
-| 0Dh | `x0` drive, `x2` 0866h get / 0846h set media ID, `x3` buffer (as `69h`); 0860h, 0861h, 0841h (below) |
+| 0Dh | `x0` drive, `x2` 0866h get / 0846h set media ID, `x3` buffer (as `69h`); 0860h, 0861h, 0841h, 0840h (below) |
 | 0Eh, 0Fh | Logical drive map: `x0=0` (one letter per drive) |
 
 ### Drive parameter block and list of lists
@@ -181,18 +181,31 @@ count FFFFh unknown; 16-bit fields saturate) and adds 32-bit fields: 40
 sectors per FAT, 44 first data sector, 48 highest cluster, 52 root cluster,
 56 FAT type (12/16/32), 60 total sectors.
 
-The list of lists (112 bytes): 0 DPB pointer, 8 handle table, 16 CLOCK$
+The list of lists (144 bytes): 0 DPB pointer, 8 handle table, 16 CLOCK$
 device, 24 CON device, 32 u16 largest sector, 34 u8 block devices, 35 u8
 LASTDRIVE, 40 NUL device, 48 current directory string, 56 u64 BUFFERS,
 64 u64 FILES, 72 memory block table (the native MCB chain: entries of u64
 base, size, reserved capacity, owner; base 0 is unused), 80 its entry count,
 88 native arena bytes, 96 free arena bytes (both 0 in firmware mode), 104 the
-kernel's owner id. Owners are the image base of a program (its descriptor
-+56).
+kernel's owner id, 112 APPEND state (u64 flags: 1 list set, 2 /X, 4 /PATH,
+8 /E; then the ASCIIZ path list), 120 environment size, 128 drive table, 136
+u64 entries in it (26). Owners are the image base of a program (its
+descriptor +56).
 
-IOCTL 0Dh also takes 0860h (`x3` 88-byte buffer: u64 bytes per sector,
+Each drive table entry is 512 bytes: 0 flags (1 physical drive, 2 SUBST, 4
+joined into another drive), 8 root object (0 when unformatted), 16 FAT volume
+slot, 24 the physical drive behind SUBST or JOIN, 32 ASSIGN target + 1 (0
+none), 40 block driver `rw` entry (0 for the boot disk), 64 SUBST target or
+JOIN host path, 256 the drive's current directory (`\...`). SUBST, JOIN and
+ASSIGN edit the table directly, as the DOS utilities edited the CDS. Path
+resolution applies ASSIGN, then refuses a joined drive, then resolves `.`,
+`..` and the current directory, then SUBST and JOIN prefixes.
+
+IOCTL 0Dh also takes 0860h (`x3` 96-byte buffer: u64 bytes per sector,
 sectors per cluster, FAT type, first data sector, clusters, first FAT sector,
-sectors per FAT, FAT copies, first root sector, root entries, root cluster),
+sectors per FAT, FAT copies, first root sector, root entries, root cluster,
+total sectors of the device; FAT type 0 means unformatted), 0840h (re-read the
+boot record after FORMAT),
 and 0861h / 0841h, read / write sectors, with `x3` pointing to u64 first
 sector (volume relative), count, and buffer. They go through the sector
 cache, as INT 25h/26h did for CHKDSK, FORMAT, SYS, LABEL and RECOVER.
@@ -227,7 +240,7 @@ COMMAND and `AUTOEXEC.BAT`, and the built-in shell takes over when it exits).
 Unknown keywords and bad values print `Error in CONFIG.SYS line n`.
 
 A `DEVICE=` driver is a native PE32+ image like a program. It stays resident.
-Its entry point is called once with `x0` pointing to a 64-byte init request:
+Its entry point is called once with `x0` pointing to a 96-byte init request:
 
 | Offset | In/out | Meaning |
 | --- | --- | --- |
@@ -237,6 +250,14 @@ Its entry point is called once with `x0` pointing to a 64-byte init request:
 | 24 | out | `read(x0 buffer, x1 count)` returning `x0` bytes (0 = end of file) |
 | 32 | out | `write(x0 buffer, x1 count)` returning `x0` bytes written |
 | 40 | out | Device information word (44h/00h); 80h is always set |
+| 48 | out | Block device: total sectors (nonzero makes it a drive) |
+| 56 | out | Block device: bytes per sector |
+| 64 | in | Block device: the drive it will get (0 = A:) |
+
+A block device (RAMDRIVE.SYS, VDISK.SYS) sets +48 and puts
+`rw(x0 sector, x1 buffer, x2 count, x3 0 read / 1 write)`, returning `x0=0`
+or nonzero on a device error, at +24. It becomes the next free drive letter up to LASTDRIVE; the
+kernel mounts its FAT volume (up to 16 volumes) or leaves it for FORMAT.
 
 The entry returns `x1=0` to install or `x1=1` to refuse. A driver named after
 a standard device (`CON`, `AUX`, `PRN`, `NUL`, `CLOCK$`) takes over that
