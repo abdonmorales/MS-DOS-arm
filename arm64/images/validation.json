@@ -5,24 +5,24 @@
   "physical_pi_tested": false,
   "images": {
     "msdos-arm64": {
-      "sha256": "4dd75a2fe14a938e59be0669427192b3cd28d2c95925b9c021fb2014a1a6fe78",
+      "sha256": "8a1e52e4216779f9947b82cf6ab602c0130c48ff70a9ee7e916db5a42a3d32ff",
       "bytes": 67108864,
       "filesystem_check": "pass",
       "payload_check": "pass",
       "aarch64_uefi_qemu_boot": "pass",
-      "console_checks": 295,
-      "smoke_log_sha256": "9af0df02dc4fc43a6897c457d6c7580471294188466f6e4f68901bb5974354e2"
+      "console_checks": 312,
+      "smoke_log_sha256": "c44f6aa4026aa0fd73b258e84fcf492ba42024cedbea8de7e9451f33cdb9ba1f"
     },
     "msdos-arm64-pi3": {
-      "sha256": "e543bb508727845586e1a880a8bb46074cd772463e70817e6cc52e7ba788b318",
+      "sha256": "7acc8e2b813ad649e344a8ee5bdb4aa0be892907b09a9efe0baa9cbb029728ef",
       "bytes": 134217728,
       "filesystem_check": "pass",
       "payload_check": "pass",
       "aarch64_uefi_qemu_boot": "pass",
-      "console_checks": 295,
-      "smoke_log_sha256": "7ec7ee8af5f8f6011615a184a881aee0a0aed43d7405941ab63f4d5f2efe41d6"
+      "console_checks": 312,
+      "smoke_log_sha256": "10e87fd8ff3245ef87a4115fee4b73e75224c566499fb25fe72bd93a74587f2d"
     }
   },
-  "source_files_sha256": "2923615d2eeed07f8d6aacf3c4507eb11d3f59815d21776dc1e51a157f245d45",
+  "source_files_sha256": "d2200132dc7d852621ae2cfd1c89a5306274fe1450e7dd1f6a2a85ea9a3a8c41",
   "boot_application_sha256": "8a73a45a9fa50c4b9e609173f1ce4a4af728cabb962460a1e3bb5bb1503c3a5e"
 }

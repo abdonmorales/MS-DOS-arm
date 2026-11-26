@@ -453,6 +453,32 @@ def main():
             keys(b'\b' * 8 + b'prompt $p$g\r', b'A:\\>')
             checks += 1
             command('echo done', b'echo done\ndone')
+            # ARM BASIC: a program from the disk, typed lines, INPUT, SAVE,
+            # Ctrl-C in a loop and an error report.
+            command('basic primes', b' 89  97 \nOk', prompt=b'Ok\r\n')
+            command('LIST 30', b'30 FOR N = 2 TO 99', prompt=b'Ok\r\n')
+            command('NEW', prompt=b'Ok\r\n')
+            command('10 A$="ARM": FOR I=1 TO 3: PRINT A$;I;: NEXT: PRINT',
+                    prompt=b'NEXT: PRINT')
+            command('20 INPUT "N";N: PRINT N*2; LEFT$(A$,2); LEN(A$)',
+                    prompt=b'LEN(A$)')
+            command('RUN', b'ARM 1 ARM 2 ARM 3 \nN? ', prompt=b'N? ')
+            command('21', b' 42 AR 3 \nOk', prompt=b'Ok\r\n')
+            command('SAVE "T1"', prompt=b'Ok\r\n')
+            command('PRINT 1/0', b'Division by zero', prompt=b'Ok\r\n')
+            command('RUN', b'N? ', prompt=b'N? ')
+            keys(b'\x03', b'^C')
+            command('', b'Break in 20', prompt=b'Ok\r\n')
+            command('NEW', prompt=b'Ok\r\n')
+            command('30 GOTO 30', prompt=b'GOTO 30')
+            keys(b'RUN\r', b'RUN')
+            time.sleep(1)
+            if b'Break in 30' not in keys(b'\x03', b'Ok\r\n'):
+                raise RuntimeError('Ctrl-C did not stop the BASIC program')
+            checks += 1
+            command('SYSTEM')
+            command('type T1.BAS', b'20 INPUT "N";N: PRINT N*2; LEFT$(A$,2); LEN(A$)')
+            command('del T1.BAS')
             # COUNTRY.SYS (assembled from MKCNTRY.ASM) supplies other code pages.
             command('chcp', b'Active code page: 437')
             command('chcp 850')

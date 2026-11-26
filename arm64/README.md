@@ -93,6 +93,7 @@ The utilities from `v4.0/src/CMD` are separate native programs on the image:
 `DISKCOPY`, `EDLIN`, `FC`, `FIND`, `FORMAT`, `JOIN`, `LABEL`, `MEM`, `MORE`,
 `RECOVER`, `REPLACE`, `RESTORE`, `SORT`, `SUBST`, `SYS`, `TREE` and `XCOPY`.
 `INSTALL` puts ARM DOS on another disk (see [Live ISO and INSTALL](#live-iso-and-install)).
+`BASIC` is ARM BASIC, a native BASIC interpreter (see [ARM BASIC](#arm-basic)).
 The `CONFIG.SYS` fixture loads `RAMDRIVE.SYS` twice and `VDISK.SYS` once, so
 drives B:, C: and D: are RAM disks for the multi-drive tools (`B:` switches
 drive, as in DOS). It also loads `ANSI.SYS` (DOS escape sequences, cursor
@@ -154,6 +155,46 @@ every date and time of day through `pack_efi_time`, about 330,000
 `dos_call`, which must reach the handler listed in `DISPATCH` and fail
 anything ABI.md does not document. Only routines that need no UEFI services
 can be called this way. `make -C arm64 check` runs `unit` then `smoke`.
+
+## ARM BASIC
+
+`BASIC` (`BASIC.EXE`, from `programs/basic.S`) is ARM BASIC, an interpreter
+in the style of the Microsoft BASICs that came with MS-DOS, written from
+scratch in AArch64 assembly. Type numbered lines to build a program and
+statements without a number to run them at once; `Ok` is the prompt.
+`BASIC PRIMES` loads `PRIMES.BAS` (the sample on the image) and runs it.
+
+```
+A:\>basic
+Ok
+10 FOR I = 1 TO 3: PRINT "ARM"; I: NEXT
+RUN
+ARM 1
+ARM 2
+ARM 3
+Ok
+SAVE "COUNT"
+Ok
+SYSTEM
+```
+
+- Statements: `PRINT` (`?`), `LET`, `INPUT`, `IF ... THEN ... ELSE`, `GOTO`,
+  `GOSUB`, `RETURN`, `ON ... GOTO/GOSUB`, `FOR ... TO ... STEP`, `NEXT`,
+  `WHILE`, `WEND`, `END`, `STOP`, `REM` (`'`), `DIM`, `DATA`, `READ`,
+  `RESTORE`, `RANDOMIZE`, `CLS` and `CLEAR`.
+- Commands: `RUN`, `LIST [m][-n]`, `NEW`, `LOAD "f"`, `SAVE "f"` (plain text,
+  `.BAS` added) and `SYSTEM` (back to DOS).
+- Functions: `ABS`, `SGN`, `INT`, `SQR`, `RND`, `LEN`, `ASC`, `VAL`, `CHR$`,
+  `STR$`, `LEFT$`, `RIGHT$`, `MID$`, `INSTR` and `SPACE$`; `PRINT` also takes
+  `TAB(` and `SPC(`.
+- Operators: `^ * / \ MOD + -`, comparisons `= <> < > <= >=`, and `NOT`,
+  `AND`, `OR` (bitwise, true is -1).
+
+Numbers are 64-bit integers: there is no floating point, `/` and `\` both
+divide to an integer, and `RND(n)` returns 1 to n. Strings hold up to 255
+bytes. Arrays (`DIM A(100)`, `A$(n)`) have one dimension. Ctrl-C stops a
+running program (`Break in 30`); at an `INPUT` prompt it takes effect when
+ENTER is pressed. Errors use the GW-BASIC messages (`Syntax error in 20`).
 
 ## Native FAT driver
 
