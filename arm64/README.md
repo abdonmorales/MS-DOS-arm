@@ -141,7 +141,7 @@ years and rollover, native and nested process loading, termination, and parent
 handle preservation. Reserved scratch names are `ARMCHK.TMP`, `ARMFCB.TMP` and
 `ARMAPI.TMP` (a directory). The test refuses to overwrite existing objects with
 those names and restores the starting directory. Smoke tests boot a temporary
-image copy and check about 290 console requests, including 70 successive native
+image copy and check about 330 console requests, including 70 successive native
 launches that deliberately leave resources for process cleanup, buffered input
 with backspace editing, batch control flow, and redirection restoration.
 
@@ -166,6 +166,8 @@ statements without a number to run them at once; `Ok` is the prompt.
 
 ```
 A:\>basic
+ARM BASIC 1.0 for ARM DOS (native AArch64)
+64-bit integers and strings. SYSTEM returns to DOS.
 Ok
 10 FOR I = 1 TO 3: PRINT "ARM"; I: NEXT
 RUN
@@ -187,12 +189,17 @@ SYSTEM
 - Functions: `ABS`, `SGN`, `INT`, `SQR`, `RND`, `LEN`, `ASC`, `VAL`, `CHR$`,
   `STR$`, `LEFT$`, `RIGHT$`, `MID$`, `INSTR` and `SPACE$`; `PRINT` also takes
   `TAB(` and `SPC(`.
-- Operators: `^ * / \ MOD + -`, comparisons `= <> < > <= >=`, and `NOT`,
-  `AND`, `OR` (bitwise, true is -1).
+- Operators, tightest first as in GW-BASIC: `^` (left to right, so `2^3^2`
+  is 64), unary `-`, `*` and `/`, `\`, `MOD`, `+` and `-`, comparisons
+  `= <> < > <= >=`, then `NOT`, `AND` and `OR` (bitwise, true is -1).
 
 Numbers are 64-bit integers: there is no floating point, `/` and `\` both
-divide to an integer, and `RND(n)` returns 1 to n. Strings hold up to 255
-bytes. Arrays (`DIM A(100)`, `A$(n)`) have one dimension. Ctrl-C stops a
+divide to an integer, a typed fraction is dropped (`1.5` is 1), and a result
+outside the 64-bit range is an `Overflow` error. `RND(n)` returns 1 to n,
+`INSTR` takes two arguments and `VAL` reads decimal only (`&H` works in
+program text). Strings hold up to 255 bytes, and so do program lines.
+Variable names are significant to 14 characters. Arrays (`DIM A(100)`,
+`A$(n)`) have one dimension. Ctrl-C stops a
 running program (`Break in 30`); at an `INPUT` prompt it takes effect when
 ENTER is pressed. Errors use the GW-BASIC messages (`Syntax error in 20`).
 

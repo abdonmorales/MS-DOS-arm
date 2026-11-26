@@ -476,7 +476,24 @@ def main():
             if b'Break in 30' not in keys(b'\x03', b'Ok\r\n'):
                 raise RuntimeError('Ctrl-C did not stop the BASIC program')
             checks += 1
+            command('NEW', prompt=b'Ok\r\n')
+            for line in ('10 DATA 3, ok,, 7',
+                         '20 READ N, M$, Z, S: ON N GOSUB 100, 100, 200: PRINT M$; Z+S',
+                         '30 IF DIFF THEN PRINT "bad" ELSE PRINT "else-ok": REM ELSE PRINT "bad"',
+                         '40 PRINT 2^3^2; 10 \\ 3 * 2 \' precedence as in GW-BASIC',
+                         '50 END', '100 PRINT "one-two": RETURN', '200 PRINT "three": RETURN'):
+                command(line, prompt=line[-12:].encode())
+            command('RUN', b'three\nok 7 \nelse-ok\n 64  1 \nOk', prompt=b'Ok\r\n')
+            if b'50 END' in command('LIST 100-200', b'100 PRINT "one-two"', prompt=b'Ok\r\n'):
+                raise RuntimeError('LIST 100-200 listed line 50')
+            command('SAVE "T2"', prompt=b'Ok\r\n')
+            command('NEW', prompt=b'Ok\r\n')
+            command('LOAD "T2"', prompt=b'Ok\r\n')
+            command('LIST -10', b'10 DATA 3, ok,, 7\nOk', prompt=b'Ok\r\n')
+            command('RUN', b'three\nok 7 \nelse-ok', prompt=b'Ok\r\n')
+            command('PRINT 9223372036854775807+1', b'Overflow', prompt=b'Ok\r\n')
             command('SYSTEM')
+            command('del T2.BAS')
             command('type T1.BAS', b'20 INPUT "N";N: PRINT N*2; LEFT$(A$,2); LEN(A$)')
             command('del T1.BAS')
             # COUNTRY.SYS (assembled from MKCNTRY.ASM) supplies other code pages.

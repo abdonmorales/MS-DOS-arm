@@ -10,7 +10,8 @@
 // DIM, DATA, READ, RESTORE, RANDOMIZE, CLS, CLEAR, and the commands RUN,
 // LIST, NEW, LOAD, SAVE and SYSTEM. Functions: ABS SGN INT SQR RND LEN ASC
 // VAL CHR$ STR$ LEFT$ RIGHT$ MID$ INSTR SPACE$; PRINT also takes TAB( and
-// SPC(. Operators: ^ * / \ MOD + - = <> < > <= >= NOT AND OR.
+// SPC(. Operators, tightest first: ^ (left to right), unary -, * /, \,
+// MOD, + -, = <> < > <= >=, NOT, AND, OR. Overflow is an error.
 //
 // Register use: x28 is the text pointer everywhere. Routines save what
 // they use of x19-x26 (benter/bleave), never x28; an error resets sp.
@@ -52,6 +53,9 @@
 .equ E_DIRECTFILE, 17
 .equ E_FILEIO, 18
 .equ E_BREAK, 19
+.equ E_OVERFLOW, 20
+.equ E_LINEBUF, 21
+.equ STACK_BUDGET, 24576        // expression nesting: Out of memory beyond
 
 .macro benter
     stp x29, x30, [sp, #-80]!
@@ -77,6 +81,12 @@
     adrp x16, \sym
     str \reg, [x16, :lo12:\sym]
 .endm
+.macro depth_check            // deep nesting: Out of memory, not a crash
+    mov x9, sp
+    gld x10, stack_floor
+    cmp x9, x10
+    b.lo out_of_memory
+.endm
 .macro err code
     mov x0, #\code
     b basic_error
@@ -88,6 +98,8 @@ main:
     mov x19, x0
     mov x0, sp
     gst x0, err_sp
+    sub x0, x0, #STACK_BUDGET
+    gst x0, stack_floor
     // BREAK ON while BASIC runs, and Ctrl-C only sets a flag (vector 23h):
     // the kernel then notices it on any call without eating typed keys.
     mov x0, #0
@@ -165,6 +177,7 @@ prompt_loop:
     b prompt_loop
 exec_line:
     gst xzr, break_flag
+    gst xzr, ctl_sp             // direct FOR/GOSUB pointed into linebuf
     gst xzr, cur_line
     bl run_statements
     b ready
@@ -201,9 +214,15 @@ run_statements:
 2:
     bl skip_sp
     cmp w0, #':'
-    b.ne 21f
+    b.ne 22f
     add x28, x28, #1
     b 1b
+22:
+    cmp w0, #'\''              // a ' comment may follow without ':'
+    b.ne 21f
+    bl stmt_rem
+    mov w0, #0
+    b 3f
 21:
     address x0, kw_else         // after a THEN branch: skip the ELSE part
     bl match_kw
@@ -279,6 +298,8 @@ string_space:
     err E_STRSPACE
 string_too_long:
     err E_STRLONG
+overflow:
+    err E_OVERFLOW
 
 // ---------------------------------------------------------------------------
 // Program storage: records [u32 line][u32 record size][text NUL], sorted.
@@ -329,24 +350,32 @@ edit_line:
     b 3b
 4:
     b.ne 5f
-    ldr w23, [x21, #4]          // same number: delete the old line
-    add x1, x21, x23
-    mov x0, x21
-    sub x2, x22, x1
-    bl copy_bytes
-    sub x22, x22, x23
-    gst x22, prog_end
+    ldr w25, [x21, #4]          // same number: the old line's size
+    b 51f
 5:
+    mov x25, #0
+51:
     mov x0, x20
     bl strlen
-    cbz x0, 9f
     mov x24, x0
     add x23, x24, #12           // header, text, NUL, rounded to 4
     bic x23, x23, #3
+    cmp x24, #0
+    csel x23, xzr, x23, eq
     address x9, prog_area + PROG_SIZE
-    add x10, x22, x23
+    sub x10, x22, x25           // room first: a full program keeps the old line
+    add x10, x10, x23
     cmp x10, x9
     b.hi out_of_memory
+    cbz x25, 52f
+    add x1, x21, x25            // delete the old line
+    mov x0, x21
+    sub x2, x22, x1
+    bl copy_bytes
+    sub x22, x22, x25
+    gst x22, prog_end
+52:
+    cbz x24, 9f
     // Open a gap at x21 (copy backwards).
     sub x9, x22, x21
 6:
@@ -388,11 +417,15 @@ find_line:
     mov x0, #0
     ret
 
-// x0 = typed text, x1 = destination: upper-cases outside strings and
-// comments, turns tabs into blanks, keeps at most 255 bytes. Leaf.
+// x0 = typed text, x1 = destination: upper-cases outside strings, REM
+// and ' comments and DATA statements, turns tabs into blanks, keeps at
+// most 255 bytes. REM and DATA count only where a statement starts. Leaf.
 crunch:
     mov x9, #0                  // in a string
     mov x12, #0                 // count
+    mov x13, #-1                // where this statement starts (-1: next)
+    mov x14, #1                 // leading digits: the line number
+    mov x15, #0                 // in DATA: as typed
 1:
     ldrb w10, [x0], #1
     cbz w10, 9f
@@ -410,15 +443,35 @@ crunch:
     cbnz x9, 5f
     cmp w10, #'\''
     b.eq 7f
+    cmp w10, #':'
+    b.ne 31f
+    mov x13, #-1
+    mov x15, #0
+    b 5f
+31:
+    cmn x13, #1                 // the first character of a statement
+    b.ne 33f
+    cmp w10, #' '
+    b.eq 33f
+    cbz x14, 32f
+    sub w11, w10, #'0'
+    cmp w11, #9
+    b.ls 33f
+32:
+    mov x13, x12
+    mov x14, #0
+33:
+    cbnz x15, 5f
     sub w11, w10, #'a'
     cmp w11, #25
     b.hi 4f
     sub w10, w10, #32
 4:
-    cmp w10, #'M'               // ...REM: the rest stays as typed
+    sub x11, x12, x13           // REM / DATA as the statement's word
+    cmp x11, #2
+    b.ne 41f
+    cmp w10, #'M'
     b.ne 5f
-    cmp x12, #2
-    b.lo 5f
     ldurb w11, [x1, #-2]
     cmp w11, #'R'
     b.ne 5f
@@ -428,6 +481,21 @@ crunch:
     strb w10, [x1], #1
     add x12, x12, #1
     b 7f
+41:
+    cmp x11, #3
+    b.ne 5f
+    cmp w10, #'A'
+    b.ne 5f
+    ldurb w11, [x1, #-3]
+    cmp w11, #'D'
+    b.ne 5f
+    ldurb w11, [x1, #-2]
+    cmp w11, #'A'
+    b.ne 5f
+    ldurb w11, [x1, #-1]
+    cmp w11, #'T'
+    b.ne 5f
+    mov x15, #1
 5:
     strb w10, [x1], #1
     add x12, x12, #1
@@ -435,6 +503,7 @@ crunch:
 6:
     strb w10, [x1], #1
     add x12, x12, #1
+    b 8f
 7:
     cmp w10, #'\''
     b.ne 8f
@@ -530,7 +599,11 @@ parse_uint:
     sub w9, w9, #'0'
     cmp w9, #9
     b.hi 2f
-    madd x0, x0, x10, x9
+    umulh x11, x0, x10          // more than 64 bits: Overflow
+    cbnz x11, overflow
+    mul x0, x0, x10
+    adds x0, x0, x9
+    b.cs overflow
     add x28, x28, #1
     b 1b
 2:
@@ -580,7 +653,11 @@ parse_val:
     sub w13, w13, #'0'
     cmp w13, #9
     b.hi 6f
-    madd x10, x10, x14, x13
+    umulh x15, x10, x14         // beyond 63 bits: Overflow
+    cbnz x15, overflow
+    mul x10, x10, x14
+    adds x10, x10, x13
+    b.mi overflow
     add x12, x12, #1
     add x9, x9, #1
     b 4b
@@ -795,6 +872,15 @@ new_var:
     gld x9, var_count
     cmp x9, #VAR_MAX
     b.hs out_of_memory
+    mov x20, #0
+    cmp x19, #K_STR             // the slot first: a failure adds nothing
+    b.ne 2f
+    mov x0, #SLOT
+    bl heap_alloc
+    mov x20, x0
+2:
+    mov x0, x20
+    gld x9, var_count
     address x10, vars
     mov x11, #VAR_SIZE
     madd x20, x9, x11, x10
@@ -804,14 +890,8 @@ new_var:
     ldp x10, x11, [x9]
     stp x10, x11, [x20]
     str x19, [x20, #16]
-    str xzr, [x20, #24]
-    str xzr, [x20, #32]
-    cmp x19, #K_STR
-    b.ne 1f
-    mov x0, #SLOT
-    bl heap_alloc
     str x0, [x20, #24]
-1:
+    str xzr, [x20, #32]
     mov x0, x20
     ldp x19, x20, [sp], #16
     unframe
@@ -821,10 +901,11 @@ heap_alloc:
     add x0, x0, #7
     bic x0, x0, #7
     gld x9, heap_ptr
-    add x10, x9, x0
     address x11, heap_area + HEAP_SIZE
-    cmp x10, x11
+    sub x10, x11, x9
+    cmp x0, x10
     b.hi out_of_memory
+    add x10, x9, x0
     gst x10, heap_ptr
     mov x11, x9
 1:
@@ -852,18 +933,20 @@ make_array:
     benter
     mov x19, x0
     mov x20, x1
-    add x0, x19, #K_NUMARR
-    bl new_var
-    mov x21, x0
-    str x20, [x21, #32]
+    mov x9, #HEAP_SIZE / 8      // the data first: a failure adds nothing
+    cmp x20, x9
+    b.hs out_of_memory
     add x0, x20, #1
     lsl x0, x0, #3
     cbz x19, 1f
     lsl x0, x0, #5              // 256 bytes an element
 1:
     bl heap_alloc
-    str x0, [x21, #24]
-    mov x0, x21
+    mov x22, x0
+    add x0, x19, #K_NUMARR
+    bl new_var
+    str x20, [x0, #32]
+    str x22, [x0, #24]
     bleave
 
 // After read_name (x0 = 1 for a string): the variable or array element.
@@ -965,6 +1048,7 @@ eval_str:
     unframe
 
 eval_or:
+    depth_check
     benter
     bl eval_and
     mov x19, x0
@@ -1007,6 +1091,7 @@ eval_and:
     bleave
 
 eval_not:
+    depth_check
     frame
     address x0, kw_not
     bl accept_kw
@@ -1109,7 +1194,7 @@ str_compare:
 
 eval_add:
     benter
-    bl eval_mul
+    bl eval_mod
     mov x19, x0
     mov x20, x1
     mov x21, x2
@@ -1122,16 +1207,18 @@ eval_add:
 2:
     mov w22, w0
     add x28, x28, #1
-    bl eval_mul
+    bl eval_mod
     cmp x1, x20
     b.ne type_mismatch
     cbnz x20, 4f
     cmp w22, #'+'
     b.ne 3f
-    add x19, x19, x0
+    adds x19, x19, x0
+    b.vs overflow
     b 1b
 3:
-    sub x19, x19, x0
+    subs x19, x19, x0
+    b.vs overflow
     b 1b
 4:
     cmp w22, #'+'               // strings: + joins them
@@ -1160,6 +1247,71 @@ eval_add:
     mov x2, x21
     bleave
 
+// MOD, then \, then * and /, as in GW-BASIC (/ also divides to an integer).
+eval_mod:
+    benter
+    bl eval_idiv
+    mov x19, x0
+    mov x20, x1
+    mov x21, x2
+1:
+    bl skip_sp
+    address x0, kw_mod
+    bl match_kw
+    cbz x0, 9f
+    add x28, x28, x0
+    cbnz x20, type_mismatch
+    bl eval_idiv
+    cbnz x1, type_mismatch
+    cbz x0, div_zero
+    cmn x0, #1                  // x MOD -1 is 0 (and no INT64_MIN trap)
+    b.eq 2f
+    sdiv x9, x19, x0
+    msub x19, x9, x0, x19
+    b 1b
+2:
+    mov x19, #0
+    b 1b
+9:
+    mov x0, x19
+    mov x1, x20
+    mov x2, x21
+    bleave
+
+eval_idiv:
+    benter
+    bl eval_mul
+    mov x19, x0
+    mov x20, x1
+    mov x21, x2
+1:
+    bl skip_sp
+    cmp w0, #'\\'
+    b.ne 9f
+    add x28, x28, #1
+    cbnz x20, type_mismatch
+    bl eval_mul
+    cbnz x1, type_mismatch
+    bl int_divide
+    b 1b
+9:
+    mov x0, x19
+    mov x1, x20
+    mov x2, x21
+    bleave
+
+// x19 = x19 / x0 (truncating), with Division by zero and Overflow. Leaf.
+int_divide:
+    cbz x0, div_zero
+    cmn x0, #1
+    b.ne 1f
+    negs x19, x19
+    b.vs overflow
+    ret
+1:
+    sdiv x19, x19, x0
+    ret
+
 eval_mul:
     benter
     bl eval_neg
@@ -1172,34 +1324,21 @@ eval_mul:
     cmp w0, #'*'
     b.eq 2f
     cmp w0, #'/'
-    b.eq 2f
-    cmp w0, #'\\'
-    b.eq 2f
-    address x0, kw_mod
-    bl match_kw
-    cbz x0, 9f
-    add x28, x28, x0
-    mov w22, #'M'
-    b 3f
+    b.ne 9f
 2:
     add x28, x28, #1
-3:
     cbnz x20, type_mismatch
     bl eval_neg
     cbnz x1, type_mismatch
     cmp w22, #'*'
     b.ne 4f
-    mul x19, x19, x0
+    mov x1, x0
+    mov x0, x19
+    bl checked_mul
+    mov x19, x0
     b 1b
 4:
-    cbz x0, div_zero
-    sdiv x9, x19, x0
-    cmp w22, #'M'
-    b.ne 5f
-    msub x19, x9, x0, x19
-    b 1b
-5:
-    mov x19, x9
+    bl int_divide
     b 1b
 9:
     mov x0, x19
@@ -1207,25 +1346,45 @@ eval_mul:
     mov x2, x21
     bleave
 
+// x0 = x0 * x1, or Overflow. Leaf.
+checked_mul:
+    smulh x9, x0, x1
+    mul x0, x0, x1
+    cmp x9, x0, asr #63
+    b.ne overflow
+    ret
+
+// Unary - and + (below ^: -2^2 is -4). x0 = the operand routine: eval_pow,
+// or eval_atom for the right side of ^ (2^-1).
 eval_neg:
+    adr x0, eval_pow
+eval_signed:
+    depth_check
     frame
+    str x0, [sp, #-16]!
     bl skip_sp
     cmp w0, #'-'
     b.ne 1f
     add x28, x28, #1
-    bl eval_neg
+    ldr x0, [sp]
+    bl eval_signed
     cbnz x1, type_mismatch
-    neg x0, x0
-    unframe
+    negs x0, x0
+    b.vs overflow
+    b 3f
 1:
     cmp w0, #'+'
     b.ne 2f
     add x28, x28, #1
-    bl eval_neg
+    ldr x0, [sp]
+    bl eval_signed
     cbnz x1, type_mismatch
-    unframe
+    b 3f
 2:
-    bl eval_pow
+    ldr x9, [sp]
+    blr x9
+3:
+    add sp, sp, #16
     unframe
 
 eval_pow:
@@ -1240,20 +1399,29 @@ eval_pow:
     b.ne 9f
     add x28, x28, #1
     cbnz x20, type_mismatch
-    bl eval_neg
+    adr x0, eval_atom           // left to right: 2^3^2 is 64
+    bl eval_signed
     cbnz x1, type_mismatch
     tbnz x0, #63, 5f
-    mov x9, #1                  // by squaring
+    mov x22, x0
+    mov x23, #1                 // by squaring
 2:
-    cbz x0, 3f
-    tbz x0, #0, 21f
-    mul x9, x9, x19
+    cbz x22, 3f
+    tbz x22, #0, 21f
+    mov x0, x23
+    mov x1, x19
+    bl checked_mul
+    mov x23, x0
 21:
-    mul x19, x19, x19
-    lsr x0, x0, #1
+    lsr x22, x22, #1
+    cbz x22, 3f                 // no square left over to overflow
+    mov x0, x19
+    mov x1, x19
+    bl checked_mul
+    mov x19, x0
     b 2b
 3:
-    mov x19, x9
+    mov x19, x23
     b 1b
 5:
     cbz x19, div_zero           // a negative power: an integer result
@@ -1291,12 +1459,17 @@ eval_atom:
     b syntax_error
 10:                             // a number (a fraction is dropped)
     bl parse_uint
+    tbnz x0, #63, overflow
     mov x19, x0
     ldrb w0, [x28]
     cmp w0, #'.'
     b.ne 11f
+12:
     add x28, x28, #1
-    bl parse_uint
+    ldrb w0, [x28]
+    sub w0, w0, #'0'
+    cmp w0, #9
+    b.ls 12b
 11:
     mov x0, x19
     mov x1, #0
@@ -1405,6 +1578,7 @@ fn_abs:
     bl arg_close
     cmp x0, #0
     cneg x0, x0, lt
+    tbnz x0, #63, overflow      // ABS of the most negative number
     mov x1, #0
     unframe
 
@@ -1747,6 +1921,8 @@ stmt_print:
     cbz w0, 8f
     cmp w0, #':'
     b.eq 8f
+    cmp w0, #'\''
+    b.eq 8f
     address x0, kw_else
     bl match_kw
     cbnz x0, 8f
@@ -1777,8 +1953,16 @@ stmt_print:
     bl eval_num
     mov x20, x0
     bl arg_close
-    sub x20, x20, #1            // TAB(n): to column n, counted from 1
+    sub x20, x20, #1            // TAB(n): to column n (1-255)
+    cmp x20, #255
+    b.hs illegal_call
     gld x0, col
+    cmp x20, x0
+    b.hs 31f
+    bl out_crlf                 // already past it: on the next line
+    gst xzr, col
+    mov x0, #0
+31:
     sub x0, x20, x0
     bl out_spaces
     mov x19, #0
@@ -1791,6 +1975,8 @@ stmt_print:
     bl eval_num
     mov x20, x0
     bl arg_close
+    cmp x20, #255               // SPC(n): at most 255 (negative: none)
+    b.gt illegal_call
     mov x0, x20
     bl out_spaces
     mov x19, #0
@@ -1982,10 +2168,12 @@ stmt_if:
     bl exec_statement
     bleave
 3:
-    mov x20, #0                 // false: find this IF's ELSE
+    mov x20, #0                 // false: find this IF's ELSE, word by word
 31:
     ldrb w0, [x28]
     cbz w0, 9f
+    cmp w0, #'\''              // a comment ends the search
+    b.eq 8f
     cmp w0, #'"'
     b.ne 32f
 33:
@@ -1997,7 +2185,10 @@ stmt_if:
     add x28, x28, #1
     b 31b
 32:
-    address x0, kw_if
+    sub w1, w0, #'A'
+    cmp w1, #25
+    b.hi 35f
+    address x0, kw_if           // keywords only where a word starts
     bl match_kw
     cbz x0, 34f
     add x28, x28, x0
@@ -2006,14 +2197,34 @@ stmt_if:
 34:
     address x0, kw_else
     bl match_kw
-    cbz x0, 35f
+    cbz x0, 36f
     add x28, x28, x0
     cbz x20, 2b
     sub x20, x20, #1
     b 31b
+36:
+    address x0, kw_rem
+    bl match_kw
+    cbnz x0, 8f
+37:
+    add x28, x28, #1            // the rest of a name or other word
+    ldrb w0, [x28]
+    sub w1, w0, #'A'
+    cmp w1, #25
+    b.ls 37b
+    sub w1, w0, #'0'
+    cmp w1, #9
+    b.ls 37b
+    cmp w0, #'.'
+    b.eq 37b
+    cmp w0, #'$'
+    b.eq 37b
+    b 31b
 35:
     add x28, x28, #1
     b 31b
+8:
+    bl stmt_rem
 9:
     bleave
 
@@ -2183,7 +2394,8 @@ stmt_next:
     ldr x9, [x22, #8]
     ldp x10, x11, [x22, #16]    // limit, step
     ldr x12, [x9]
-    add x12, x12, x11
+    adds x12, x12, x11
+    b.vs 6f                     // past the largest number: the loop is done
     str x12, [x9]
     tbnz x11, #63, 5f
     cmp x12, x10
@@ -2385,9 +2597,17 @@ stmt_read:
     mov x20, x1
     bl next_data
     cbnz x20, 3f
+    cbz x2, 2f                  // an empty item reads as 0
+    mov x21, x2
     mov x1, x2
     bl parse_val
     cbz x2, syntax_error
+    cmp x1, x21                 // all of it a number
+    b.ne syntax_error
+    b 21f
+2:
+    mov x0, #0
+21:
     str x0, [x19]
     b 4f
 3:
@@ -2445,12 +2665,24 @@ next_data:
     add x19, x19, #1
     b 3b
 5:
+    add x9, x20, #8             // a word start: not inside a name
+    cmp x19, x9
+    b.ls 52f
+    ldurb w9, [x19, #-1]
+    sub w10, w9, #'A'
+    cmp w10, #25
+    b.ls 53f
+    sub w10, w9, #'0'
+    cmp w10, #9
+    b.ls 53f
+52:
     mov x21, x28
     mov x28, x19
     address x0, kw_data
     bl match_kw
     mov x28, x21
     cbnz x0, 51f
+53:
     add x19, x19, #1
     b 3b
 51:
@@ -2599,6 +2831,8 @@ stmt_randomize:
 stmt_on:
     benter
     bl eval_num
+    cmp x0, #255                // ON n: 0-255, as in GW-BASIC
+    b.hi illegal_call
     mov x19, x0
     mov x20, #0                 // 1: GOSUB
     address x0, kw_goto
@@ -2824,9 +3058,11 @@ load_file:
 2:
     address x0, reader
     address x1, filebuf
-    mov x2, #256
+    mov x2, #320
     bl lr_getline
     cbnz x1, 8f
+    cmp x0, #255                // longer than a typed line: refuse it, so
+    b.hi line_overflow          // its tail never becomes a line of its own
     address x0, filebuf
     address x1, loadbuf
     bl crunch
@@ -2850,6 +3086,9 @@ load_file:
     mov x0, x19
     bl fclose
     bleave
+
+line_overflow:
+    err E_LINEBUF
 
 save_file:
     benter
@@ -2962,6 +3201,7 @@ err_table:
     .word e8 - err_table, e9 - err_table, e10 - err_table, e11 - err_table
     .word e12 - err_table, e13 - err_table, e14 - err_table, e15 - err_table
     .word e16 - err_table, e17 - err_table, e18 - err_table, e19 - err_table
+    .word e20 - err_table, e21 - err_table
 
 kw_print: .asciz "PRINT"
 kw_let: .asciz "LET"
@@ -3036,6 +3276,8 @@ e16: .asciz "File not found"
 e17: .asciz "Direct statement in file"
 e18: .asciz "Bad file name or disk error"
 e19: .asciz "Break"
+e20: .asciz "Overflow"
+e21: .asciz "Line buffer overflow"
 crlf_text: .ascii "\r\n"
 qmark_text: .ascii "? "
 cls_text: .byte 27, '[', '2', 'J', 27, '[', 'H'
@@ -3049,6 +3291,7 @@ empty_line: .byte 0
 .section .bss
 .balign 16
 err_sp: .skip 8
+stack_floor: .skip 8
 cur_line: .skip 8
 jumped: .skip 8
 prog_end: .skip 8
