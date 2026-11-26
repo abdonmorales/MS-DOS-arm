@@ -9,7 +9,7 @@ program and batch fixtures. They do not run historical x86 executables.
 | --- | --- | --- |
 | [msdos-arm64.img.xz](msdos-arm64.img.xz) | 64 MiB | AArch64 UEFI VM; candidate external payload on supported, preconfigured Apple m1n1/U-Boot |
 | [msdos-arm64-pi3.img.xz](msdos-arm64-pi3.img.xz) | 128 MiB | Pi 3B/3B+ with bundled Pi UEFI firmware |
-| [armdos.iso.xz](armdos.iso.xz) | 31 MiB | Live ISO for any ARM64 UEFI machine or VM (QEMU, UTM): read-only A:, `INSTALL` to a disk. Not for the Pi |
+| [armdos.iso](armdos.iso) | 31 MiB (not compressed) | Live ISO for any ARM64 UEFI machine or VM (QEMU, UTM): read-only A:, `INSTALL` to a disk. Not for the Pi |
 
 Each image passed FAT consistency checks, build-payload comparisons, native API
 integration checks and the console checks counted in
@@ -27,8 +27,11 @@ The ISO is packaged only after `make iso-test` passed on its exact bytes
 (live boot as a CD and USB stick, `INSTALL` to a blank disk and a boot of
 that disk); see [Live ISO and INSTALL](../README.md#live-iso-and-install).
 
-Verify the `.img.xz.sha256` sidecar, then decompress with `xz -dk image.img.xz`
-and verify the `.img.sha256` sidecar. Use the raw generic image as a writable
+The ISO is published uncompressed: download `armdos.iso`, check it against
+`armdos.iso.sha256` (`sha256sum -c armdos.iso.sha256`) and boot it directly.
+The disk images stay compressed (the Pi image alone is 128 MiB, over GitHub's
+file size limit). Verify the `.img.xz.sha256` sidecar, then decompress with
+`xz -dk image.img.xz` and verify the `.img.sha256` sidecar. Use the raw generic image as a writable
 UEFI VM disk. Use Pi Imager's custom-image workflow with the Pi 3 image and the
 intended removable card. No device is flashed by the build scripts.
 See [platform instructions and limits](../README.md).
@@ -48,5 +51,5 @@ make -C arm64 snapshot FIRMWARE=/path/to/QEMU_EFI.fd
 ```
 
 The snapshot tool refuses stale validation when source or image bytes change.
-Raw build products stay under ignored `arm64/build`; these compressed snapshots
+Raw build products stay under ignored `arm64/build`; these snapshots
 are committed on the `arm` branch for download.
