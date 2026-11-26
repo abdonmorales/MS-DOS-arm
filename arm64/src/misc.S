@@ -21,6 +21,10 @@ dos_disk_reset:
 1:
     ldr x0, [x19, x20, lsl #3]
     cbz x0, 2f
+    address x3, handle_modes    // firmware refuses to flush read-only opens,
+    ldrb w3, [x3, x20]          // and they hold nothing to write back
+    tst w3, #3                  // access bits only (bit 7 is no-inherit)
+    b.eq 2f
     ldr x3, [x0, #80]
     blr x3
     cbnz x0, 3f

@@ -29,6 +29,59 @@ efi_error_to_dos:
 5:  mov x0, #1
     ret
 
+// x0=EFI status from opening the path that path_to_utf16 last converted.
+// Like efi_error_to_dos, except that "not found" becomes DOS error 3 (path
+// not found) when the parent directory is missing, as DOS reports it.
+efi_path_error_to_dos:
+    frame
+    stp x19, x20, [sp, #-16]!
+    bl efi_error_to_dos
+    cmp x0, #2
+    b.ne 9f
+    address x19, path_buffer
+    mov x2, #0
+    mov x20, #0                 // byte offset of the last separator
+1:
+    ldrh w3, [x19, x2]
+    cbz w3, 2f
+    cmp w3, #'\\'
+    b.ne 3f
+    mov x20, x2
+3:
+    add x2, x2, #2
+    b 1b
+2:
+    cbz x20, 8f                 // the parent is the root, which exists
+    address x0, root_directory
+    ldr x0, [x0]
+    cbz x0, 8f
+    strh wzr, [x19, x20]        // open just the parent
+    sub sp, sp, #16
+    str xzr, [sp]
+    mov x1, sp
+    mov x2, x19
+    mov x3, #1                  // EFI_FILE_MODE_READ
+    mov x4, #0
+    ldr x5, [x0, #8]
+    blr x5
+    ldr x1, [sp]
+    add sp, sp, #16
+    mov w2, #'\\'
+    strh w2, [x19, x20]
+    cbnz x0, 7f
+    mov x0, x1
+    ldr x3, [x0, #16]           // Close
+    blr x3
+    b 8f
+7:
+    mov x0, #3
+    b 9f
+8:
+    mov x0, #2
+9:
+    ldp x19, x20, [sp], #16
+    unframe
+
 // x0=ASCII path, x1=256-byte destination. Canonical result begins with '\'.
 // A: relative paths use this drive's current directory. Other drives fail.
 // Dot components are resolved before calling firmware; root cannot escape.
@@ -241,8 +294,17 @@ seek_return:
 
 dos_commit:
     frame
+    mov x9, x0
     bl file_handle
     cbz x0, commit_bad_handle
+    address x3, handle_modes
+    ldrb w3, [x3, x9]
+    tst w3, #3
+    b.ne 1f
+    mov x0, #0                  // read-only: nothing to commit
+    mov x1, #0
+    unframe
+1:
     ldr x3, [x0, #80]
     blr x3
     cbnz x0, commit_error
@@ -383,7 +445,7 @@ object_no_volume:
     mov x1, #1
     b object_return
 object_error:
-    bl efi_error_to_dos
+    bl efi_path_error_to_dos
     mov x1, #1
 object_return:
     ldp x19, x20, [sp], #16
@@ -428,7 +490,7 @@ dos_chdir:
     mov x1, #1
     mov x2, #0
     bl open_path_object
-    cbnz x1, chdir_return
+    cbnz x1, chdir_missing
     mov x19, x0
     bl get_file_info
     cbnz x0, chdir_close_error
@@ -457,6 +519,11 @@ chdir_error:
 chdir_return:
     ldr x19, [sp], #16
     unframe
+chdir_missing:
+    cmp x0, #2                  // DOS: a missing directory is error 3
+    b.ne chdir_return
+    mov x0, #3
+    b chdir_return
 
 // 47h: x0=buffer, x1=capacity. Return path without drive/leading slash.
 dos_getcwd:
@@ -488,13 +555,13 @@ dos_rmdir:
     mov x1, #3
     mov x2, #0
     bl open_path_object
-    cbnz x1, rmdir_return
+    cbnz x1, rmdir_missing
     mov x19, x0
     address x0, canonical_buffer
     ldrb w1, [x0, #1]
     cbz w1, rmdir_denied          // root is never removable
     address x1, current_directory
-    bl strcmp
+    bl strcasecmp               // FAT names are case-insensitive
     cbz x0, rmdir_denied
     mov x0, x19
     bl get_file_info
@@ -548,6 +615,11 @@ rmdir_delete_error:
 rmdir_return:
     ldp x19, x20, [sp], #16
     unframe
+rmdir_missing:
+    cmp x0, #2                  // DOS: a missing directory is error 3
+    b.ne rmdir_return
+    mov x0, #3
+    b rmdir_return
 
 // 43h: x0=path, x1=0(get)/1(set), x2=DOS attributes.
 dos_attributes:

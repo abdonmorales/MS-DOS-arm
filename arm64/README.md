@@ -33,19 +33,12 @@ run against the system firmware:
 make -C arm64 smoke FIRMWARE=/usr/share/qemu-efi-aarch64/QEMU_EFI.fd
 ```
 
-In the older prepared cloud environment:
-
-```sh
-cd /workspace/MS-DOS-arm
-source arm64/tools/env.sh
-make -C arm64 image
-make -C arm64 smoke FIRMWARE=/workspace/arm-toolchain/runtime/usr/share/qemu-efi-aarch64/QEMU_EFI.fd
-```
-
-To reproduce the tool installation on the same Debian 13 x86_64 cloud base,
-run `bash arm64/tools/setup-cloud.sh`. It uses isolated APT state, signed Debian
-metadata and verified package hashes, extracts tools only into `/workspace`,
-and runs the actual image smoke test. Firmware and runtime libraries remain
+Without root access on a Debian 13 x86_64 machine, `bash arm64/tools/setup-cloud.sh`
+installs the same tools into `/workspace/arm-toolchain` (its fixed location)
+and `source arm64/tools/env.sh` puts them on `PATH`; then pass
+`FIRMWARE=/workspace/arm-toolchain/runtime/usr/share/qemu-efi-aarch64/QEMU_EFI.fd`.
+The script uses isolated APT state, signed Debian metadata and verified package
+hashes, extracts tools only into that directory, and runs the image smoke test. Firmware and runtime libraries remain
 separate from the repository. It does not configure Apple or Raspberry Pi
 hardware, install system packages, or change credentials.
 
@@ -165,7 +158,7 @@ This image targets Pi 3B/3B+, not Pi 4/5.
 To prepare an SD card, select the Pi image and the intended removable card in
 Raspberry Pi Imager's custom-image workflow. Use a card of at least 128 MiB.
 The firmware console can use HDMI/USB input or a supported serial console.
-No physical disk was flashed during this task.
+The Pi image has been booted in QEMU only, not yet on real hardware.
 
 Run `make -C arm64 validate FIRMWARE=/path/to/QEMU_EFI.fd` to check both FAT
 filesystems, compare their payloads to the build outputs, boot both images in
@@ -196,8 +189,8 @@ installation, the generic EFI image is a candidate external boot payload:
 Native Apple hardware has **not** been tested. All-model support cannot be
 claimed: Asahi documentation still lists missing installers and drivers for
 some M-series models. Its support tables describe Asahi's stack, not validation
-of this DOS runtime. The user requested all models; that remains an unmet
-hardware-support requirement, not a claimed feature.
+of this DOS runtime. Support for every Apple Silicon model remains a goal,
+not a claimed feature.
 
 ## Native API and remaining work
 

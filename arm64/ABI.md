@@ -62,7 +62,7 @@ binary's table matches this list.
 | `0Ah` | `x0` DOS line buffer | Byte 0 capacity, byte 1 count, bytes 2+ input followed by CR; capacity includes CR |
 | `0Bh` | None | `x0=FFh` available, otherwise 0; console polling retains the character |
 | `0Ch` | `x0` follow-up function, `x1` its argument | Flush console type-ahead; optional `01/06/07/08/0A` call |
-| `0Dh` | None | Flush all open file objects |
+| `0Dh` | None | Flush all writable open file objects (read-only ones are skipped) |
 | `0Eh` | `x0` drive, zero based | Only A: (0); result `x0=1` configured drive |
 | `0Fh`, `10h` | `x0` FCB | Open / close; FCB status below |
 | `11h`, `12h` | `x0` FCB with `?` wildcards | Find first / next 8.3 name in the current directory; result FCB in the DTA |
@@ -130,7 +130,7 @@ binary's table matches this list.
 | `65h` | `x0` id, `x1` code page, `x2` country, `x3` buffer, `x4` size | Extended country information and case mapping (below) |
 | `66h` | `x0` 1 get / 2 set, `x1` code page | `x2` active, `x3` system code page: 437 only |
 | `67h` | `x0` handle count | Up to 32 per process; more returns error 8 |
-| `68h`, `6Ah` | `x0` handle | Flush/commit |
+| `68h`, `6Ah` | `x0` handle | Flush/commit (no-op success on a read-only handle) |
 | `69h` | `x0` 0 get / 1 set, `x1` drive, `x2` 25-byte buffer | Media ID: u16 level 0, u32 serial, 11-byte label, 8-byte file system type (from the boot record) |
 | `6Ch` | `x0` path, `x1` open mode, `x2` attributes, `x3` action | Extended open/create; `x2` 1 opened, 2 created, 3 replaced |
 
