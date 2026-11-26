@@ -10,6 +10,7 @@
 .equ PLAT_GRANULE_SHIFT, 16             // 64 KiB arena granules
 .equ PLAT_GRANULES, 512
 .equ VQ_SIZE, 8
+.equ PI_EMMC, 0x3f300000              // BCM2837 Arasan SDHCI
 
 .section .text
 
@@ -22,16 +23,150 @@ plat_putc:
     ldr x1, [x1, :lo12:platform_native]
     cbz x1, 2f
     ldv x1, plat_uart
+    adrp x2, plat_uart_type
+    ldr x2, [x2, :lo12:plat_uart_type]
+    cbnz x2, 4f
 1:
     ldr w2, [x1, #0x18]         // UARTFR
     tbnz w2, #5, 1b             // TXFF
     and w0, w0, #0xff
     str w0, [x1]
     ret
+4:
+    ldr w2, [x1, #0x14]         // mini UART LSR: transmitter empty
+    tbz w2, #5, 4b
+    and w0, w0, #0xff
+    str w0, [x1]
+    ret
 2:
+    // The UEFI console shows ESC as '?', so ANSI sequences (from ANSI.SYS)
+    // become ConOut calls: ESC[2J clear, ESC[r;cH/f position, ESC[..m
+    // colours. Other sequences are dropped.
+    and w0, w0, #0xff
+    address x9, fw_esc_state
+    ldr x10, [x9]
+    cbnz x10, 5f
+    cmp w0, #27
+    b.ne plat_fw_output
+    mov x10, #1
+    str x10, [x9]
+    str xzr, [x9, #8]           // parameter count
+    stp xzr, xzr, [x9, #16]     // parameters
+    stp xzr, xzr, [x9, #32]
+    ret
+5:
+    cmp x10, #1
+    b.ne 6f
+    cmp w0, #'['
+    csel x10, xzr, x10, ne      // ESC 7, ESC 8 and the like: dropped
+    mov x11, #2
+    csel x10, x11, x10, eq
+    str x10, [x9]
+    ret
+6:
+    sub w11, w0, #'0'
+    cmp w11, #9
+    b.hi 7f
+    ldr x12, [x9, #8]           // a digit of the current parameter
+    cmp x12, #3
+    b.hi 61f
+    add x13, x9, #16
+    ldr x14, [x13, x12, lsl #3]
+    mov x15, #10
+    madd x14, x14, x15, x11
+    str x14, [x13, x12, lsl #3]
+61:
+    ret
+7:
+    cmp w0, #';'
+    b.ne 71f
+    ldr x12, [x9, #8]
+    add x12, x12, #1
+    str x12, [x9, #8]
+    ret
+71:
+    cmp w0, #'='                // ESC[=7h and ESC[?..: parameters too
+    b.eq 61b
+    cmp w0, #'?'
+    b.eq 61b
+    str xzr, [x9]               // the final letter
+    address x10, system_table
+    ldr x10, [x10]
+    ldr x10, [x10, #64]         // ConOut
+    cmp w0, #'J'
+    b.ne 72f
+    ldr x2, [x10, #48]          // ClearScreen
+    mov x0, x10
+    br x2
+72:
+    cmp w0, #'H'
+    b.eq 73f
+    cmp w0, #'f'
+    b.ne 74f
+73:
+    ldp x11, x12, [x9, #16]     // row, column (1-based; 0 means 1)
+    subs x11, x11, #1
+    csel x11, xzr, x11, lo
+    subs x12, x12, #1
+    csel x12, xzr, x12, lo
+    mov x0, x10
+    mov x1, x12
+    mov x2, x11
+    ldr x3, [x10, #56]          // SetCursorPosition(column, row)
+    br x3
+74:
+    cmp w0, #'m'
+    b.ne 79f
+    address x11, fw_attribute
+    ldr x12, [x11]
+    ldr x13, [x9, #8]
+    add x13, x13, #1            // parameters given
+    mov x14, #0
+75:
+    add x15, x9, #16
+    ldr x15, [x15, x14, lsl #3]
+    cbnz x15, 751f
+    mov x12, #0x07              // 0: normal
+    b 76f
+751:
+    cmp x15, #1
+    b.ne 752f
+    orr x12, x12, #0x08         // bold: bright
+    b 76f
+752:
+    sub x16, x15, #30
+    cmp x16, #7
+    b.hi 753f
+    address x17, fw_ansi_colour
+    ldrb w16, [x17, x16]
+    and x12, x12, #0xf8
+    orr x12, x12, x16
+    b 76f
+753:
+    sub x16, x15, #40
+    cmp x16, #7
+    b.hi 76f
+    address x17, fw_ansi_colour
+    ldrb w16, [x17, x16]
+    bic x12, x12, #0x70
+    orr x12, x12, x16, lsl #4
+76:
+    add x14, x14, #1
+    cmp x14, x13
+    b.hs 77f
+    cmp x14, #4
+    b.lo 75b
+77:
+    str x12, [x11]
+    mov x0, x10
+    mov x1, x12
+    ldr x2, [x10, #40]          // SetAttribute
+    br x2
+79:
+    ret
+plat_fw_output:
     frame
     sub sp, sp, #16
-    and w0, w0, #0xff
     strh w0, [sp]
     strh wzr, [sp, #2]
     mov x1, sp
@@ -49,8 +184,16 @@ plat_poll_key:
     ldr x1, [x1, :lo12:platform_native]
     cbz x1, 2f
     ldv x1, plat_uart
+    adrp x2, plat_uart_type
+    ldr x2, [x2, :lo12:plat_uart_type]
+    cbz x2, 5f
+    ldr w2, [x1, #0x14]         // mini UART LSR: data ready
+    tbz w2, #0, 1f
+    b 6f
+5:
     ldr w2, [x1, #0x18]
     tbnz w2, #4, 1f             // RXFE
+6:
     ldr w0, [x1]
     and w0, w0, #0xff
     cmp w0, #0x7f               // terminals send DEL for backspace
@@ -103,9 +246,13 @@ plat_flush_input:
 
 plat_clear_screen:
     frame
+    address x1, dev_objects     // a CON driver (ANSI.SYS) clears the screen
+    ldr x1, [x1, #DEV_DRV_WRITE]
+    cbnz x1, 2f
     adrp x1, platform_native
     ldr x1, [x1, :lo12:platform_native]
     cbz x1, 1f
+2:
     address x0, plat_cls_sequence
     bl puts
     unframe
@@ -153,23 +300,51 @@ plat_alloc:
     add x0, x0, x1
     lsr x0, x0, #PLAT_GRANULE_SHIFT     // granules needed
     cbz x0, 9f
+    // Walk the free runs and pick one by the 58h strategy:
+    // 0 first fit, 1 best fit (smallest run that fits), 2 last fit.
     address x1, plat_granule_map
-    mov x2, #0                  // candidate start
+    ldv x6, plat_alloc_strategy
+    mov x7, #-1                 // chosen start
+    mov x8, #-1                 // chosen run length (best fit)
+    mov x4, #0
 4:
-    add x3, x2, x0
-    cmp x3, #PLAT_GRANULES
-    b.hi 9f
-    mov x4, x2
-5:
-    cmp x4, x3
-    b.hs 7f
+    cmp x4, #PLAT_GRANULES
+    b.hs 6f
     ldrh w5, [x1, x4, lsl #1]
-    cbnz w5, 6f
+    cbz w5, 41f
     add x4, x4, #1
-    b 5b
-6:
-    add x2, x4, #1
     b 4b
+41:
+    mov x2, x4                  // run start
+42:
+    add x4, x4, #1
+    cmp x4, #PLAT_GRANULES
+    b.hs 43f
+    ldrh w5, [x1, x4, lsl #1]
+    cbz w5, 42b
+43:
+    sub x3, x4, x2              // run length
+    cmp x3, x0
+    b.lo 4b
+    cmp x6, #1
+    b.eq 44f
+    b.hi 45f
+    mov x7, x2                  // first fit: take it
+    b 6f
+44:
+    cmp x3, x8
+    b.hs 4b
+    mov x8, x3
+    mov x7, x2
+    b 4b
+45:
+    sub x7, x4, x0              // last fit: top of the highest run
+    b 4b
+6:
+    cmn x7, #1
+    b.eq 9f
+    mov x2, x7
+    add x3, x2, x0
 7:
     // Mark the run: first granule holds the count, the rest hold 0xffff.
     strh w0, [x1, x2, lsl #1]
@@ -266,7 +441,12 @@ platform_go_native:
     ldv x2, plat_uart
     cbz x2, plat_fail
     ldv x2, plat_ecam
-    cbz x2, plat_fail
+    cbnz x2, 11f
+    bl plat_pi_check            // no PCI: a Raspberry Pi 3 that opted in?
+    cbnz x0, plat_fail
+    mov x2, #1
+    stv x2, plat_disk_kind, x3
+11:
     // Memory the runtime keeps after firmware is gone.
     mov x0, #(PLAT_ARENA_BYTES >> 12)
     bl plat_alloc_pages
@@ -276,8 +456,11 @@ platform_go_native:
     bl plat_alloc_pages
     cbz x0, plat_fail
     stv x0, vio_queue, x2
+    ldv x2, plat_disk_kind
+    cbnz x2, 12f
     bl plat_find_disk
     cbnz x0, plat_fail
+12:
     // ExitBootServices needs the current memory map key; retry once if the
     // map changed between the two calls.
     mov x19, #2
@@ -320,8 +503,20 @@ platform_go_native:
     msr vbar_el2, x0
 4:
     isb
+    ldv x2, plat_disk_kind
+    cbnz x2, 5f
     // The firmware's virtio driver reset the device on exit; start ours.
     bl vio_init
+    cbnz x0, plat_dead
+    mov x0, #0
+    leave
+5:
+    // Raspberry Pi 3: the SD card on the Arasan controller, from scratch.
+    movz x0, #(PI_EMMC & 0xffff)
+    movk x0, #(PI_EMMC >> 16), lsl #16
+    bl sd_init
+    cbnz x0, plat_dead
+    bl plat_pi_partition
     cbnz x0, plat_dead
     mov x0, #0
     leave
@@ -413,11 +608,23 @@ plat_find_acpi:
     b.ne 4f
     ldrb w2, [x26, #40]         // address space: system memory
     cbnz w2, 6f
-    ldrb w2, [x26, #36]         // interface: PL011 (3) or SBSA generic (0xe)
-    cmp w2, #3
+    ldrb w2, [x26, #36]         // interface: PL011 (3), SBSA generic (0xe)
+    cmp w2, #3                  // or the BCM2835 mini UART (10h, Pi 3)
     b.eq 31f
     cmp w2, #0x0e
+    b.eq 31f
+    cmp w2, #0x10
     b.ne 6f
+    add x0, x26, #44
+    bl plat_ld64
+    tst x0, #0xff               // the AUX block: its UART is at +40h
+    b.ne 32f
+    add x0, x0, #0x40
+32:
+    stv x0, plat_uart, x2
+    mov x2, #1
+    stv x2, plat_uart_type, x3
+    b 6f
 31:
     add x0, x26, #44
     bl plat_ld64
@@ -447,6 +654,109 @@ plat_find_acpi:
 plat_acpi_fail:
     mov x0, #1
     leave
+
+// ---------------------------------------------------------------------------
+// Raspberry Pi 3 (BCM2837): no PCI, the console UART in the peripheral
+// window at 3F000000h, and the SD card on the Arasan SDHCI (src/sdhci.S).
+// Native mode there has not been validated on a physical board yet, so it
+// is used only when the boot volume has \NATIVE.ON; otherwise the Pi stays
+// in firmware mode.
+
+// Returns x0 = 0 to run the Pi natively.
+plat_pi_check:
+    frame
+    ldv x0, plat_uart
+    lsr x0, x0, #24
+    cmp x0, #0x3f
+    b.ne 1f
+    address x0, plat_pi_marker
+    mov x1, #0
+    bl dos_open
+    cbnz x1, 1f
+    bl dos_close
+    mov x0, #0
+    unframe
+1:
+    mov x0, #1
+    unframe
+
+// Finds the boot volume on the card: sector 0 itself, or the MBR partition
+// whose first sector is the boot sector the FAT driver mounted. Returns
+// x0 = 0 with sd_part_lba set.
+plat_pi_partition:
+    enter
+    ldv x19, vio_queue          // a page for the probe buffer
+    add x19, x19, #2048
+    stv x19, vio_buffer, x2
+    address x9, sd_part_lba
+    str xzr, [x9]
+    mov x0, #0
+    mov x1, #1
+    mov x2, x19
+    mov x3, #0
+    bl sd_rw
+    cbnz x0, 9f
+    bl vio_compare_boot
+    cbz x0, 8f
+    add x20, x19, #512          // keep the MBR
+    mov x2, #0
+1:
+    ldr x3, [x19, x2]
+    str x3, [x20, x2]
+    add x2, x2, #8
+    cmp x2, #512
+    b.lo 1b
+    mov x21, #0
+2:
+    mov x2, #16
+    mul x2, x21, x2
+    add x2, x2, #0x1c6
+    add x0, x20, x2
+    bl plat_ld32
+    mov x22, x0
+    cbz x22, 3f
+    address x9, sd_part_lba
+    str xzr, [x9]
+    mov x0, x22
+    mov x1, #1
+    mov x2, x19
+    mov x3, #0
+    bl sd_rw
+    cbnz x0, 3f
+    bl vio_compare_boot
+    cbnz x0, 3f
+    address x9, sd_part_lba
+    str x22, [x9]
+    b 8f
+3:
+    add x21, x21, #1
+    cmp x21, #4
+    b.lo 2b
+9:
+    mov x0, #1
+    leave
+8:
+    mov x0, #0
+    leave
+
+// x0 = address: little-endian u32 at any alignment.
+plat_ld32:
+    ldrb w1, [x0]
+    ldrb w2, [x0, #1]
+    orr w1, w1, w2, lsl #8
+    ldrb w2, [x0, #2]
+    orr w1, w1, w2, lsl #16
+    ldrb w2, [x0, #3]
+    orr w0, w1, w2, lsl #24
+    ret
+
+// x0 = partition-relative LBA, x1 = count, x2 = buffer, x3 = 0 read /
+// 1 write: the native disk, virtio-blk or the Pi's SD card.
+plat_disk_rw:
+    adrp x9, plat_disk_kind
+    ldr x9, [x9, :lo12:plat_disk_kind]
+    cbz x9, vio_rw
+    b sd_rw
 
 // ---------------------------------------------------------------------------
 // PCI and virtio-blk (virtio 1.0 "modern" transport).
@@ -855,6 +1165,11 @@ plat_exception:
     bl puts
     mov x0, x22
     bl plat_print_hex
+    address x0, plat_exc_base   // lets PC be matched against kernel.elf
+    bl puts
+    address x0, efi_main
+    sub x0, x0, #0x1000         // kernel.elf links at 0x1000
+    bl plat_print_hex
     address x0, newline
     bl puts
     address x2, process_frames
@@ -890,6 +1205,7 @@ plat_print_hex:
     unframe
 
 .section .rodata
+fw_ansi_colour: .byte 0, 4, 2, 6, 1, 5, 3, 7   // ANSI colour -> EFI colour
 .balign 8
 acpi20_guid:
     .long 0x8868e871
@@ -899,17 +1215,27 @@ rsdp_signature: .ascii "RSD PTR "
 plat_cls_sequence: .asciz "\x1b[2J\x1b[H"
 plat_exc_message: .asciz "\r\nCPU exception: ESR="
 plat_exc_pc: .asciz " PC="
+plat_exc_base: .asciz " KERNEL="
 plat_exc_far: .asciz " FAR="
 plat_exc_process: .asciz "Program terminated by CPU exception.\r\n"
 plat_exc_halt: .asciz "Kernel halted.\r\n"
 plat_disk_lost: .asciz "\r\nBoot disk did not restart after leaving firmware.\r\n"
 plat_native_message: .asciz "Platform: native AArch64 kernel (firmware exited; PL011 console, virtio-blk disk)\r\n"
+plat_pi_message: .asciz "Platform: native AArch64 kernel (firmware exited; Raspberry Pi 3 UART console, SD card)\r\n"
+plat_pi_marker: .asciz "A:\\NATIVE.ON"
 plat_firmware_message: .asciz "Platform: UEFI firmware services (no native drivers for this board)\r\n"
 
+.section .data
+.balign 8
+fw_attribute: .quad 0x07
 .section .bss
+.balign 8
+fw_esc_state: .skip 48          // state, parameter count, 4 parameters
 .balign 16
 platform_native: .skip 8
 plat_uart: .skip 8
+plat_uart_type: .skip 8           // 0 PL011, 1 BCM2835 mini UART
+plat_disk_kind: .skip 8           // 0 virtio-blk, 1 Pi SD card
 plat_ecam: .skip 8
 plat_bus_start: .skip 8
 plat_bus_end: .skip 8
@@ -928,5 +1254,6 @@ vio_buffer: .skip 8
 vio_used_seen: .skip 8
 vio_part_lba: .skip 8
 plat_granule_map: .skip PLAT_GRANULES * 2
+plat_alloc_strategy: .skip 8
 .balign 16
 plat_memory_map: .skip 16384

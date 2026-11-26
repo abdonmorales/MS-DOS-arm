@@ -12,7 +12,8 @@
 // (FAT.ASM, DIR.ASM, DIR2.ASM, CREATE.ASM); long names follow the VFAT
 // on-disk format. The calling conventions are AAPCS64 throughout.
 
-.equ FAT_SLOTS, 8               // write-through sector cache entries
+.equ FAT_SLOTS, 32              // write-through sector cache entries (BUFFERS= picks how many are used)
+.equ FAT_SLOTS_DEFAULT, 8
 .equ FAT_SLOT_SHIFT, 12         // 4 KiB per entry (largest sector size)
 .equ FAT_OBJECTS, 128
 .equ OBJ_SIZE, 128
@@ -23,6 +24,7 @@
 .equ OBJ_FIRST, 112             // first entry of the set (long-name start)
 .equ OBJ_DIRPOS, 116            // directory read cursor
 .equ OBJ_FLAGS, 120
+.equ OBJ_VOL, 121               // volume slot that owns the object
 .equ OF_WRITE, 1
 .equ OF_DIR, 2
 .equ OF_ROOT, 4
@@ -30,6 +32,9 @@
 .equ OF_GONE, 16             // entry deleted through another handle
 .equ NO_INDEX, 0xffffffff
 .equ FAT_EOC, 0x0fffffff
+.equ FAT_VOLS, 16               // mounted volumes (A: plus block devices)
+.equ VOL_LIVE, (21 * 8)         // fat_mounted .. fat_root_obj
+.equ VOL_SIZE, 272              // live block plus the boot record copy
 
 .macro ldv reg, sym
     adrp \reg, \sym
@@ -132,31 +137,50 @@ fat_mount:
     add x4, x4, #1
     cmp x4, #FAT_SLOTS
     b.lo 1b
+    bl fat_mount_parse
+    cbnz x0, fat_mount_fail
+    ldv x0, fat_root_obj
+    address x1, root_directory
+    str x0, [x1]
+    mov x0, #0
+    leave
+fat_mount_fail:
+    efierr x0, 3
+    leave
+
+// Reads the boot record of the live volume (fat_bps already set) and
+// fills in its geometry; creates its root object (fat_root_obj).
+// Returns x0 = 0, or an EFI error when it holds no usable FAT.
+fat_mount_parse:
+    enter
+    stv xzr, fat_mounted, x2
+    stv xzr, fat_next_free, x2
+    ldv x24, fat_bps
     mov x0, #0
     bl fat_cache_read
-    cbnz x0, fat_mount_fail
+    cbnz x0, fat_parse_fail
     mov x25, x1                 // boot sector
     address x0, fat_boot_copy   // lets the platform layer find this disk
     mov x2, #96
     bl fat_memcpy
     ldrb w2, [x25, #510]
     cmp w2, #0x55
-    b.ne fat_mount_fail
+    b.ne fat_parse_fail
     ldrb w2, [x25, #511]
     cmp w2, #0xaa
-    b.ne fat_mount_fail
+    b.ne fat_parse_fail
     le16 w2, x25, 11, w3        // bytes per sector
     cmp x2, x24
-    b.ne fat_mount_fail
+    b.ne fat_parse_fail
     ldrb w26, [x25, #13]        // sectors per cluster
-    cbz w26, fat_mount_fail
+    cbz w26, fat_parse_fail
     sub w2, w26, #1
     tst w26, w2
-    b.ne fat_mount_fail
+    b.ne fat_parse_fail
     le16 w27, x25, 14, w3       // reserved sectors
-    cbz w27, fat_mount_fail
+    cbz w27, fat_parse_fail
     ldrb w28, [x25, #16]        // FAT copies
-    cbz w28, fat_mount_fail
+    cbz w28, fat_parse_fail
     stv x26, fat_spc, x2
     stv x27, fat_fat_start, x2
     stv x28, fat_num_fats, x2
@@ -173,7 +197,7 @@ fat_mount:
     cbnz w21, 3f
     ldr w21, [x25, #36]
 3:
-    cbz w21, fat_mount_fail
+    cbz w21, fat_parse_fail
     stv x21, fat_fat_sectors, x2
     // root_start = reserved + copies * fat_sectors
     madd x2, x28, x21, x27
@@ -185,7 +209,7 @@ fat_mount:
     add x22, x2, x3
     stv x22, fat_data_start, x2
     cmp x20, x22
-    b.ls fat_mount_fail
+    b.ls fat_parse_fail
     sub x2, x20, x22
     udiv x2, x2, x26
     stv x2, fat_clusters, x3
@@ -205,7 +229,7 @@ fat_mount:
     lsl x5, x5, #3
     udiv x5, x5, x4             // entries one FAT copy holds
     subs x5, x5, #2             // minus the two reserved entries
-    b.le fat_mount_fail
+    b.le fat_parse_fail
     cmp x4, #32
     b.ne 41f
     mov x6, #0xfff4             // FAT32: highest data cluster is 0x0FFFFFF5
@@ -219,19 +243,19 @@ fat_mount:
     stv x4, fat_type, x3
     cmp x4, #32
     b.eq 5f
-    cbz x19, fat_mount_fail     // FAT12/16 need a fixed root directory
+    cbz x19, fat_parse_fail     // FAT12/16 need a fixed root directory
     b 6f
 5:
-    cbnz x19, fat_mount_fail
-    cbnz x23, fat_mount_fail
+    cbnz x19, fat_parse_fail
+    cbnz x23, fat_parse_fail
     ldr w2, [x25, #44]          // root cluster
     and w2, w2, #0x0fffffff
     cmp x2, #2
-    b.lo fat_mount_fail
+    b.lo fat_parse_fail
     ldv x3, fat_clusters
     add x3, x3, #2
     cmp x2, x3
-    b.hs fat_mount_fail
+    b.hs fat_parse_fail
     stv x2, fat_root_cluster, x3
     le16 w19, x25, 48, w3       // FSInfo sector
     mov x2, #2
@@ -265,19 +289,18 @@ fat_mount:
     bl fat_cache_commit
 6:
     bl fat_obj_alloc
-    cbz x0, fat_mount_fail
+    cbz x0, fat_parse_fail
     mov w2, #(OF_DIR | OF_ROOT | OF_WRITE | OF_PERM)
     strb w2, [x0, #OBJ_FLAGS]
     mov x2, #NO_INDEX
     str w2, [x0, #OBJ_INDEX]
     str w2, [x0, #OBJ_FIRST]
-    address x1, root_directory
-    str x0, [x1]
+    stv x0, fat_root_obj, x1
     mov x2, #1
     stv x2, fat_mounted, x3
     mov x0, #0
     leave
-fat_mount_fail:
+fat_parse_fail:
     efierr x0, 3
     leave
 
@@ -286,6 +309,8 @@ fat_mount_fail:
 .global fat_unmount
 fat_unmount:
     enter
+    mov x0, #0
+    bl fat_vol_select
     ldv x2, fat_mounted
     cbz x2, 1f
     bl fat_flush_device
@@ -325,6 +350,10 @@ fat_print_backend:
     ldv x2, platform_native
     cbz x2, 3f
     address x0, fat_backend_virtio
+    adrp x2, plat_disk_kind
+    ldr x2, [x2, :lo12:plat_disk_kind]
+    cbz x2, 3f
+    address x0, fat_backend_sd
 3:
     bl puts
 2:
@@ -340,6 +369,9 @@ fat_read_blocks:
 fat_write_blocks:
     mov x9, #32                 // WriteBlocks
 fat_block_io:
+    adrp x2, fat_backend
+    ldr x2, [x2, :lo12:fat_backend]
+    cbnz x2, fat_driver_io
     adrp x2, platform_native
     ldr x2, [x2, :lo12:platform_native]
     cbz x2, 1f
@@ -347,7 +379,7 @@ fat_block_io:
     cmp x9, #32
     cset x3, eq
     mov x1, #1
-    b vio_rw
+    b plat_disk_rw
 1:
     frame
     mov x4, x1
@@ -359,11 +391,146 @@ fat_block_io:
     blr x5
     unframe
 
+// A block device driver: rw(x0 = sector, x1 = buffer, x2 = count,
+// x3 = 1 to write) returns x0 = 0, or nonzero on a device error.
+fat_driver_io:
+    frame
+    cmp x9, #32
+    cset x3, eq
+    mov x2, #1
+    ldv x4, fat_drv_rw
+    blr x4
+    cbz x0, 1f
+    efierr x0, 7                // EFI_DEVICE_ERROR
+1:
+    unframe
+
+// x0 = volume slot: makes it the live volume. The live geometry is saved
+// to its slot and the next one loaded; the write-through sector cache is
+// simply dropped. Leaf: uses x9-x15 only.
+.global fat_vol_select
+fat_vol_select:
+    adrp x9, fat_cur_vol
+    ldr x10, [x9, :lo12:fat_cur_vol]
+    cmp x10, x0
+    b.ne 1f
+    ret
+1:
+    str x0, [x9, :lo12:fat_cur_vol]
+    address x11, fat_vols
+    mov x12, #VOL_SIZE
+    madd x13, x10, x12, x11     // old slot
+    madd x14, x0, x12, x11      // new slot
+    address x11, fat_mounted
+    mov x12, #0
+2:
+    ldr x15, [x11, x12]
+    str x15, [x13, x12]
+    ldr x15, [x14, x12]
+    str x15, [x11, x12]
+    add x12, x12, #8
+    cmp x12, #VOL_LIVE
+    b.lo 2b
+    address x11, fat_boot_copy
+    add x13, x13, #VOL_LIVE
+    add x14, x14, #VOL_LIVE
+    mov x12, #0
+3:
+    ldr x15, [x11, x12]
+    str x15, [x13, x12]
+    ldr x15, [x14, x12]
+    str x15, [x11, x12]
+    add x12, x12, #8
+    cmp x12, #96
+    b.lo 3b
+    address x11, fat_cache_lba
+    mov x12, #0
+    mov x15, #-1
+4:
+    str x15, [x11, x12, lsl #3]
+    add x12, x12, #1
+    cmp x12, #FAT_SLOTS
+    b.lo 4b
+    ret
+
+// Mounts a block device driver as a new volume. x0 = rw entry (as for
+// fat_driver_io), x1 = sector size, x2 = total sectors. Returns x0 = the
+// volume slot (or -1 when none is free) and x1 = 0 when it holds a FAT
+// (its root object in x2), 1 when it must be formatted first.
+.global fat_add_volume
+fat_add_volume:
+    enter
+    mov x19, x0
+    mov x20, x1
+    mov x21, x2
+    // Cache slots are 4 KiB: sectors must be 512..4096 bytes, a power of 2.
+    cmp x20, #512
+    b.lo 8f
+    cmp x20, #4096
+    b.hi 8f
+    sub x9, x20, #1
+    tst x9, x20
+    b.ne 8f
+    ldv x22, fat_vol_count
+    cmp x22, #FAT_VOLS
+    b.hs 8f
+    add x2, x22, #1
+    stv x2, fat_vol_count, x3
+    mov x0, x22
+    bl fat_vol_select
+    address x0, fat_mounted     // a clean slot
+    mov x2, #0
+1:
+    str xzr, [x0, x2]
+    add x2, x2, #8
+    cmp x2, #VOL_LIVE
+    b.lo 1b
+    mov x2, #1
+    stv x2, fat_backend, x3
+    stv x19, fat_drv_rw, x3
+    stv x20, fat_bps, x3
+    stv x21, fat_total_sectors, x3
+    bl fat_remount
+    mov x1, x0
+    mov x0, x22
+    ldv x2, fat_root_obj
+    leave
+8:
+    mov x0, #-1
+    mov x1, #1
+    leave
+
+// Re-reads the live volume's boot record (after FORMAT or a disk change).
+// Returns x0 = 0 when it holds a FAT, 1 otherwise. The root object is kept.
+.global fat_remount
+fat_remount:
+    enter
+    ldv x19, fat_root_obj
+    bl fat_mount_parse
+    cbz x0, 1f
+    stv xzr, fat_mounted, x2
+    mov x0, #1
+    leave
+1:
+    cbz x19, 2f                 // keep the first root object, free the new
+    ldv x0, fat_root_obj
+    str xzr, [x0, #OBJ_MAGIC]
+    stv x19, fat_root_obj, x2
+2:
+    mov x0, #0
+    leave
+
 fat_flush_device:
+    adrp x0, fat_backend
+    ldr x0, [x0, :lo12:fat_backend]
+    cbnz x0, 2f
     adrp x0, platform_native
     ldr x0, [x0, :lo12:platform_native]
     cbz x0, 1f
     mov x0, #0                  // virtio writes complete before vio_rw returns
+    ret
+2:
+    mov x0, #0
     ret
 1:
     frame
@@ -390,13 +557,14 @@ fat_cache_get:
     ldr x23, [x2, :lo12:fat_cache_clock]
     add x23, x23, #1
     str x23, [x2, :lo12:fat_cache_clock]
+    ldv x6, fat_slot_count
     mov x24, #0
 1:
     ldr x2, [x21, x24, lsl #3]
     cmp x2, x19
     b.eq 5f
     add x24, x24, #1
-    cmp x24, #FAT_SLOTS
+    cmp x24, x6
     b.lo 1b
     mov x24, #0                 // miss: evict the least recently used
     ldr x3, [x22]
@@ -409,7 +577,7 @@ fat_cache_get:
     mov x24, x4
 3:
     add x4, x4, #1
-    cmp x4, #FAT_SLOTS
+    cmp x4, x6
     b.lo 2b
     mov x2, #-1
     str x2, [x21, x24, lsl #3]
@@ -1708,29 +1876,68 @@ fat_obj_alloc:
     b.lo 3b
     mov x3, #0x10000            // EFI_FILE_PROTOCOL_REVISION
     str x3, [x0]
-    address x3, fat_efi_open
+    address x3, fat_vt_open
     str x3, [x0, #8]
-    address x3, fat_efi_close
+    address x3, fat_vt_close
     str x3, [x0, #16]
-    address x3, fat_efi_delete
+    address x3, fat_vt_delete
     str x3, [x0, #24]
-    address x3, fat_efi_read
+    address x3, fat_vt_read
     str x3, [x0, #32]
-    address x3, fat_efi_write
+    address x3, fat_vt_write
     str x3, [x0, #40]
-    address x3, fat_efi_getpos
+    address x3, fat_vt_getpos
     str x3, [x0, #48]
-    address x3, fat_efi_setpos
+    address x3, fat_vt_setpos
     str x3, [x0, #56]
-    address x3, fat_efi_getinfo
+    address x3, fat_vt_getinfo
     str x3, [x0, #64]
-    address x3, fat_efi_setinfo
+    address x3, fat_vt_setinfo
     str x3, [x0, #72]
-    address x3, fat_efi_flush
+    address x3, fat_vt_flush
     str x3, [x0, #80]
     mov x3, #1
     str x3, [x0, #OBJ_MAGIC]
+    ldv x3, fat_cur_vol
+    strb w3, [x0, #OBJ_VOL]
     ret
+
+// Each method first makes the object's volume the live one.
+.macro fat_vthunk name
+fat_vt_\name:
+    adrp x9, fat_efi_\name
+    add x9, x9, :lo12:fat_efi_\name
+    b fat_vol_thunk
+.endm
+fat_vthunk open
+fat_vthunk close
+fat_vthunk delete
+fat_vthunk read
+fat_vthunk write
+fat_vthunk getpos
+fat_vthunk setpos
+fat_vthunk getinfo
+fat_vthunk setinfo
+fat_vthunk flush
+fat_vol_thunk:
+    ldrb w10, [x0, #OBJ_VOL]
+    adrp x11, fat_cur_vol
+    ldr x11, [x11, :lo12:fat_cur_vol]
+    cmp x10, x11
+    b.ne 1f
+    br x9
+1:
+    stp x29, x30, [sp, #-64]!
+    stp x0, x1, [sp, #16]
+    stp x2, x3, [sp, #32]
+    stp x4, x9, [sp, #48]
+    mov x0, x10
+    bl fat_vol_select
+    ldp x0, x1, [sp, #16]
+    ldp x2, x3, [sp, #32]
+    ldp x4, x9, [sp, #48]
+    ldp x29, x30, [sp], #64
+    br x9
 
 // x0=object (not root). Returns x0=status, x1=its cached short entry.
 fat_obj_entry:
@@ -2870,6 +3077,10 @@ fat_obj_retarget:
     b.eq 3f
     ldr x8, [x6, #OBJ_MAGIC]
     cbz x8, 3f
+    ldrb w8, [x6, #OBJ_VOL]
+    ldrb w9, [x0, #OBJ_VOL]
+    cmp w8, w9
+    b.ne 3f
     ldrb w8, [x6, #OBJ_FLAGS]
     tbnz w8, #2, 3f             // the root object has no slot
     ldr w9, [x6, #OBJ_PARENT]
@@ -3202,6 +3413,10 @@ fat_strcasecmp:
     mov x0, #1
     ret
 
+.section .data
+.balign 8
+fat_slot_count: .quad FAT_SLOTS_DEFAULT
+fat_vol_count: .quad 1          // slot 0 is the boot volume
 .section .rodata
 .balign 8
 block_io_guid:
@@ -3225,6 +3440,7 @@ fat_backend_fat16: .asciz "Storage: native FAT16 driver"
 fat_backend_fat32: .asciz "Storage: native FAT32 driver"
 fat_backend_blockio: .asciz " over UEFI Block I/O\r\n"
 fat_backend_virtio: .asciz " over the native virtio-blk driver\r\n"
+fat_backend_sd: .asciz " over the native SD card driver\r\n"
 fat_backend_firmware: .asciz "Storage: UEFI firmware file system (native FAT driver unavailable)\r\n"
 
 .section .bss
@@ -3246,6 +3462,10 @@ fat_data_start: .skip 8
 fat_clusters: .skip 8
 fat_root_cluster: .skip 8
 fat_next_free: .skip 8
+fat_backend: .skip 8            // 0 boot disk (Block I/O or virtio), 1 driver
+fat_drv_rw: .skip 8
+fat_total_sectors: .skip 8
+fat_root_obj: .skip 8
 fat_cache_buffers: .skip 8
 fat_cache_clock: .skip 8
 fat_cache_lba: .skip 8 * FAT_SLOTS
@@ -3268,5 +3488,8 @@ fat_rename_comp: .skip 264
 fat_rename_name: .skip 264
 .balign 16
 fat_boot_copy: .skip 96
+.balign 16
+fat_vols: .skip FAT_VOLS * VOL_SIZE
+fat_cur_vol: .skip 8
 .balign 16
 fat_objects: .skip FAT_OBJECTS * OBJ_SIZE

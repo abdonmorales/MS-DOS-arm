@@ -9,9 +9,11 @@ BUILD ?= build
 SOURCES := $(wildcard src/*.S)
 FIXTURES := $(wildcard fixtures/*)
 
-.PHONY: all image pi-image unit smoke smoke-firmware check validate snapshot fat-test clean
-all: $(BUILD)/BOOTAA64.EFI $(BUILD)/NATIVE.EXE
+.SECONDARY:
+.PHONY: all payloads image pi-image unit smoke smoke-firmware check validate snapshot fat-test pi-test clean
+all: $(BUILD)/BOOTAA64.EFI payloads
 image: $(BUILD)/msdos-arm64.img
+payloads: $(PAYLOADS)
 pi-image: $(BUILD)/msdos-arm64-pi3.img
 
 FIRMWARE ?= /usr/share/qemu-efi-aarch64/QEMU_EFI.fd
@@ -26,7 +28,7 @@ smoke: image
 smoke-firmware: image
 	$(PYTHON) tools/smoke.py $(BUILD)/msdos-arm64.img --firmware $(FIRMWARE) --mode firmware --log $(BUILD)/smoke-firmware.log
 
-check: unit
+check: unit pi-test
 	$(MAKE) smoke
 
 validate: image pi-image
@@ -60,22 +62,50 @@ $(BUILD)/kernel.bin: $(BUILD)/kernel.elf
 $(BUILD)/BOOTAA64.EFI: $(BUILD)/kernel.bin $(BUILD)/kernel.elf tools/pe.py
 	$(PYTHON) tools/pe.py --nm $(NM) $(BUILD)/kernel.elf $< $@
 
-$(BUILD)/native.o: programs/native.S | $(BUILD)
-	$(AS) -march=armv8-a -g -o $@ $<
+# Separately linked native programs (programs/*.S -> NAME.EXE) and
+# installable drivers (drivers/*.S -> NAME.SYS), all PE32+ images.
+upper = $(shell echo $(1) | tr a-z A-Z)
+PROGRAM_NAMES := $(patsubst programs/%.S,%,$(wildcard programs/*.S))
+DRIVER_NAMES := $(patsubst drivers/%.S,%,$(wildcard drivers/*.S))
+PAYLOADS := $(foreach p,$(PROGRAM_NAMES),$(BUILD)/$(call upper,$(p)).EXE) \
+	$(foreach p,$(DRIVER_NAMES),$(BUILD)/$(call upper,$(p)).SYS) $(BUILD)/COUNTRY.SYS
 
-$(BUILD)/native.elf: $(BUILD)/native.o link.ld
+# The Pi 3 SD card and UART drivers, bare metal on QEMU raspi3b.
+pi-test: $(BUILD)/sdtest.bin $(BUILD)/msdos-arm64.img
+	$(PYTHON) tools/pi_test.py $(BUILD)/sdtest.bin $(BUILD)/msdos-arm64.img
+
+$(BUILD)/sdtest.bin: tests/pi/sdtest.S tests/pi/link.ld src/sdhci.S | $(BUILD)
+	$(AS) -march=armv8-a -o $(BUILD)/sdtest.o $<
+	$(LD) -T tests/pi/link.ld --no-warn-rwx-segments -o $(BUILD)/sdtest.elf $(BUILD)/sdtest.o
+	$(OBJCOPY) -O binary $(BUILD)/sdtest.elf $@
+
+# COUNTRY.SYS is data: the DOS 4.0 file assembled from MKCNTRY.ASM.
+$(BUILD)/COUNTRY.SYS: ../v4.0/src/DEV/COUNTRY/MKCNTRY.ASM ../v4.0/src/DEV/COUNTRY/MKCNTRY.INC tools/mkcntry.py | $(BUILD)
+	$(PYTHON) tools/mkcntry.py $< $@
+
+$(BUILD)/%.o: programs/%.S programs/lib.inc programs/fatlib.inc programs/cds.inc programs/sysxfer.inc programs/diskdrv.inc programs/backup.inc | $(BUILD)
+	$(AS) -march=armv8-a -g -I programs -o $@ $<
+
+$(BUILD)/%.o: drivers/%.S drivers/ramdisk.inc | $(BUILD)
+	$(AS) -march=armv8-a -g -I programs -o $@ $<
+
+$(BUILD)/%.elf: $(BUILD)/%.o link.ld
 	$(LD) -T link.ld --no-undefined -o $@ $<
 
-$(BUILD)/native.bin: $(BUILD)/native.elf
+$(BUILD)/%.bin: $(BUILD)/%.elf
 	$(OBJCOPY) -O binary $< $@
 
-$(BUILD)/NATIVE.EXE: $(BUILD)/native.bin $(BUILD)/native.elf tools/pe.py
-	$(PYTHON) tools/pe.py --nm $(NM) $(BUILD)/native.elf $< $@
+define payload_rule
+$(BUILD)/$(2): $(BUILD)/$(1).bin $(BUILD)/$(1).elf tools/pe.py
+	$$(PYTHON) tools/pe.py --nm $$(NM) $(BUILD)/$(1).elf $$< $$@
+endef
+$(foreach p,$(PROGRAM_NAMES),$(eval $(call payload_rule,$(p),$(call upper,$(p)).EXE)))
+$(foreach p,$(DRIVER_NAMES),$(eval $(call payload_rule,$(p),$(call upper,$(p)).SYS)))
 
-$(BUILD)/msdos-arm64.img: $(BUILD)/BOOTAA64.EFI $(BUILD)/NATIVE.EXE $(FIXTURES) tools/image.py
+$(BUILD)/msdos-arm64.img: $(BUILD)/BOOTAA64.EFI $(PAYLOADS) $(FIXTURES) tools/image.py
 	$(PYTHON) tools/image.py $< $@
 
-$(BUILD)/msdos-arm64-pi3.img: $(BUILD)/BOOTAA64.EFI $(BUILD)/NATIVE.EXE $(FIXTURES) tools/pi_image.py
+$(BUILD)/msdos-arm64-pi3.img: $(BUILD)/BOOTAA64.EFI $(PAYLOADS) $(FIXTURES) tools/pi_image.py
 	$(PYTHON) tools/pi_image.py $< $@ --replace-generated $(if $(PI_FIRMWARE),--firmware "$(PI_FIRMWARE)")
 
 clean:

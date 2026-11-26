@@ -27,14 +27,13 @@ api_selftest:
     mov x0, #0
     bl dos_set_drive
     check_ok
-    cmp x0, #1
-    b.ne api_test_failed
-    mov x0, #1
+    cmp x0, #5                 // LASTDRIVE letters (E: at least)
+    b.lo api_test_failed
+    mov x0, #25                // no Z: drive: 0Eh keeps the current one
     bl dos_set_drive
-    cmp x1, #1
-    b.ne api_test_failed
-    cmp x0, #15
-    b.ne api_test_failed
+    check_ok
+    bl dos_get_drive
+    cbnz x0, api_test_failed
     test_step api_stage_clock
     bl clock_selftest
     cbnz x0, api_test_failed
@@ -152,6 +151,7 @@ api_selftest:
     check_ok
     address x0, io_buffer
     mov x1, #256
+    mov x2, #0
     mov w8, #0x47
     bl dos_call
     check_ok
@@ -457,7 +457,7 @@ api_filename: .asciz ".\\TEST.TXT"
 api_renamed: .asciz "MOVED.TXT"
 api_full_renamed: .asciz "\\ARMAPI.TMP\\MOVED.TXT"
 api_parent: .asciz "A:..\\."
-api_wrong_drive: .asciz "B:\\ARMTEST.TXT"
+api_wrong_drive: .asciz "Q:\\ARMTEST.TXT"
 api_data: .ascii "abcdef"
 api_pattern: .asciz "mO?ED.*"
 api_program: .asciz "\\NATIVE.EXE"

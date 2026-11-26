@@ -10,6 +10,9 @@ redirect_begin:
     mov x19, x0
     mov x20, x1
     str xzr, [x20, #40]
+    address x0, ctty_generation // CTTY inside this scope must stick
+    ldr x0, [x0]
+    str x0, [x20, #120]
     address x0, handles
     ldp x1, x2, [x0]
     stp x1, x2, [x20, #8]
@@ -33,8 +36,6 @@ redirect_scan:
 1:
     cbnz x22, redirect_advance
     cmp w2, #'|'
-    b.eq redirect_invalid
-    cmp w2, #'&'
     b.eq redirect_invalid
     mov x23, #0
     cmp w2, #'<'
@@ -133,6 +134,11 @@ redirect_end:
     stp x19, x20, [sp, #-16]!
     str x21, [sp, #-16]!
     mov x19, x0
+    address x0, ctty_generation // CTTY ran: its handles stay
+    ldr x0, [x0]
+    ldr x1, [x19, #120]
+    cmp x0, x1
+    b.ne 3f
     address x0, handles
     ldp x1, x2, [x19, #8]
     stp x1, x2, [x0]
@@ -143,6 +149,7 @@ redirect_end:
     strh w1, [x0]
     ldrb w1, [x19, #34]
     strb w1, [x0, #2]
+3:
     mov x20, #0
     ldr x21, [x19, #40]
 1:
@@ -157,3 +164,7 @@ redirect_end:
     ldr x21, [sp], #16
     ldp x19, x20, [sp], #16
     unframe
+
+.section .bss
+.balign 8
+ctty_generation: .skip 8

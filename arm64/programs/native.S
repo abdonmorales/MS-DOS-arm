@@ -150,6 +150,7 @@ program_check_r:
     b.ne program_print
     address x0, own_name
     address x1, exit_argument
+    mov x2, #0                  // 4Bh mode 0: load and execute
     mov w8, #0x4b
     blr x19
     cbnz x1, program_failed

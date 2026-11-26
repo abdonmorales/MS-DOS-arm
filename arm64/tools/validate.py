@@ -10,6 +10,7 @@ import struct
 import subprocess
 import sys
 import tempfile
+from payloads import payload_paths
 
 
 def digest(path):
@@ -18,11 +19,16 @@ def digest(path):
 
 def source_digest(source):
     files = sorted(p for p in source.rglob('*') if p.is_file() and
-                   (p.suffix in {'.S', '.py', '.ld', '.BAT'} or p.name == 'Makefile')
-                   and 'build' not in p.parts)
+                   (p.suffix in {'.S', '.inc', '.py', '.ld'} or p.name == 'Makefile'
+                    or 'fixtures' in p.parts)
+                   and 'build' not in p.parts and '__pycache__' not in p.parts)
+    # COUNTRY.SYS is assembled from the DOS 4.0 sources.
+    country = source.parent / 'v4.0/src/DEV/COUNTRY'
+    files += [country / 'MKCNTRY.ASM', country / 'MKCNTRY.INC']
     sources = hashlib.sha256()
     for path in files:
-        sources.update(str(path.relative_to(source)).encode() + b'\0' + path.read_bytes())
+        sources.update(str(path.relative_to(source.parent)).encode() + b'\0' +
+                       path.read_bytes())
     return sources.hexdigest()
 
 
@@ -59,6 +65,10 @@ def main():
                     'ARMTEST.TXT': b'ARM64 FAT read\r\n',
                     'SCRIPT.BAT': (source / 'fixtures/SCRIPT.BAT').read_bytes(),
                     'CHILD.BAT': (source / 'fixtures/CHILD.BAT').read_bytes()}
+        for payload in payload_paths(args.build):     # every program and driver
+            expected[payload.name] = payload.read_bytes()
+        for fixture in sorted((source / 'fixtures').iterdir()):
+            expected[fixture.name] = fixture.read_bytes()
         for filename, contents in expected.items():
             actual = subprocess.check_output(['mtype', '-i', mtools_image, '::/' + filename])
             if actual != contents:

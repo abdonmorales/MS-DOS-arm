@@ -5,6 +5,7 @@ import hashlib
 import json
 from pathlib import Path
 import struct
+from payloads import payload_paths
 
 SECTOR = 512
 TOTAL_SECTORS = 131072  # 64 MiB, power of two for QEMU and physical media.
@@ -106,11 +107,18 @@ def main():
         offset = (START + DATA_START + (cluster - 2) * SPC) * SECTOR
         struct.pack_into('<H', disk, offset + 26, cluster)
         struct.pack_into('<H', disk, offset + 32 + 26, parent)
+    def short(path):
+        stem, _, ext = path.name.upper().partition('.')
+        if len(stem) > 8 or len(ext) > 3:
+            raise ValueError(f'{path.name} is not an 8.3 name')
+        return stem.ljust(8).encode() + ext.ljust(3).encode()
+
+    fixtures = Path(__file__).parent.parent / 'fixtures'
+    payloads = payload_paths(args.efi.parent)
     for name, data in [
         (b'LICENSE TXT', (Path(__file__).parent.parent.parent / 'LICENSE').read_bytes()),
-        (b'NATIVE  EXE', (args.efi.parent / 'NATIVE.EXE').read_bytes()),
-        (b'SCRIPT  BAT', (Path(__file__).parent.parent / 'fixtures/SCRIPT.BAT').read_bytes()),
-        (b'CHILD   BAT', (Path(__file__).parent.parent / 'fixtures/CHILD.BAT').read_bytes()),
+        *[(short(p), p.read_bytes()) for p in payloads],
+        *[(short(p), p.read_bytes()) for p in sorted(fixtures.iterdir())],
         (b'ARMTEST TXT', b'ARM64 FAT read\r\n'),
         (b'README  TXT', b'MS-DOS 4.0 AArch64 development runtime.\r\n'
          b'This is a partial native port, not the full MS-DOS system.\r\n'

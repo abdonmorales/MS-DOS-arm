@@ -31,7 +31,7 @@ dos_get_time:
 puts:
     ret
 // The host test always uses the Block I/O path (platform_native stays 0).
-vio_rw:
+plat_disk_rw:
     mov x0, #7
     orr x0, x0, #0x8000000000000000
     ret
@@ -79,3 +79,4 @@ image_handle: .skip 8
 protocol_result: .skip 8
 root_directory: .skip 8
 platform_native: .skip 8
+plat_disk_kind: .skip 8
