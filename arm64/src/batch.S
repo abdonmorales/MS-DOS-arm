@@ -12,6 +12,9 @@ batch_run:
     mov x21, sp
     mov x19, x0
     mov x20, x1
+    address x9, batch_calling   // run by CALL (returns to the caller)?
+    ldr x23, [x9]
+    str xzr, [x9]
     address x0, batch_depth
     ldr x0, [x0]
     cmp x0, #16
@@ -21,6 +24,30 @@ batch_run:
     bl dos_open
     cbnz x1, batch_return
     str x0, [x21, #8]
+    // Started from a batch line without CALL (and not inside a pipe):
+    // the running batch file is replaced, so restart loops never nest.
+    cbnz x23, 2f
+    address x9, batch_context
+    ldr x9, [x9]
+    cbz x9, 2f
+    address x9, pipe_depth
+    ldr x9, [x9]
+    cbnz x9, 2f
+    ldr x0, [x21, #8]
+    bl dos_close
+    mov x0, x19
+    address x1, chain_path
+    bl copy_cstring
+    mov x0, x20
+    address x1, chain_tail
+    bl copy_cstring
+    address x9, chain_pending
+    mov x10, #1
+    str x10, [x9]
+    mov x0, #0
+    mov x1, #0
+    b batch_return
+2:
     address x0, batch_context
     ldr x1, [x0]
     str x1, [x21]
@@ -30,6 +57,10 @@ batch_run:
     add x1, x1, #1
     str x1, [x0]
     str xzr, [x21, #96]
+    address x0, batch_echo_enabled  // ECHO state is restored when it ends
+    ldr x0, [x0]
+    str x0, [x21, #112]
+batch_parameters:
     mov x0, x19
     add x1, x21, #1152
     bl copy_cstring
@@ -51,6 +82,7 @@ batch_run:
     add x22, x22, #1
     cmp x22, #10
     b.lo 1b
+    str x0, [x21, #104]
 batch_next_line:
     ldr x0, [x21, #96]
     cbnz x0, batch_finish
@@ -92,7 +124,27 @@ batch_next_line:
 4:
     mov x0, x19
     bl shell_execute
-    b batch_next_line
+    address x9, chain_pending
+    ldr x10, [x9]
+    cbz x10, batch_next_line
+    // The line named another batch file: it takes over this frame (its
+    // CALL status, saved ECHO state and depth stay those of this one).
+    str xzr, [x9]
+    ldr x0, [x21, #8]
+    bl dos_close
+    address x0, chain_path
+    mov x1, #0
+    bl dos_open
+    cbnz x1, batch_chain_missing
+    str x0, [x21, #8]
+    str xzr, [x21, #96]
+    address x19, chain_path
+    address x20, chain_tail
+    b batch_parameters
+batch_chain_missing:
+    address x0, batch_missing_message
+    bl puts
+    b batch_finish_closed
 batch_read_end:
     cmp x1, #1
     b.eq batch_finish
@@ -103,8 +155,20 @@ batch_command_error:
     mov x1, #1
     str x1, [x0]
 batch_finish:
+    // A batch file started from another without CALL replaces it: the
+    // caller ends too, as in COMMAND.
+    ldr x9, [x21]
+    cbz x9, 1f
+    cbnz x23, 1f
+    mov x10, #1
+    str x10, [x9, #96]
+1:
     ldr x0, [x21, #8]
     bl dos_close
+batch_finish_closed:
+    ldr x0, [x21, #112]
+    address x1, batch_echo_enabled
+    str x0, [x1]
     address x0, batch_context
     ldr x1, [x21]
     str x1, [x0]
@@ -320,7 +384,12 @@ echo_return:
 cmd_call:
     frame
     bl next_word
+    address x9, batch_calling
+    mov x10, #1
+    str x10, [x9]
     bl shell_external
+    address x9, batch_calling   // a program (not a batch file) left it set
+    str xzr, [x9]
     unframe
 cmd_goto:
     frame
@@ -367,68 +436,6 @@ goto_error:
     address x0, file_error
     bl puts
 goto_return:
-    ldp x19, x20, [sp], #16
-    unframe
-
-cmd_if:
-    frame
-    stp x19, x20, [sp, #-16]!
-    stp x21, x22, [sp, #-16]!
-    mov x21, #0
-    bl next_word
-    mov x19, x0
-    mov x20, x1
-    address x1, not_keyword
-    bl strcasecmp
-    cbnz x0, 1f
-    mov x21, #1
-    mov x0, x20
-    bl next_word
-    mov x19, x0
-    mov x20, x1
-1:
-    mov x0, x19
-    address x1, errorlevel_keyword
-    bl strcasecmp
-    cbnz x0, 2f
-    mov x0, x20
-    bl next_word
-    mov x20, x1
-    bl parse_unsigned
-    cbnz x1, if_error
-    address x2, shell_errorlevel
-    ldr x2, [x2]
-    and x2, x2, #255
-    cmp x2, x0
-    cset x22, hs
-    b if_evaluate
-2:
-    mov x0, x19
-    address x1, exist_keyword
-    bl strcasecmp
-    cbnz x0, if_error
-    mov x0, x20
-    bl next_word
-    mov x20, x1
-    mov x1, #1
-    mov x2, #0
-    bl open_path_object
-    mov x22, #0
-    cbnz x1, if_evaluate
-    mov x22, #1
-    ldr x3, [x0, #16]
-    blr x3
-if_evaluate:
-    eor x22, x22, x21
-    cbz x22, if_return
-    mov x0, x20
-    bl shell_execute
-    b if_return
-if_error:
-    address x0, file_error
-    bl puts
-if_return:
-    ldp x21, x22, [sp], #16
     ldp x19, x20, [sp], #16
     unframe
 
@@ -518,24 +525,12 @@ environment_get:
     b 3f
 1:
     mov x0, x19
-    address x1, path_keyword
-    bl strcasecmp
-    cbnz x0, 2f
-    address x0, default_path
-    b 3f
-2:
-    mov x0, x19
-    address x1, comspec_keyword
-    bl strcasecmp
-    cbnz x0, 4f
-    address x0, default_comspec
-    b 3f
-4:
-    mov x0, #0
+    bl env_get
 3:
     ldr x19, [sp], #16
     unframe
 .section .rodata
+batch_missing_message: .asciz "Batch file missing\r\n"
 errorlevel_keyword: .asciz "ERRORLEVEL"
 echo_off_keyword: .asciz "OFF"
 echo_on_keyword: .asciz "ON"
@@ -556,7 +551,9 @@ batch_echo_enabled: .quad 1
 .balign 16
 batch_context: .skip 8
 batch_depth: .skip 8
+batch_calling: .skip 8
+chain_pending: .skip 8
+chain_path: .skip 256
+chain_tail: .skip 256
 expansion_name: .skip 32
 expansion_number: .skip 32
-shell_expanded_line: .skip 256
-shell_empty_parameters: .skip 896

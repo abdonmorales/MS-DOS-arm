@@ -1,18 +1,5 @@
 // SPDX-License-Identifier: MIT
 .section .text
-dos_get_drive:
-    mov x0, #0
-    mov x1, #0
-    ret
-dos_set_drive:
-    cbnz x0, 1f
-    mov x0, #1                 // one configured drive, A:
-    mov x1, #0
-    ret
-1:
-    mov x0, #15
-    mov x1, #1
-    ret
 dos_disk_reset:
     frame
     stp x19, x20, [sp, #-16]!
@@ -23,7 +10,8 @@ dos_disk_reset:
     cbz x0, 2f
     address x3, handle_modes    // firmware refuses to flush read-only opens,
     ldrb w3, [x3, x20]          // and they hold nothing to write back
-    cbz w3, 2f
+    tst w3, #3                  // access bits only (bit 7 is no-inherit)
+    b.eq 2f
     ldr x3, [x0, #80]
     blr x3
     cbnz x0, 3f
@@ -43,11 +31,11 @@ dos_disk_reset:
 dos_free_space:
     frame
     sub sp, sp, #16
-    cmp x0, #1                 // 0=default, 1=A:
-    b.hi free_space_drive_error
-    address x0, root_directory
-    ldr x0, [x0]
-    cbz x0, free_space_drive_error
+    bl drive_physical          // 0=default, 1=A:, ...
+    cbnz x1, free_space_drive_error
+    bl drive_entry
+    ldr x0, [x0, #DRV_ROOT]
+    cbz x0, free_space_not_ready
     mov x2, #1024
     str x2, [sp]
     mov x2, sp
@@ -65,6 +53,10 @@ dos_free_space:
     udiv x3, x3, x0
     mov x1, #0
     b free_space_return
+free_space_not_ready:
+    mov x0, #21
+    mov x1, #1
+    b free_space_return
 free_space_drive_error:
     mov x0, #15
     mov x1, #1
@@ -76,82 +68,6 @@ free_space_return:
     add sp, sp, #16
     unframe
 
-// IOCTL subset: x0=handle, x1=subfunction 0=device info/6=read ready/7=write ready.
-dos_ioctl:
-    frame
-    stp x19, x20, [sp, #-16]!
-    str x21, [sp, #-16]!
-    mov x19, x0
-    mov x20, x1
-    cmp x19, #32
-    b.hs ioctl_bad_handle
-    bl file_handle
-    cbnz x0, ioctl_file
-    cmp x19, #2
-    b.hi ioctl_bad_handle
-    cbz x20, ioctl_console_info
-    cmp x20, #6
-    b.eq ioctl_console_input
-    cmp x20, #7
-    b.eq ioctl_ready
-    b ioctl_invalid
-ioctl_console_info:
-    mov x0, #0x82
-    cbnz x19, ioctl_success
-    mov x0, #0x81
-    b ioctl_success
-ioctl_console_input:
-    bl poll_key
-    cmp x0, #0
-    mov x0, #255
-    csel x0, x0, xzr, ne
-    b ioctl_success
-ioctl_file:
-    mov x21, x0
-    cbz x20, ioctl_file_info
-    cmp x20, #7
-    b.eq ioctl_ready
-    cmp x20, #6
-    b.ne ioctl_invalid
-    sub sp, sp, #16
-    mov x1, sp
-    ldr x3, [x0, #48]
-    blr x3
-    ldr x19, [sp]
-    add sp, sp, #16
-    cbnz x0, ioctl_efi_error
-    mov x0, x21
-    bl get_file_info
-    cbnz x0, ioctl_efi_error
-    ldr x2, [x1, #8]
-    cmp x19, x2
-    mov x0, #255
-    csel x0, x0, xzr, lo
-    b ioctl_success
-ioctl_file_info:
-    mov x0, #0                 // ordinary file on drive A:
-    b ioctl_success
-ioctl_ready:
-    mov x0, #255
-ioctl_success:
-    mov x1, #0
-    b ioctl_return
-ioctl_bad_handle:
-    mov x0, #6
-    b ioctl_error
-ioctl_invalid:
-    mov x0, #1
-    b ioctl_error
-ioctl_efi_error:
-    bl efi_error_to_dos
-ioctl_error:
-    mov x1, #1
-ioctl_return:
-    ldr x21, [sp], #16
-    ldp x19, x20, [sp], #16
-    unframe
-
-// 57h: x0=handle, x1=0(get)/1(set), x2=date, x3=time in packed DOS format.
 dos_file_time:
     frame
     stp x19, x20, [sp, #-16]!

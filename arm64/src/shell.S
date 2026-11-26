@@ -4,13 +4,22 @@ shell_execute:
     frame
     stp x19, x20, [sp, #-16]!
     stp x21, x22, [sp, #-16]!
-    sub sp, sp, #128
+    sub sp, sp, #384            // redirection state, then the split tail
     mov x19, x0
+    bl line_has_pipe
+    cbz x0, 7f
+    mov x0, x19
+    bl pipe_execute
+    b shell_execute_return
+7:
+    mov x0, x19
     mov x1, sp
     bl redirect_begin
     cbnz x1, shell_redirect_failed
     mov x0, x19
     bl next_word
+    add x2, sp, #128
+    bl split_command_word
     mov x19, x0
     mov x20, x1
     mov x2, x19
@@ -31,6 +40,48 @@ shell_execute:
     cbz w2, shell_execute_done
     cmp w2, #':'
     b.eq shell_execute_done
+    cmp w2, #'@'
+    b.ne 8f
+    add x19, x19, #1              // @command: no echo (batch handles it)
+    ldrb w2, [x19]
+    cbz w2, shell_execute_done
+8:
+    ldrb w2, [x19, #1]          // "B:" selects a drive
+    cmp w2, #':'
+    b.ne 81f
+    ldrb w2, [x19, #2]
+    cbnz w2, 81f
+    ldrb w2, [x19]
+    sub x21, x2, #'A'
+    cmp x21, #26
+    b.hs 82f
+    add x0, x21, #1
+    bl drive_physical
+    cbnz x1, 82f
+    mov x0, x21
+    bl dos_set_drive
+    b shell_execute_done
+82:
+    address x0, invalid_drive_message
+    bl puts
+    b shell_execute_done
+81:
+    add x9, sp, #128            // only when the word was split at the dot
+    cmp x20, x9                 // ("echo .text" keeps it)
+    b.ne 9f
+    ldrb w2, [x20]
+    cmp w2, #'.'
+    b.ne 9f
+    mov x0, x19
+    address x1, name_echo
+    bl strcmp
+    cbnz x0, 9f
+    add x0, x20, #1               // ECHO.text prints text (or a blank line)
+    bl puts
+    address x0, newline
+    bl puts
+    b shell_execute_done
+9:
     address x21, commands
 4:
     ldrsw x1, [x21]
@@ -61,98 +112,123 @@ shell_redirect_failed:
     address x0, file_error
     bl puts
 shell_execute_return:
-    add sp, sp, #128
+    add sp, sp, #384
     ldp x21, x22, [sp], #16
     ldp x19, x20, [sp], #16
     unframe
 
 shell_external:
     frame
-    stp x19, x20, [sp, #-16]!
-    stp x21, x22, [sp, #-16]!
-    mov x19, x0
-    mov x20, x1
-    mov x2, #0
-1:
-    ldrb w3, [x19, x2]
-    cbz w3, 2f
-    add x2, x2, #1
-    cmp x2, #251
-    b.hi external_error
-    b 1b
-2:
-    cmp x2, #4
-    b.lo 3f
-    add x0, x19, x2
-    sub x0, x0, #4
-    address x1, bat_suffix
-    bl strcasecmp
-    cbnz x0, 3f
-    mov x0, x19
-    mov x1, x20
-    bl batch_run
-    cbnz x1, external_error
-    b external_return
-3:
-    mov x0, x19
-    mov x1, x20
-    bl dos_exec
-    cbz x1, external_success
-    cmp x0, #2
-    b.ne external_error
-    mov x0, x19
-    address x1, external_path
-    bl copy_cstring
-    address x21, external_path
-    mov x22, #0
-1:
-    ldrb w2, [x21, x22]
-    cbz w2, 2f
-    add x22, x22, #1
-    b 1b
-2:
-    cmp x22, #251
-    b.hi external_error
-    address x0, exe_suffix
-    add x1, x21, x22
-    bl copy_cstring
-    mov x0, x21
-    mov x1, x20
-    bl dos_exec
-    cbz x1, external_success
-    cmp x0, #2
-    b.ne external_error
-    address x0, bat_suffix
-    add x1, x21, x22
-    bl copy_cstring
-    mov x0, x21
-    mov x1, x20
-    bl batch_run
-    cbnz x1, external_error
-    b external_return
-external_success:
-    bl dos_get_exit_code
-    address x2, shell_errorlevel
-    str x0, [x2]
-    b external_return
-external_error:
+    bl path_search_run
+    cbz x1, 1f
     mov x0, #1
     address x2, shell_errorlevel
     str x0, [x2]
     address x0, unknown_message
     bl puts
-external_return:
+1:
+    unframe
+
+// x0 = command word, x1 = tail (from next_word), x2 = 256-byte buffer.
+// COMMAND ends an internal command's name at = / + ; , . \ " [ as well
+// as at a blank (cd.., dir/w, echo.text, path=A:\); '/' ends any name.
+// Returns x0 = the word, x1 = the tail (in the buffer when split).
+split_command_word:
+    frame
+    stp x19, x20, [sp, #-16]!
+    stp x21, x22, [sp, #-16]!
+    stp x23, x24, [sp, #-16]!
+    sub sp, sp, #16
+    mov x19, x0
+    mov x20, x1
+    mov x21, x2
+    mov x22, x19
+    ldrb w9, [x22]
+    cmp w9, #'@'
+    b.ne 1f
+    add x22, x22, #1
+1:
+    mov x23, x22
+2:
+    ldrb w9, [x23]
+    cbz w9, 9f
+    cmp x23, x22
+    b.eq 4f
+    address x10, split_delimiters
+3:
+    ldrb w11, [x10], #1
+    cbz w11, 4f
+    cmp w11, w9
+    b.ne 3b
+    b 5f
+4:
+    add x23, x23, #1
+    b 2b
+5:
+    cmp w9, #'/'
+    b.eq 7f
+    sub x2, x23, x22            // an internal command name?
+    cmp x2, #15
+    b.hs 9f
+    mov x3, #0
+6:
+    ldrb w4, [x22, x3]
+    cmp w4, #'a'
+    b.lo 61f
+    cmp w4, #'z'
+    b.hi 61f
+    sub w4, w4, #32
+61:
+    strb w4, [sp, x3]
+    add x3, x3, #1
+    cmp x3, x2
+    b.lo 6b
+    strb wzr, [sp, x3]
+    address x24, commands
+62:
+    ldrsw x1, [x24]
+    cbz x1, 9f
+    add x1, x24, x1
+    mov x0, sp
+    bl strcmp
+    cbz x0, 7f
+    add x24, x24, #8
+    b 62b
+7:
+    // Put back the blank next_word cut, then move the rest to the buffer.
+    mov x0, x19
+8:
+    ldrb w9, [x0]
+    cbz w9, 81f
+    add x0, x0, #1
+    b 8b
+81:
+    add x1, x0, #1
+    cmp x1, x20
+    b.ne 82f
+    mov w9, #' '
+    strb w9, [x0]
+82:
+    ldrb w9, [x23]
+    mov x0, x23
+    cmp w9, #'='                // = and , separate like a blank
+    b.eq 83f
+    cmp w9, #','
+    b.ne 84f
+83:
+    add x0, x0, #1
+84:
+    mov x1, x21
+    bl copy_cstring
+    strb wzr, [x23]
+    mov x20, x21
+9:
+    mov x0, x19
+    mov x1, x20
+    add sp, sp, #16
+    ldp x23, x24, [sp], #16
     ldp x21, x22, [sp], #16
     ldp x19, x20, [sp], #16
-    unframe
-shell_prompt:
-    frame
-    address x0, drive_prefix
-    bl puts
-    address x0, current_directory
-    bl puts
-    address x0, prompt_suffix
-    bl puts
     unframe
 
 // In-place tokenization, supporting quoted filenames. x0=token, x1=tail.
@@ -198,18 +274,58 @@ cmd_cd:
     bl next_word
     ldrb w2, [x0]
     cbnz w2, 1f
-    address x0, drive_prefix
-    bl puts
+    bl print_current_drive
     address x0, current_directory
     bl puts
     address x0, newline
     bl puts
     b 2f
 1:
+    ldrb w3, [x0, #1]           // "CD B:" shows that drive's directory
+    cmp w3, #':'
+    b.ne 3f
+    ldrb w3, [x0, #2]
+    cbnz w3, 3f
+    bic w2, w2, #0x20
+    sub x2, x2, #'A'
+    cmp x2, #26
+    b.hs 4f
+    stp x2, xzr, [sp, #-16]!
+    add x0, x2, #1
+    bl drive_physical
+    ldp x2, xzr, [sp], #16
+    cbnz x1, 4f
+    add w0, w2, #'A'
+    stp x2, xzr, [sp, #-16]!
+    bl stdout_putc
+    mov x0, #':'
+    bl stdout_putc
+    ldp x0, xzr, [sp], #16
+    bl drive_cwd
+    bl puts
+    address x0, newline
+    bl puts
+    b 2f
+4:
+    address x0, invalid_drive_message
+    bl puts
+    b 2f
+3:
     bl dos_chdir
     bl shell_check_error
 2:
     unframe
+// Prints the current drive as "A:".
+print_current_drive:
+    frame
+    adrp x0, current_drive
+    ldr x0, [x0, :lo12:current_drive]
+    add w0, w0, #'A'
+    bl stdout_putc
+    mov x0, #':'
+    bl stdout_putc
+    unframe
+
 cmd_md:
     mov w8, #0x39
     b cmd_path_call
@@ -237,96 +353,6 @@ shell_check_error:
 1:
     ret
 
-cmd_ren:
-    frame
-    str x19, [sp, #-16]!
-    bl next_word
-    mov x19, x0
-    mov x0, x1
-    bl next_word
-    mov x1, x0
-    mov x0, x19
-    bl dos_rename
-    bl shell_check_error
-    ldr x19, [sp], #16
-    unframe
-
-cmd_copy:
-    frame
-    stp x19, x20, [sp, #-16]!
-    stp x21, x22, [sp, #-16]!
-    bl next_word
-    mov x19, x0
-    mov x0, x1
-    bl next_word
-    mov x20, x0
-    ldrb w2, [x19]
-    cbz w2, copy_cmd_error
-    ldrb w2, [x20]
-    cbz w2, copy_cmd_error
-    // Compare canonical paths before the destination can be truncated.
-    mov x0, x19
-    address x1, copy_source_path
-    bl canonicalize_path
-    cbnz x1, copy_cmd_error
-    mov x0, x20
-    address x1, canonical_buffer
-    bl canonicalize_path
-    cbnz x1, copy_cmd_error
-    address x0, copy_source_path
-    address x1, canonical_buffer
-    bl strcasecmp
-    cbz x0, copy_cmd_error
-    mov x0, x19
-    mov x1, #0
-    bl dos_open
-    cbnz x1, copy_cmd_error
-    mov x21, x0
-    mov x0, x20
-    mov x1, #0
-    bl dos_create
-    cbnz x1, copy_cmd_close_source_error
-    mov x22, x0
-1:
-    mov x0, x21
-    address x1, io_buffer
-    mov x2, #512
-    bl dos_read
-    cbnz x1, copy_cmd_close_both_error
-    cbz x0, copy_cmd_done
-    mov x19, x0
-    mov x2, x0
-    mov x0, x22
-    address x1, io_buffer
-    bl dos_write
-    cbnz x1, copy_cmd_close_both_error
-    cmp x0, x19
-    b.ne copy_cmd_close_both_error
-    b 1b
-copy_cmd_done:
-    mov x0, x22
-    bl dos_close
-    cbnz x1, copy_cmd_close_source_error
-    mov x0, x21
-    bl dos_close
-    cbnz x1, copy_cmd_error
-    address x0, copy_success
-    bl puts
-    b copy_cmd_return
-copy_cmd_close_both_error:
-    mov x0, x22
-    bl dos_close
-copy_cmd_close_source_error:
-    mov x0, x21
-    bl dos_close
-copy_cmd_error:
-    address x0, file_error
-    bl puts
-copy_cmd_return:
-    ldp x21, x22, [sp], #16
-    ldp x19, x20, [sp], #16
-    unframe
-
 strcasecmp:
 1:
     ldrb w2, [x0], #1
@@ -350,175 +376,13 @@ strcasecmp:
     sub w0, w2, w3
     ret
 
-cmd_attrib:
-    frame
-    stp x19, x20, [sp, #-16]!
-    stp x21, x22, [sp, #-16]!
-    mov x19, #0                 // bits to add
-    mov x20, #0                 // bits to clear
-1:
-    bl next_word
-    ldrb w2, [x0]
-    cmp w2, #'+'
-    b.eq 2f
-    cmp w2, #'-'
-    b.ne attrib_path
-2:
-    ldrb w3, [x0, #1]
-    bic w3, w3, #0x20
-    mov x4, #1
-    cmp w3, #'R'
-    b.eq 3f
-    mov x4, #2
-    cmp w3, #'H'
-    b.eq 3f
-    mov x4, #4
-    cmp w3, #'S'
-    b.eq 3f
-    mov x4, #32
-    cmp w3, #'A'
-    b.ne attrib_cmd_error
-3:
-    ldrb w3, [x0, #2]
-    cbnz w3, attrib_cmd_error
-    cmp w2, #'+'
-    b.ne 4f
-    orr x19, x19, x4
-    bic x20, x20, x4
-    b 5f
-4:
-    orr x20, x20, x4
-    bic x19, x19, x4
-5:
-    mov x0, x1
-    b 1b
-attrib_path:
-    cbz w2, attrib_cmd_error
-    mov x21, x0
-    mov x1, #0
-    bl dos_attributes
-    cbnz x1, attrib_cmd_error
-    mov x22, x0
-    orr x2, x19, x20
-    cbnz x2, attrib_update
-    mov x19, #0
-    address x20, attribute_letters
-1:
-    ldrb w1, [x20, x19]
-    cbz w1, 2f
-    mov x0, #' '
-    lsr x2, x22, x19
-    tst x2, #1
-    csel x0, x1, x0, ne
-    bl stdout_putc
-    add x19, x19, #1
-    b 1b
-2:
-    mov x0, #' '
-    bl stdout_putc
-    mov x0, x21
-    bl puts
-    address x0, newline
-    bl puts
-    b attrib_cmd_return
-attrib_update:
-    orr x2, x22, x19
-    bic x2, x2, x20
-    bic x2, x2, #16
-    mov x0, x21
-    mov x1, #1
-    bl dos_attributes
-    cbnz x1, attrib_cmd_error
-    b attrib_cmd_return
-attrib_cmd_error:
-    address x0, file_error
-    bl puts
-attrib_cmd_return:
-    ldp x21, x22, [sp], #16
-    ldp x19, x20, [sp], #16
-    unframe
 
-cmd_dir:
-    frame
-    stp x19, x20, [sp, #-16]!
-    stp x21, x22, [sp, #-16]!
-    mov x20, x0
-    bl dos_get_dta
-    mov x19, x0
-    mov x21, x2
-    address x0, shell_dta
-    mov x1, #280
-    bl dos_set_dta
-    mov x0, x20
-    bl next_word
-    ldrb w2, [x0]
-    cbnz w2, dir_check_directory
-    address x0, search_all
-    b 1f
-dir_check_directory:
-    mov x20, x0
-    mov x1, #0
-    bl dos_attributes
-    cbnz x1, dir_use_argument
-    tbz x0, #4, dir_use_argument
-    mov x0, x20
-    address x1, dir_pattern
-    bl copy_cstring
-    address x22, dir_pattern
-    mov x2, #0
-dir_pattern_length:
-    ldrb w3, [x22, x2]
-    cbz w3, dir_pattern_append
-    add x2, x2, #1
-    b dir_pattern_length
-dir_pattern_append:
-    cmp x2, #253
-    b.hi dir_pattern_error
-    add x1, x22, x2
-    address x0, directory_glob_suffix
-    bl copy_cstring
-    mov x0, x22
-    b 1f
-dir_use_argument:
-    mov x0, x20
-1:
-    mov x1, #0x16
-    bl dos_find_first
-2:
-    cbnz x1, dir_cmd_end
-    address x0, shell_dta
-    add x0, x0, #24
-    bl puts
-    address x0, shell_dta
-    ldr x0, [x0]
-    tbz x0, #4, 3f
-    address x0, directory_marker
-    bl puts
-3:
-    address x0, newline
-    bl puts
-    bl dos_find_next
-    b 2b
-dir_cmd_end:
-    cmp x0, #18
-    b.eq 4f
-dir_pattern_error:
-    address x0, file_error
-    bl puts
-4:
-    mov x0, x19
-    mov x1, x21
-    bl dos_set_dta
-    ldp x21, x22, [sp], #16
-    ldp x19, x20, [sp], #16
-    unframe
 .section .rodata
+split_delimiters: .asciz "=/+;,.\\\"["
 exe_suffix: .asciz ".EXE"
 bat_suffix: .asciz ".BAT"
-drive_prefix: .asciz "A:"
 prompt_suffix: .asciz "> "
 copy_success: .asciz "        1 file(s) copied.\r\n"
-attribute_letters: .asciz "RHSVDA"
 directory_marker: .asciz "  <DIR>"
 directory_glob_suffix: .asciz "\\*"
 .section .bss

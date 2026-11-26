@@ -7,6 +7,17 @@ Microsoft.
 
 The MS-DOS v1.25 and v2.0 files [were originally shared at the Computer History Museum on March 25th, 2014]( http://www.computerhistory.org/atchm/microsoft-ms-dos-early-source-code/) and are being (re)published in this repo to make them easier to find, reference-to in external writing and works, and to allow exploration and experimentation for those interested in early PC Operating Systems.  
 
+# ARM DOS
+
+This fork adds **ARM DOS**: MS-DOS 4.0 ported natively to 64-bit ARM
+(AArch64), in ARM64 assembly, under [`arm64/`](arm64/README.md). It boots from
+UEFI on QEMU's `virt` machine (including Apple Silicon Macs under QEMU) and
+then drives the hardware itself. It runs native ARM64 programs and batch
+files; original x86 `.COM`/`.EXE` programs do not run. A Raspberry Pi 3 image
+is built too, but has not yet been booted on a physical board. Status and the
+definition of done are in [arm64/PORT_STATUS.md](arm64/PORT_STATUS.md). The
+historical sources below are unchanged.
+
 # License
 
 All files within this repo are released under the [MIT License]( https://en.wikipedia.org/wiki/MIT_License) as per the [LICENSE file](https://github.com/Microsoft/MS-DOS/blob/main/LICENSE) stored in the root of this repo.

@@ -1,20 +1,38 @@
-# MS-DOS 4.0 AArch64 development port
+# ARM DOS
 
-The `arm` branch adds a **partial native AArch64 port**, written in ARM64
-assembly. It is not a completed conversion of MS-DOS 4.0. The historical source
-archives stay intact as the reference for further migration.
+**ARM DOS** is MS-DOS 4.0 ported natively to 64-bit ARM (AArch64), written in
+ARM64 assembly. The kernel, COMMAND, `CONFIG.SYS`, the DOS function set, the
+`v4.0/src/CMD` utilities and the `v4.0/src/DEV` drivers are re-implemented
+with the same commands, behaviour and on-disk formats; the historical x86
+sources in this repository are the reference it was ported from and stay
+unchanged.
+
+What to expect:
+
+- **x86 programs do not run.** ARM DOS runs native AArch64 programs (PE32+
+  `.EXE` files built against [ABI.md](ABI.md)) and batch files. There is no x86
+  emulator, by design.
+- **QEMU `virt` (and Apple Silicon Macs under QEMU/HVF) is fully supported and
+  tested**, natively (the kernel leaves UEFI and drives the hardware itself) and
+  in firmware mode.
+- **A real Raspberry Pi 3 has not been booted yet.** Its native drivers pass
+  their tests on QEMU's `raspi3b` model; only a physical board can confirm them
+  (see [PORT_STATUS.md](PORT_STATUS.md), milestone 8).
 
 UEFI is only the boot loader. At startup the kernel finds its console UART
 (ACPI SPCR) and its boot disk (ACPI MCFG, PCI ECAM, virtio-blk), reserves its
 memory, calls `ExitBootServices` and owns the machine from then on: its own
 exception vectors, polled PL011 console, virtio-blk driver, FAT12/16/32
 filesystem (`src/fat.S`), memory arena and PE32+ program loader
-(`src/platform.S`, `src/process.S`). On boards it has no drivers for (today
-anything without ACPI SPCR/MCFG and virtio-blk, such as the Raspberry Pi 3), it
+(`src/platform.S`, `src/process.S`). On boards it has no drivers for, it
 stays in firmware mode and uses UEFI for the console, memory and sectors; the
-banner's `Platform:` line says which mode is active. See
-[PORT_STATUS.md](PORT_STATUS.md) for what remains.
-It contains no Linux guest, x86 interpreter, or x86 executable emulation.
+banner's `Platform:` line says which mode is active. The Raspberry Pi 3 has
+native drivers too (PL011 or mini UART console, SD card on the Arasan SDHCI,
+`src/sdhci.S`), tested bare metal on QEMU's `raspi3b` model by
+`make -C arm64 pi-test`; since they have not run on a physical board yet, the
+Pi uses them only when the card's FAT volume has a file named `NATIVE.ON`, and
+otherwise stays in firmware mode. It contains no Linux guest, x86 interpreter,
+or x86 executable emulation.
 
 ## Build and run
 
@@ -53,29 +71,66 @@ python3 arm64/tools/run.py arm64/build/msdos-arm64.img --firmware /path/to/QEMU_
 
 The runner chooses QEMU's `hvf` accelerator and `host` CPU on Apple Silicon
 macOS, or `tcg` and Cortex-A72 elsewhere. The cloud validation used TCG on x86_64;
-HVF and UTM have not been tested here. UTM can use an ARM64 VM with UEFI firmware
+HVF was tested on an Apple M3 Pro (macOS 27.2, QEMU 11.1 from Homebrew, its `edk2-aarch64-code.fd`): `make smoke` passed all its checks in native and firmware mode, with the same output as TCG. UTM has not been tested. UTM can use an ARM64 VM with UEFI firmware
 and the raw disk as a writable VirtIO drive. This image requires a writable FAT
 volume for its boot self-test.
 
-Commands: `HELP`, `VER`, `ECHO`, `CLS`, `DIR`, `TYPE`, `DEL`, `CD`/`CHDIR`,
-`MD`/`MKDIR`, `RD`/`RMDIR`, `COPY`, `REN`/`RENAME`, `ATTRIB`, `DATE`, `TIME`,
-`REM`, `CALL`, `GOTO`, `IF`, `SELFTEST`, `EXIT`. Native AArch64 `.EXE` and `.BAT`
-files also run from the shell; `NATIVE.EXE` is a separately linked example.
+The disk image files keep their original names (`msdos-arm64.img`,
+`msdos-arm64-pi3.img`).
 
-Paths support quotes, relative components, `.`/`..`, and drive `A:`. `DIR` accepts
-directories and case-insensitive `*`/`?` glob patterns, including DOS `*.*`.
-This is not the full DOS 8.3 wildcard algorithm. Long ASCII filenames are
-read and written as VFAT long-name entries by the native driver. Redirection supports `<`, `>`, `>>`, including nested scripts
-and native programs. Pipes, `2>` and DOS device names remain unsupported.
-`COPY` currently takes a single source and destination filename.
+Commands: `HELP`, `VER`, `ECHO`, `CLS`, `DIR`, `TYPE`, `DEL`/`ERASE`,
+`CD`/`CHDIR`, `MD`/`MKDIR`, `RD`/`RMDIR`, `COPY`, `REN`/`RENAME`,
+`DATE`, `TIME`, `VOL`, `SET`, `PATH`, `PROMPT`, `FOR`, `SHIFT`, `REM`, `CALL`,
+`GOTO`, `IF`, `PAUSE`, `VERIFY`, `BREAK`, `CTTY`, `CHCP`, `TRUENAME`,
+`SELFTEST`, `EXIT`. Native AArch64 `.EXE` and `.BAT` files run from the shell,
+found through the current directory and then `PATH`; `NATIVE.EXE` is a
+separately linked example and `DOSTEST.EXE` exercises the DOS function set
+from a loaded program. `\AUTOEXEC.BAT` runs at boot; without it the shell asks
+for the date and time, as COMMAND did.
 
-Batch files support `%0`–`%9`, `%*`, `%%`, `%ERRORLEVEL%`, `%PATH%`, `%COMSPEC%`,
-`ECHO ON/OFF`, `@`, `REM`, `CALL`, `GOTO`, `IF [NOT] EXIST/ERRORLEVEL`, and
-`EXIT /B`. Commands are limited to 255 bytes and nesting to 16 scripts.
-`FOR`, `SHIFT`, `SET`, string-comparison `IF`, and general environment editing
-remain unimplemented. `DATE`/`TIME` display the DOS clock; API setters change
-only the runtime clock. `EXIT` powers the machine off in native mode (the
-firmware is gone) and returns to UEFI in firmware mode.
+The utilities from `v4.0/src/CMD` are separate native programs on the image:
+`APPEND`, `ASSIGN`, `ATTRIB`, `BACKUP`, `CHKDSK`, `COMP`, `DISKCOMP`,
+`DISKCOPY`, `EDLIN`, `FC`, `FIND`, `FORMAT`, `JOIN`, `LABEL`, `MEM`, `MORE`,
+`RECOVER`, `REPLACE`, `RESTORE`, `SORT`, `SUBST`, `SYS`, `TREE` and `XCOPY`.
+The `CONFIG.SYS` fixture loads `RAMDRIVE.SYS` twice and `VDISK.SYS` once, so
+drives B:, C: and D: are RAM disks for the multi-drive tools (`B:` switches
+drive, as in DOS). It also loads `ANSI.SYS` (DOS escape sequences, cursor
+reports and key reassignment over the serial terminal) and `PRINTER.SYS`
+(PRN to the serial line). `COUNTRY.SYS`, assembled from the original
+`MKCNTRY.ASM`, gives `COUNTRY=` and `CHCP` the DOS 4.0 countries and code
+pages.
+
+Paths support quotes, relative components, `.`/`..`, drive letters, and DOS device
+names (`CON`, `AUX`, `PRN`, `NUL`, `CLOCK$`). `DIR` prints the DOS 4.0 layout
+(volume header, `Directory of`, name/extension/size/date/time columns, file
+count and bytes free) and accepts `/W` and `/P`. `COPY` takes wildcards,
+directory destinations, rename templates (`COPY *.TXT *.BAK`), `+`
+concatenation, and device sources such as `COPY CON FILE` (ended by ^Z); files
+keep their date and time. `DEL` takes wildcards and `/P`, and asks
+`Are you sure (Y/N)?` for `*.*`; `REN` takes templates (`REN *.TXT *.OLD`). Long
+ASCII filenames are read and written as VFAT long-name entries and shown whole
+by `DIR`. Redirection supports `<`, `>`, `>>`, and pipes (`a | b`) run through
+temporary files (`\%PIPEdn.$$$`) in the root, as COMMAND did. `2>` is not a DOS 4.0 feature.
+
+`\CONFIG.SYS` is processed at boot: `BREAK`, `BUFFERS`, `COUNTRY`, `DEVICE`,
+`FCBS`, `FILES`, `INSTALL`, `LASTDRIVE`, `REM`, `SHELL` and `STACKS`. `DEVICE=`
+loads native AArch64 character drivers (`.SYS` PE32+ images; see
+[ABI.md](ABI.md)); `TESTDRV.SYS` is the example used by the tests.
+
+The environment holds `COMSPEC`, `PATH`, `PROMPT` and anything set with `SET`;
+it is passed to every program (descriptor +40). `PROMPT` supports `$P $G $L $B
+$Q $$ $E $H $N $_ $D $T $V`. Batch files support `%0`–`%9`, `%*`, `%%`,
+`%NAME%` environment expansion (in batch files only, as in COMMAND 4.0), `%ERRORLEVEL%`, `ECHO ON/OFF` (restored when the
+batch ends), `ECHO.`, `@`, `REM`, `CALL`, `GOTO`, `SHIFT`,
+`FOR %%v IN (set) DO command` (with wildcards in the set),
+`IF [NOT] EXIST/ERRORLEVEL/string1==string2`, `PAUSE`, and `EXIT /B`. Commands
+are limited to 255 bytes and `CALL` nesting to 16 scripts; a batch file started
+from another without `CALL` replaces it, so restart loops run indefinitely.
+Internal command names end at `= / + ; , . \\ " [` as in COMMAND (`cd..`,
+`dir/w`, `echo.text`). `DATE` and `TIME` show the
+clock in the country's format and prompt for a new value. `EXIT` powers the
+machine off in native mode (the firmware is gone) and returns to UEFI in
+firmware mode.
 
 Each boot runs native API integration tests against actual files on disk:
 FCB records, partial EOF padding, paths, search buffers, attributes, file times,
@@ -84,7 +139,7 @@ years and rollover, native and nested process loading, termination, and parent
 handle preservation. Reserved scratch names are `ARMCHK.TMP`, `ARMFCB.TMP` and
 `ARMAPI.TMP` (a directory). The test refuses to overwrite existing objects with
 those names and restores the starting directory. Smoke tests boot a temporary
-image copy and check 125 console requests, including 70 successive native
+image copy and check about 290 console requests, including 70 successive native
 launches that deliberately leave resources for process cleanup, buffered input
 with backspace editing, batch control flow, and redirection restoration.
 
@@ -135,9 +190,9 @@ over two mounts, and must pass `fsck.fat -n` and match an mtools read-back.
 | `build/msdos-arm64.img` | 64 MiB MBR/FAT16, ARM64 EFI application | Boots in QEMU `virt`; API and console tests pass |
 | `build/msdos-arm64-pi3.img` | 128 MiB MBR/FAT32, Pi 3 boot files and UEFI firmware | Firmware/package structure checked; same payload tested through ARM64 UEFI; physical Pi boot unverified |
 
-Both images include `EFI/BOOT/BOOTAA64.EFI`, `NATIVE.EXE`, batch fixtures,
-`ARMTEST.TXT`, a SHA-256 sidecar and a JSON manifest. The manifests explicitly record incomplete port status and
-unverified physical hardware. Raw build products are ignored by Git. Compressed, validated image snapshots
+Both images include `EFI/BOOT/BOOTAA64.EFI`, `NATIVE.EXE`, `DOSTEST.EXE`, batch fixtures,
+`ARMTEST.TXT`, a SHA-256 sidecar and a JSON manifest. The manifests record that physical hardware is
+unverified (`complete_msdos_port` stays false until a real Pi 3 boots). Raw build products are ignored by Git. Compressed, validated image snapshots
 and their checksums are published in [images](images/README.md) on the `arm` branch.
 
 Build the Pi image with:
@@ -157,7 +212,14 @@ This image targets Pi 3B/3B+, not Pi 4/5.
 To prepare an SD card, select the Pi image and the intended removable card in
 Raspberry Pi Imager's custom-image workflow. Use a card of at least 128 MiB.
 The firmware console can use HDMI/USB input or a supported serial console.
-The Pi image has been booted in QEMU only, not yet on real hardware.
+The Pi image's payload has been booted in QEMU only, not yet on real hardware.
+To try the native Pi drivers on a board, create an empty `NATIVE.ON` in the
+card's root; the banner then reads `Raspberry Pi 3 UART console, SD card`.
+In that mode the console is the serial UART only (GPIO 14/15): HDMI and USB
+keyboards stop working once firmware is left, so attach a serial adapter. If
+the card cannot be started after leaving firmware, the kernel prints `Boot disk
+did not restart after leaving firmware` and halts; delete `NATIVE.ON` to go
+back to firmware mode.
 
 Run `make -C arm64 validate FIRMWARE=/path/to/QEMU_EFI.fd` to check both FAT
 filesystems, compare their payloads to the build outputs, boot both images in
@@ -191,34 +253,38 @@ some M-series models. Its support tables describe Asahi's stack, not validation
 of this DOS runtime. Support for every Apple Silicon model remains a goal,
 not a claimed feature.
 
-## Native API and remaining work
+## Native API and status
 
-The [AArch64 ABI](ABI.md) documents all 57 dispatched function numbers, their
+The [AArch64 ABI](ABI.md) documents every DOS function from 00h to 6Ch, their
 arguments, return values and limits. Calls use AAPCS64 and a function pointer
 provided to each native process. FCB records retain their standard 37-byte data
 layout; pointers and process/search structures use the native ABI. Original x86
 executables cannot run.
 
-The runtime now provides basic console/input, file and standard-handle
-redirection, hierarchical paths, find-first/next state, standard FCB sequential
-and random records, owned memory with in-place resizing, DOS date/time,
-file timestamps, native process loading/termination, and a batch interpreter.
+The runtime provides the complete DOS 4.0 function set (00h-6Ch): console and
+AUX/PRN I/O, the CON/AUX/PRN/NUL/CLOCK$ devices, handle and FCB file services
+(including extended FCBs, FCB searches, wildcard delete/rename, random block
+I/O and filename parsing), built-in SHARE semantics (sharing modes, record
+locks), IOCTL, drive parameter blocks, the list of lists, media IDs, extended
+errors, Ctrl-C/BREAK handling with vector 23h, terminate-and-stay-resident,
+load-only and overlay exec modes, allocation strategies, country information
+and code page 437 case mapping, TRUENAME, temporary files and extended
+open/create. It also has a batch interpreter.
 These adapt selected public contracts from `CPMIO.ASM`, `GETSET.ASM`,
 `HANDLE.ASM`, `FILE.ASM`, `PATH.ASM`, `SEARCH.ASM`, `FCBIO.ASM`, `TIME.ASM`,
-`ALLOC.ASM`, `PROC.ASM` and `COMMAND`. Their original internal algorithms have
+`ALLOC.ASM`, `PROC.ASM`, `DISPATCH.ASM`, `FCB.ASM`, `LOCK.ASM`, `SHARE.ASM`,
+`IOCTL.ASM`, `DOSMES.ASM` (NLS tables) and `COMMAND`. Their original internal algorithms have
 not been fully translated. In native mode no UEFI boot service is used after
 startup; UEFI runtime services are used only for power-off.
 
-The complete MS-DOS 4.0 rewrite remains unfinished. Outstanding work includes
-full FCB/block/wildcard services, sharing/locking and extended handle APIs,
-DOS memory-control-block/PSP compatibility, interrupts and device-driver ABI,
-native drivers for boards other than QEMU `virt`, NLS/codepages, CONFIG.SYS,
-full COMMAND syntax/environment handling, historical drivers and utilities,
-and physical hardware bring-up. The checked-in historical source archives
-remain x86 assembly. All-model native Apple Silicon support also remains unmet
-because required boot-stack/driver support and hardware validation are absent.
-These image snapshots are development artifacts, with incomplete status recorded
-in their manifests; they are not a completed operating-system conversion.
+[PORT_STATUS.md](PORT_STATUS.md) tracks the port: milestones 1-7 (kernel,
+DOS functions, COMMAND, `CONFIG.SYS`, every utility, drivers, NLS) are done,
+and QEMU `virt` runs fully native. What remains is milestone 8's physical
+hardware check: booting the Pi 3 image, and its native drivers, on a real
+board. Until that is verified the manifests keep `complete_msdos_port` false.
+The checked-in historical source archives remain x86 assembly. Booting natively
+on every Apple Silicon model is not supported (see above); running under QEMU
+on a Mac is.
 
 Reference boot documentation was inspected at Asahi docs commit
 `0d1f8917fa88745d62a4c05d802c4a7298c8616b` and Pi UEFI commit
