@@ -55,12 +55,14 @@ main:
     cbnz x1, failed
     say "  Disk "
     add x0, x23, #1
+    mov x1, #0                  // no field width
     bl put_dec
     say ": "
     address x9, info
     ldp x10, x11, [x9]
     mul x0, x10, x11
     lsr x0, x0, #20
+    mov x1, #0                  // no field width
     bl put_dec
     say " MB"
     address x9, info
@@ -80,6 +82,7 @@ main:
 51:
     say "\r\nInstall ARM DOS on which disk (1-"
     mov x0, x22
+    mov x1, #0                  // no field width
     bl put_dec
     say ")? "
     dos 0x01
@@ -104,6 +107,7 @@ main:
     cbnz x21, 7f
     say "\r\nWARNING: ALL DATA ON DISK "
     mov x0, x20
+    mov x1, #0                  // no field width
     bl put_dec
     say " WILL BE LOST!\r\n"
     address x0, proceed
@@ -124,10 +128,12 @@ main:
     csel x27, x0, x27, hi
     say "\r\nPartitioning disk "
     mov x0, x20
+    mov x1, #0                  // no field width
     bl put_dec
     say " ("
     mul x0, x27, x24
     lsr x0, x0, #20
+    mov x1, #0                  // no field width
     bl put_dec
     say " MB for ARM DOS)\r\n"
     // Zero the first MiB (old partition tables, GPT headers) ...
@@ -233,6 +239,7 @@ main:
     dos 0xe0
     say "\r\nARM DOS is installed on disk "
     mov x0, x20
+    mov x1, #0                  // no field width
     bl put_dec
     say " (drive "
     mov x0, x28
