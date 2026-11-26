@@ -70,7 +70,7 @@ DRIVER_NAMES := $(patsubst drivers/%.S,%,$(wildcard drivers/*.S))
 PAYLOADS := $(foreach p,$(PROGRAM_NAMES),$(BUILD)/$(call upper,$(p)).EXE) \
 	$(foreach p,$(DRIVER_NAMES),$(BUILD)/$(call upper,$(p)).SYS)
 
-$(BUILD)/%.o: programs/%.S programs/lib.inc | $(BUILD)
+$(BUILD)/%.o: programs/%.S programs/lib.inc programs/fatlib.inc | $(BUILD)
 	$(AS) -march=armv8-a -g -I programs -o $@ $<
 
 $(BUILD)/%.o: drivers/%.S | $(BUILD)

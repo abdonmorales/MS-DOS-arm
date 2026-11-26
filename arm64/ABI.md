@@ -168,7 +168,7 @@ Process exit releases its locks.
 | 08h | `x0` drive: `x0=1` fixed |
 | 09h, 0Ah | Remote drive / handle: `x2=0` (local) |
 | 0Bh | Sharing retry count: accepted |
-| 0Dh | `x0` drive, `x2` 0866h get / 0846h set media ID, `x3` buffer (as `69h`) |
+| 0Dh | `x0` drive, `x2` 0866h get / 0846h set media ID, `x3` buffer (as `69h`); 0860h, 0861h, 0841h (below) |
 | 0Eh, 0Fh | Logical drive map: `x0=0` (one letter per drive) |
 
 ### Drive parameter block and list of lists
@@ -181,10 +181,21 @@ count FFFFh unknown; 16-bit fields saturate) and adds 32-bit fields: 40
 sectors per FAT, 44 first data sector, 48 highest cluster, 52 root cluster,
 56 FAT type (12/16/32), 60 total sectors.
 
-The list of lists (72 bytes): 0 DPB pointer, 8 handle table, 16 CLOCK$
+The list of lists (112 bytes): 0 DPB pointer, 8 handle table, 16 CLOCK$
 device, 24 CON device, 32 u16 largest sector, 34 u8 block devices, 35 u8
 LASTDRIVE, 40 NUL device, 48 current directory string, 56 u64 BUFFERS,
-64 u64 FILES.
+64 u64 FILES, 72 memory block table (the native MCB chain: entries of u64
+base, size, reserved capacity, owner; base 0 is unused), 80 its entry count,
+88 native arena bytes, 96 free arena bytes (both 0 in firmware mode), 104 the
+kernel's owner id. Owners are the image base of a program (its descriptor
++56).
+
+IOCTL 0Dh also takes 0860h (`x3` 88-byte buffer: u64 bytes per sector,
+sectors per cluster, FAT type, first data sector, clusters, first FAT sector,
+sectors per FAT, FAT copies, first root sector, root entries, root cluster),
+and 0861h / 0841h, read / write sectors, with `x3` pointing to u64 first
+sector (volume relative), count, and buffer. They go through the sector
+cache, as INT 25h/26h did for CHKDSK, FORMAT, SYS, LABEL and RECOVER.
 
 ### Country information (38h, 65h)
 

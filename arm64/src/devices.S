@@ -277,6 +277,20 @@ dev_read_console:
     address x9, con_direct
     mov x10, #1
     str x10, [x9]
+    ldr x10, [x0, #DEV_ATTR]
+    tbz x10, #5, 1f             // raw (binary) mode: one key, no editing
+    cbz x20, 2f
+    bl read_key
+    strb w0, [x19]
+    address x9, con_direct
+    str xzr, [x9]
+    mov x0, #1
+    b dev_read_return
+2:
+    str xzr, [x9]
+    mov x0, #0
+    b dev_read_return
+1:
     mov x1, x19
     mov x2, x20
     bl read_console_handle

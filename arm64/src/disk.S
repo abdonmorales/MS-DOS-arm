@@ -232,6 +232,33 @@ dos_list_of_lists:
     address x1, config_files
     ldr x1, [x1]
     str x1, [x9, #64]
+    // Memory (what MEM reports): arena table, its size, the native arena's
+    // total and free bytes (0 in firmware mode), and the kernel's owner id.
+    address x1, arena_table
+    str x1, [x9, #72]
+    mov x1, #64
+    str x1, [x9, #80]
+    mov x1, #0
+    mov x2, #0
+    ldv x3, platform_native
+    cbz x3, 5f
+    mov x1, #PLAT_ARENA_BYTES
+    address x3, plat_granule_map
+    mov x4, #0
+4:
+    ldrh w5, [x3, x4, lsl #1]
+    cbnz w5, 41f
+    add x2, x2, #(1 << PLAT_GRANULE_SHIFT)
+41:
+    add x4, x4, #1
+    cmp x4, #PLAT_GRANULES
+    b.lo 4b
+5:
+    str x1, [x9, #88]
+    str x2, [x9, #96]
+    address x1, image_handle
+    ldr x1, [x1]
+    str x1, [x9, #104]
     mov x0, x9
     mov x1, #0
     unframe
@@ -489,6 +516,15 @@ ioctl_generic_block:
     bl disk_check_drive
     cbnz x1, ioctl_error
     and x9, x22, #0xffff
+    mov x10, #0x0860
+    cmp x9, x10
+    b.eq ioctl_device_params
+    mov x10, #0x0861
+    cmp x9, x10
+    b.eq ioctl_read_sectors
+    mov x10, #0x0841
+    cmp x9, x10
+    b.eq ioctl_write_sectors
     mov x10, #0x0866
     cmp x9, x10
     b.eq 1f
@@ -505,6 +541,88 @@ ioctl_generic_block:
     bl dos_media_id
     cbnz x1, ioctl_error
     b ioctl_value
+
+// 0860h: x3 = 88-byte buffer: u64 bytes per sector, sectors per cluster,
+// FAT type, first data sector, clusters, first FAT sector, sectors per FAT,
+// FAT copies, first root sector, root entries, root cluster.
+ioctl_device_params:
+    cbz x3, ioctl_invalid
+    ldv x9, fat_bps
+    str x9, [x3]
+    ldv x9, fat_spc
+    str x9, [x3, #8]
+    ldv x9, fat_type
+    str x9, [x3, #16]
+    ldv x9, fat_data_start
+    str x9, [x3, #24]
+    ldv x9, fat_clusters
+    str x9, [x3, #32]
+    ldv x9, fat_fat_start
+    str x9, [x3, #40]
+    ldv x9, fat_fat_sectors
+    str x9, [x3, #48]
+    ldv x9, fat_num_fats
+    str x9, [x3, #56]
+    ldv x9, fat_root_start
+    str x9, [x3, #64]
+    ldv x9, fat_root_entries
+    str x9, [x3, #72]
+    ldv x9, fat_root_cluster
+    str x9, [x3, #80]
+    mov x0, #0
+    b ioctl_value
+
+// 0861h read / 0841h write sectors (DOS's read/write track): x3 = block of
+// u64 first sector (volume relative), u64 count, u64 buffer. Goes through
+// the sector cache, so the filesystem sees the same data.
+ioctl_read_sectors:
+    mov x21, #0
+    b 1f
+ioctl_write_sectors:
+    mov x21, #1
+1:
+    cbz x3, ioctl_invalid
+    stp x23, x24, [sp, #-16]!
+    stp x25, x26, [sp, #-16]!
+    ldr x23, [x3]               // sector
+    ldr x24, [x3, #8]           // count
+    ldr x25, [x3, #16]          // buffer
+2:
+    cbz x24, 5f
+    mov x0, x23
+    cbnz x21, 3f
+    bl fat_cache_read
+    cbnz x0, 6f
+    mov x0, x1
+    mov x1, x25
+    ldv x2, fat_bps
+    bl copy_bytes
+    b 4f
+3:
+    bl fat_cache_claim
+    cbnz x0, 6f
+    mov x26, x1
+    mov x0, x25
+    ldv x2, fat_bps
+    bl copy_bytes
+    mov x0, x26
+    bl fat_cache_commit
+    cbnz x0, 6f
+4:
+    ldv x2, fat_bps
+    add x25, x25, x2
+    add x23, x23, #1
+    sub x24, x24, #1
+    b 2b
+5:
+    ldp x25, x26, [sp], #16
+    ldp x23, x24, [sp], #16
+    mov x0, #0
+    b ioctl_value
+6:
+    ldp x25, x26, [sp], #16
+    ldp x23, x24, [sp], #16
+    b ioctl_efi_error
 
 ioctl_get_map:
     mov x0, x19
@@ -539,4 +657,4 @@ ioctl_return:
 .section .bss
 .balign 16
 dos_dpb: .skip 64
-dos_sysvars: .skip 72
+dos_sysvars: .skip 112
