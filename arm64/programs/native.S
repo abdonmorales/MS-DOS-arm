@@ -86,6 +86,45 @@ efi_main:
     b.ne program_failed
     b program_print
 program_check_readin:
+    cmp w0, #'d'               // "disk": DOS error semantics around files
+    b.ne program_check_r
+    // Disk reset and commit must succeed while read-only handles are open.
+    mov w8, #0x0d
+    blr x19
+    cbnz x1, program_failed
+    mov x0, x21
+    mov w8, #0x68
+    blr x19
+    cbnz x1, program_failed
+    // Missing parent: 3; missing file: 2; wildcards in a path: 2.
+    address x0, missing_parent
+    mov x1, #0
+    mov w8, #0x3d
+    blr x19
+    cbz x1, program_failed
+    cmp x0, #3
+    b.ne program_failed
+    address x0, missing_parent
+    mov w8, #0x3b
+    blr x19
+    cbz x1, program_failed
+    cmp x0, #3
+    b.ne program_failed
+    address x0, missing_file
+    mov x1, #0
+    mov w8, #0x3d
+    blr x19
+    cbz x1, program_failed
+    cmp x0, #2
+    b.ne program_failed
+    address x0, wildcard_file
+    mov w8, #0x41
+    blr x19
+    cbz x1, program_failed
+    cmp x0, #2
+    b.ne program_failed
+    b program_print
+program_check_r:
     cmp w0, #'r'
     b.ne 2f
     mov x0, #0
@@ -158,4 +197,7 @@ own_name: .asciz "\\NATIVE.EXE"
 exit_argument: .asciz "exit7"
 message: .asciz "Native AArch64 program OK\r\n$"
 input_message: .asciz "INPUT> $"
+missing_parent: .asciz "\\NOSUCH\\X.TXT"
+missing_file: .asciz "\\NOSUCH.TXT"
+wildcard_file: .asciz "\\ARM*.TXT"
 expected: .ascii "ARM64 FAT read\r\n"

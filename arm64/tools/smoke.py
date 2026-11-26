@@ -147,6 +147,11 @@ def main():
             command('echo fail <MISSING.TXT >OUTPUT.TXT', b'File/device error.')
             command('echo restored-after-error', b'\nrestored-after-error\n')
             command('del OUTPUT.TXT')
+            # 0Dh/68h with read-only handles; DOS error codes 2 vs 3.
+            command('native disk', b'Native AArch64 program OK')
+            command('echo 50% done', b'\n50% done\n')
+            command('cd NOSUCH', b'File/device error.')
+            command('echo code:%ERRORLEVEL%', b'code:3')
             date = command('date')
             if not re.search(rb'\n\d\d\d\d-\d\d-\d\d\n', date):
                 raise RuntimeError('Invalid DATE output')
@@ -183,6 +188,12 @@ def main():
             command('del "WORK DIR\\RENAMED.TXT"')
             command('rd "WORK DIR"')
             command('cd "WORK DIR"', b'File/device error.')
+            # RD must refuse the current directory however it is spelled.
+            command('md CASEDIR')
+            command('cd \\casedir', prompt=b'A:\\casedir> ')
+            command('rd \\CASEDIR', b'File/device error.', prompt=b'A:\\casedir> ')
+            command('cd \\')
+            command('rd casedir')
             command('selftest', b'SELFTEST PASS')
             # Long names written natively must survive for other FAT readers.
             command('md "Native Long Directory"')

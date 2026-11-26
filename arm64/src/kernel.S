@@ -334,7 +334,7 @@ open_reject_object:
     str xzr, [x20, x21, lsl #3]
     b open_denied
 open_not_found:
-    bl efi_error_to_dos
+    bl efi_path_error_to_dos
     b open_error
 open_path_error:
     b open_error
@@ -771,6 +771,33 @@ path_to_utf16:
     address x1, canonical_buffer
     bl canonicalize_path
     cbnz x1, path_utf16_return
+    // Wildcards name no single file: DOS reports file (2) or path (3) not
+    // found rather than letting firmware call the name invalid.
+    mov x9, x0
+    mov x10, #0
+5:
+    ldrb w2, [x9], #1
+    cbz w2, 7f
+    cmp w2, #'\\'
+    b.ne 6f
+    cbz x10, 5b
+    mov x0, #3
+    mov x1, #1
+    b path_utf16_return
+6:
+    cmp w2, #'*'
+    b.eq 61f
+    cmp w2, #'?'
+    b.ne 5b
+61:
+    mov x10, #1
+    b 5b
+7:
+    cbz x10, 8f
+    mov x0, #2
+    mov x1, #1
+    b path_utf16_return
+8:
     address x1, path_buffer
     mov x2, x1
     mov x3, #255

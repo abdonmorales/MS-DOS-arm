@@ -57,7 +57,7 @@ measure completion of the original operating system.
 | `0Ah` | `x0` DOS line buffer | Byte 0 capacity, byte 1 count, bytes 2+ input followed by CR; capacity includes CR |
 | `0Bh` | None | `x0=FFh` available, otherwise 0; console polling retains the character |
 | `0Ch` | `x0` follow-up function, `x1` its argument | Flush console type-ahead; optional `01/06/07/08/0A` call |
-| `0Dh` | None | Flush all open file objects |
+| `0Dh` | None | Flush all writable open file objects (read-only ones are skipped) |
 | `0Eh` | `x0` drive, zero based | Only A: (0); result `x0=1` configured drive |
 | `0Fh`, `10h` | `x0` standard FCB | Open / close; FCB status below |
 | `13h` | `x0` standard FCB | Delete exact filename; no wildcards |
@@ -96,7 +96,7 @@ measure completion of the original operating system.
 | `56h` | `x0` old path, `x1` new path | Firmware rename/move |
 | `57h` | `x0` handle, `x1` get 0/set 1, `x2` packed date, `x3` packed time | Get returns packed date/time in `x2/x3`; set validates values |
 | `5Bh` | `x0` path, `x1` attributes | Create new, existing path returns error 80; single-task runtime, no concurrent exclusive-open guarantee |
-| `68h` | `x0` handle | Flush/commit |
+| `68h` | `x0` handle | Flush/commit (no-op success on a read-only handle) |
 
 Raw console input ignores scan-only keys, uses ASCII line editing and does not
 yet implement DOS Ctrl-C/break trapping. Unredirected `3Fh` input reads an edited

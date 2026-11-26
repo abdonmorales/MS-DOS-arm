@@ -183,7 +183,7 @@ batch_expand:
     cmp w2, #'%'
     b.ne 7f
     ldrb w2, [x19], #1
-    cbz w2, 8f
+    cbz w2, 11f                 // lone trailing '%' stays as typed
     cmp w2, #'%'
     b.eq 7f
     cmp w2, #'*'
@@ -203,11 +203,11 @@ batch_expand:
     mov x24, #0
 5:
     ldrb w2, [x19], #1
-    cbz w2, 8f
+    cbz w2, 13f
     cmp w2, #'%'
     b.eq 9f
     cmp x24, #31
-    b.hs batch_expand_error
+    b.hs 13f                    // too long for a name: plain text
     strb w2, [x23, x24]
     add x24, x24, #1
     b 5b
@@ -235,6 +235,31 @@ batch_expand:
     strb wzr, [x20, x22]
     mov x0, #0
     b batch_expand_return
+13:
+    sub x19, x19, #1            // rescan this character as ordinary text
+10:
+    // No closing '%' (or no name fits): keep "%text" literally instead of
+    // dropping the rest of the line ("echo 50% done" must not print "50").
+    mov w2, #'%'
+    cmp x22, #255
+    b.hs batch_expand_error
+    strb w2, [x20, x22]
+    add x22, x22, #1
+    mov x3, #0
+12:
+    cmp x3, x24
+    b.hs 1b                     // at the NUL this ends the line via 8
+    ldrb w2, [x23, x3]
+    cmp x22, #255
+    b.hs batch_expand_error
+    strb w2, [x20, x22]
+    add x22, x22, #1
+    add x3, x3, #1
+    b 12b
+11:
+    sub x19, x19, #1            // back onto the NUL, so 8 terminates
+    mov w2, #'%'
+    b 7b
 batch_expand_error:
     mov x0, #1
 batch_expand_return:
