@@ -55,7 +55,7 @@
 .equ E_BREAK, 19
 .equ E_OVERFLOW, 20
 .equ E_LINEBUF, 21
-.equ STACK_BUDGET, 24576        // expression nesting: Out of memory beyond
+.equ STACK_BUDGET, 49152        // expression nesting: Out of memory beyond
 
 .macro benter
     stp x29, x30, [sp, #-80]!
@@ -358,6 +358,19 @@ edit_line:
     mov x0, x20
     bl strlen
     mov x24, x0
+    mov x9, #10                 // LIST and SAVE write "number text": <= 255
+    mov x10, #2                 // digits + the blank
+53:
+    cmp x19, x9
+    b.lo 54f
+    add x10, x10, #1
+    add x9, x9, x9, lsl #2
+    lsl x9, x9, #1
+    b 53b
+54:
+    add x10, x10, x24
+    cmp x10, #255
+    b.hi line_overflow
     add x23, x24, #12           // header, text, NUL, rounded to 4
     bic x23, x23, #3
     cmp x24, #0
@@ -499,6 +512,32 @@ crunch:
 5:
     strb w10, [x1], #1
     add x12, x12, #1
+    cbnz x9, 1b                 // ...THEN / ...ELSE as a word: a new
+    cbnz x15, 1b                // statement starts after it
+    cmp x12, #4
+    b.lo 1b
+    ldur w11, [x1, #-4]
+    mov w16, #0x4854            // "THEN"
+    movk w16, #0x4e45, lsl #16
+    cmp w11, w16
+    b.eq 55f
+    mov w16, #0x4c45            // "ELSE"
+    movk w16, #0x4553, lsl #16
+    cmp w11, w16
+    b.ne 1b
+55:
+    cmp x12, #4
+    b.eq 56f
+    ldurb w11, [x1, #-5]
+    sub w16, w11, #'A'
+    cmp w16, #25
+    b.ls 1b
+    sub w16, w11, #'0'
+    cmp w16, #9
+    b.ls 1b
+56:
+    mov x13, #-1
+    mov x14, #0
     b 1b
 6:
     strb w10, [x1], #1
@@ -656,6 +695,7 @@ parse_val:
     umulh x15, x10, x14         // beyond 63 bits: Overflow
     cbnz x15, overflow
     mul x10, x10, x14
+    tbnz x10, #63, overflow
     adds x10, x10, x13
     b.mi overflow
     add x12, x12, #1
@@ -933,7 +973,10 @@ make_array:
     benter
     mov x19, x0
     mov x20, x1
-    mov x9, #HEAP_SIZE / 8      // the data first: a failure adds nothing
+    gld x9, var_count           // the data first: a failure adds nothing
+    cmp x9, #VAR_MAX
+    b.hs out_of_memory
+    mov x9, #HEAP_SIZE / 8
     cmp x20, x9
     b.hs out_of_memory
     add x0, x20, #1
@@ -1503,6 +1546,7 @@ eval_atom:
     b.ne syntax_error
     add x28, x28, #2
     mov x19, #0
+    mov x20, x28
 41:
     ldrb w0, [x28]
     sub w1, w0, #'0'
@@ -1513,11 +1557,15 @@ eval_atom:
     b.hi 43f
     add w1, w1, #10
 42:
+    lsr x9, x19, #60            // more than 16 digits' worth: Overflow
+    cbnz x9, overflow
     lsl x19, x19, #4
     orr x19, x19, x1
     add x28, x28, #1
     b 41b
 43:
+    cmp x28, x20                // &H needs a digit
+    b.eq syntax_error
     mov x0, x19
     mov x1, #0
     bleave
@@ -3058,9 +3106,23 @@ load_file:
 2:
     address x0, reader
     address x1, filebuf
-    mov x2, #320
+    mov x2, #1024
     bl lr_getline
     cbnz x1, 8f
+    address x1, filebuf         // trailing blanks do not count
+22:
+    cbz x0, 23f
+    sub x9, x0, #1
+    ldrb w10, [x1, x9]
+    cmp w10, #' '
+    b.eq 24f
+    cmp w10, #9
+    b.ne 23f
+24:
+    strb wzr, [x1, x9]
+    mov x0, x9
+    b 22b
+23:
     cmp x0, #255                // longer than a typed line: refuse it, so
     b.hi line_overflow          // its tail never becomes a line of its own
     address x0, filebuf
@@ -3313,7 +3375,7 @@ inbuf: .skip 264
 inbuf2: .skip 264
 linebuf: .skip 264
 loadbuf: .skip 264
-filebuf: .skip 320
+filebuf: .skip 1024
 reader: .skip LR_SIZE
 .balign 16
 ctl_stack: .skip CTL_MAX * CTL_SIZE

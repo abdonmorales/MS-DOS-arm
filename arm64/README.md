@@ -195,7 +195,9 @@ SYSTEM
 
 Numbers are 64-bit integers: there is no floating point, `/` and `\` both
 divide to an integer, a typed fraction is dropped (`1.5` is 1), and a result
-outside the 64-bit range is an `Overflow` error. `RND(n)` returns 1 to n,
+outside the 64-bit range is an `Overflow` error (a literal is at most
+9223372036854775807, so the most negative number is written
+`-9223372036854775807-1` or `&H8000000000000000`). `RND(n)` returns 1 to n,
 `INSTR` takes two arguments and `VAL` reads decimal only (`&H` works in
 program text). Strings hold up to 255 bytes, and so do program lines.
 Variable names are significant to 14 characters. Arrays (`DIM A(100)`,
