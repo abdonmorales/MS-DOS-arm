@@ -14,7 +14,6 @@ FIXTURES := $(wildcard fixtures/*)
 all: $(BUILD)/BOOTAA64.EFI payloads
 image: $(BUILD)/msdos-arm64.img
 iso: $(BUILD)/armdos.iso
-payloads: $(PAYLOADS)
 pi-image: $(BUILD)/msdos-arm64-pi3.img
 
 FIRMWARE ?= /usr/share/qemu-efi-aarch64/QEMU_EFI.fd
@@ -70,6 +69,8 @@ PROGRAM_NAMES := $(patsubst programs/%.S,%,$(wildcard programs/*.S))
 DRIVER_NAMES := $(patsubst drivers/%.S,%,$(wildcard drivers/*.S))
 PAYLOADS := $(foreach p,$(PROGRAM_NAMES),$(BUILD)/$(call upper,$(p)).EXE) \
 	$(foreach p,$(DRIVER_NAMES),$(BUILD)/$(call upper,$(p)).SYS) $(BUILD)/COUNTRY.SYS
+# After PAYLOADS is set: a rule's prerequisites expand when it is read.
+payloads: $(PAYLOADS)
 
 # The Pi 3 SD card and UART drivers, bare metal on QEMU raspi3b.
 pi-test: $(BUILD)/sdtest.bin $(BUILD)/msdos-arm64.img

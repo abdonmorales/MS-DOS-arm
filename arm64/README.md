@@ -93,6 +93,7 @@ The utilities from `v4.0/src/CMD` are separate native programs on the image:
 `DISKCOPY`, `EDLIN`, `FC`, `FIND`, `FORMAT`, `JOIN`, `LABEL`, `MEM`, `MORE`,
 `RECOVER`, `REPLACE`, `RESTORE`, `SORT`, `SUBST`, `SYS`, `TREE` and `XCOPY`.
 `INSTALL` puts ARM DOS on another disk (see [Live ISO and INSTALL](#live-iso-and-install)).
+`BASIC` is ARM BASIC, a native BASIC interpreter (see [ARM BASIC](#arm-basic)).
 The `CONFIG.SYS` fixture loads `RAMDRIVE.SYS` twice and `VDISK.SYS` once, so
 drives B:, C: and D: are RAM disks for the multi-drive tools (`B:` switches
 drive, as in DOS). It also loads `ANSI.SYS` (DOS escape sequences, cursor
@@ -140,7 +141,7 @@ years and rollover, native and nested process loading, termination, and parent
 handle preservation. Reserved scratch names are `ARMCHK.TMP`, `ARMFCB.TMP` and
 `ARMAPI.TMP` (a directory). The test refuses to overwrite existing objects with
 those names and restores the starting directory. Smoke tests boot a temporary
-image copy and check about 290 console requests, including 70 successive native
+image copy and check about 330 console requests, including 70 successive native
 launches that deliberately leave resources for process cleanup, buffered input
 with backspace editing, batch control flow, and redirection restoration.
 
@@ -154,6 +155,55 @@ every date and time of day through `pack_efi_time`, about 330,000
 `dos_call`, which must reach the handler listed in `DISPATCH` and fail
 anything ABI.md does not document. Only routines that need no UEFI services
 can be called this way. `make -C arm64 check` runs `unit` then `smoke`.
+
+## ARM BASIC
+
+`BASIC` (`BASIC.EXE`, from `programs/basic.S`) is ARM BASIC, an interpreter
+in the style of the Microsoft BASICs that came with MS-DOS, written from
+scratch in AArch64 assembly. Type numbered lines to build a program and
+statements without a number to run them at once; `Ok` is the prompt.
+`BASIC PRIMES` loads `PRIMES.BAS` (the sample on the image) and runs it.
+
+```
+A:\>basic
+ARM BASIC 1.0 for ARM DOS (native AArch64)
+64-bit integers and strings. SYSTEM returns to DOS.
+Ok
+10 FOR I = 1 TO 3: PRINT "ARM"; I: NEXT
+RUN
+ARM 1
+ARM 2
+ARM 3
+Ok
+SAVE "COUNT"
+Ok
+SYSTEM
+```
+
+- Statements: `PRINT` (`?`), `LET`, `INPUT`, `IF ... THEN ... ELSE`, `GOTO`,
+  `GOSUB`, `RETURN`, `ON ... GOTO/GOSUB`, `FOR ... TO ... STEP`, `NEXT`,
+  `WHILE`, `WEND`, `END`, `STOP`, `REM` (`'`), `DIM`, `DATA`, `READ`,
+  `RESTORE`, `RANDOMIZE`, `CLS` and `CLEAR`.
+- Commands: `RUN`, `LIST [m][-n]`, `NEW`, `LOAD "f"`, `SAVE "f"` (plain text,
+  `.BAS` added) and `SYSTEM` (back to DOS).
+- Functions: `ABS`, `SGN`, `INT`, `SQR`, `RND`, `LEN`, `ASC`, `VAL`, `CHR$`,
+  `STR$`, `LEFT$`, `RIGHT$`, `MID$`, `INSTR` and `SPACE$`; `PRINT` also takes
+  `TAB(` and `SPC(`.
+- Operators, tightest first as in GW-BASIC: `^` (left to right, so `2^3^2`
+  is 64), unary `-`, `*` and `/`, `\`, `MOD`, `+` and `-`, comparisons
+  `= <> < > <= >=`, then `NOT`, `AND` and `OR` (bitwise, true is -1).
+
+Numbers are 64-bit integers: there is no floating point, `/` and `\` both
+divide to an integer, a typed fraction is dropped (`1.5` is 1), and a result
+outside the 64-bit range is an `Overflow` error (a literal is at most
+9223372036854775807, so the most negative number is written
+`-9223372036854775807-1` or `&H8000000000000000`). `RND(n)` returns 1 to n,
+`INSTR` takes two arguments and `VAL` reads decimal only (`&H` works in
+program text). Strings hold up to 255 bytes, and so do program lines.
+Variable names are significant to 14 characters. Arrays (`DIM A(100)`,
+`A$(n)`) have one dimension. Ctrl-C stops a
+running program (`Break in 30`); at an `INPUT` prompt it takes effect when
+ENTER is pressed. Errors use the GW-BASIC messages (`Syntax error in 20`).
 
 ## Native FAT driver
 
