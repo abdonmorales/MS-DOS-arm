@@ -2,12 +2,12 @@
   "target": "Raspberry Pi 3B / 3B+",
   "architecture": "AArch64",
   "format": "MBR/FAT32 with Pi 3 UEFI firmware",
-  "sha256": "a26b5545460c6850fc1603eff71886a87257060c8f309b7c9a85195d4578556e",
+  "sha256": "0e8a65d019fbcaf4645642ed3c4d1e4271a8cde315ad23eff406f13645d10ecf",
   "firmware_version": "1.53.1",
   "firmware_url": "https://github.com/pftf/RPi3/releases/download/v1.53.1/RPi3_UEFI_Firmware_v1.53.1.zip",
   "firmware_sha256": "1d2b94c48461216808e6b6081ea7567653e9818a659f61e97e69a9b526cc0b60",
   "complete_msdos_port": false,
   "native_hardware_tested": false,
-  "compressed_sha256": "98220fb13a302dd4dcf51f64e8e65a4dc69c3a09547a52ac2d5f29f03e80365c",
-  "compressed_bytes": 3695556
+  "compressed_sha256": "92eeded6075de128b5f1581b94cb2cf5267caf099beca053670f12c3b7fa2b9b",
+  "compressed_bytes": 3695668
 }

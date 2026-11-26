@@ -204,7 +204,7 @@ dos2_init:
     mov x1, #5                  // E:, the DOS default
     str x1, [x0]
     address x0, config_buffers
-    mov x1, #FAT_SLOTS
+    mov x1, #FAT_SLOTS_DEFAULT
     str x1, [x0]
     address x0, config_files
     mov x1, #SFT_ENTRIES

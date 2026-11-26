@@ -9,9 +9,11 @@ BUILD ?= build
 SOURCES := $(wildcard src/*.S)
 FIXTURES := $(wildcard fixtures/*)
 
-.PHONY: all image pi-image unit smoke smoke-firmware check validate snapshot fat-test clean
-all: $(BUILD)/BOOTAA64.EFI $(BUILD)/NATIVE.EXE $(BUILD)/DOSTEST.EXE
+.SECONDARY:
+.PHONY: all payloads image pi-image unit smoke smoke-firmware check validate snapshot fat-test clean
+all: $(BUILD)/BOOTAA64.EFI payloads
 image: $(BUILD)/msdos-arm64.img
+payloads: $(PAYLOADS)
 pi-image: $(BUILD)/msdos-arm64-pi3.img
 
 FIRMWARE ?= /usr/share/qemu-efi-aarch64/QEMU_EFI.fd
@@ -60,35 +62,37 @@ $(BUILD)/kernel.bin: $(BUILD)/kernel.elf
 $(BUILD)/BOOTAA64.EFI: $(BUILD)/kernel.bin $(BUILD)/kernel.elf tools/pe.py
 	$(PYTHON) tools/pe.py --nm $(NM) $(BUILD)/kernel.elf $< $@
 
-$(BUILD)/native.o: programs/native.S | $(BUILD)
-	$(AS) -march=armv8-a -g -o $@ $<
+# Separately linked native programs (programs/*.S -> NAME.EXE) and
+# installable drivers (drivers/*.S -> NAME.SYS), all PE32+ images.
+upper = $(shell echo $(1) | tr a-z A-Z)
+PROGRAM_NAMES := $(patsubst programs/%.S,%,$(wildcard programs/*.S))
+DRIVER_NAMES := $(patsubst drivers/%.S,%,$(wildcard drivers/*.S))
+PAYLOADS := $(foreach p,$(PROGRAM_NAMES),$(BUILD)/$(call upper,$(p)).EXE) \
+	$(foreach p,$(DRIVER_NAMES),$(BUILD)/$(call upper,$(p)).SYS)
 
-$(BUILD)/native.elf: $(BUILD)/native.o link.ld
+$(BUILD)/%.o: programs/%.S programs/lib.inc | $(BUILD)
+	$(AS) -march=armv8-a -g -I programs -o $@ $<
+
+$(BUILD)/%.o: drivers/%.S | $(BUILD)
+	$(AS) -march=armv8-a -g -I programs -o $@ $<
+
+$(BUILD)/%.elf: $(BUILD)/%.o link.ld
 	$(LD) -T link.ld --no-undefined -o $@ $<
 
-$(BUILD)/native.bin: $(BUILD)/native.elf
+$(BUILD)/%.bin: $(BUILD)/%.elf
 	$(OBJCOPY) -O binary $< $@
 
-$(BUILD)/NATIVE.EXE: $(BUILD)/native.bin $(BUILD)/native.elf tools/pe.py
-	$(PYTHON) tools/pe.py --nm $(NM) $(BUILD)/native.elf $< $@
+define payload_rule
+$(BUILD)/$(2): $(BUILD)/$(1).bin $(BUILD)/$(1).elf tools/pe.py
+	$$(PYTHON) tools/pe.py --nm $$(NM) $(BUILD)/$(1).elf $$< $$@
+endef
+$(foreach p,$(PROGRAM_NAMES),$(eval $(call payload_rule,$(p),$(call upper,$(p)).EXE)))
+$(foreach p,$(DRIVER_NAMES),$(eval $(call payload_rule,$(p),$(call upper,$(p)).SYS)))
 
-# Generic rules for the separately linked native test programs.
-$(BUILD)/%.o: programs/%.S | $(BUILD)
-	$(AS) -march=armv8-a -g -o $@ $<
-
-$(BUILD)/dostest.elf: $(BUILD)/dostest.o link.ld
-	$(LD) -T link.ld --no-undefined -o $@ $<
-
-$(BUILD)/dostest.bin: $(BUILD)/dostest.elf
-	$(OBJCOPY) -O binary $< $@
-
-$(BUILD)/DOSTEST.EXE: $(BUILD)/dostest.bin $(BUILD)/dostest.elf tools/pe.py
-	$(PYTHON) tools/pe.py --nm $(NM) $(BUILD)/dostest.elf $< $@
-
-$(BUILD)/msdos-arm64.img: $(BUILD)/BOOTAA64.EFI $(BUILD)/NATIVE.EXE $(BUILD)/DOSTEST.EXE $(FIXTURES) tools/image.py
+$(BUILD)/msdos-arm64.img: $(BUILD)/BOOTAA64.EFI $(PAYLOADS) $(FIXTURES) tools/image.py
 	$(PYTHON) tools/image.py $< $@
 
-$(BUILD)/msdos-arm64-pi3.img: $(BUILD)/BOOTAA64.EFI $(BUILD)/NATIVE.EXE $(BUILD)/DOSTEST.EXE $(FIXTURES) tools/pi_image.py
+$(BUILD)/msdos-arm64-pi3.img: $(BUILD)/BOOTAA64.EFI $(PAYLOADS) $(FIXTURES) tools/pi_image.py
 	$(PYTHON) tools/pi_image.py $< $@ --replace-generated $(if $(PI_FIRMWARE),--firmware "$(PI_FIRMWARE)")
 
 clean:

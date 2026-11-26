@@ -12,10 +12,13 @@
 .equ DEV_NUL, 3
 .equ DEV_CLOCK, 4
 .equ DEV_COUNT, 5
+.equ DEV_MAX, 16                // standard devices plus DEVICE= drivers
 .equ DEV_OBJ_SIZE, 128
 .equ DEV_ID, 88
 .equ DEV_ATTR, 96
 .equ DEV_NAME, 104
+.equ DEV_DRV_READ, 112          // installed driver: read(buf, count) -> bytes
+.equ DEV_DRV_WRITE, 120         // and write(buf, count) -> bytes
 .section .text
 
 // Fill each object's function table (the kernel image has no absolute
@@ -28,6 +31,30 @@ dev_init:
 1:
     mov x9, #DEV_OBJ_SIZE
     madd x0, x20, x9, x19
+    bl dev_obj_init
+    address x1, dev_attributes
+    ldrh w1, [x1, x20, lsl #1]
+    str x1, [x0, #DEV_ATTR]
+    address x1, dev_display_names
+    add x1, x1, x20, lsl #3
+    str x1, [x0, #DEV_NAME]
+    add x20, x20, #1
+    cmp x20, #DEV_COUNT
+    b.lo 1b
+    address x0, handles
+    add x1, x19, #(DEV_AUX * DEV_OBJ_SIZE)
+    str x1, [x0, #24]
+    add x1, x19, #(DEV_PRN * DEV_OBJ_SIZE)
+    str x1, [x0, #32]
+    address x0, handle_modes
+    mov w1, #2
+    strb w1, [x0, #3]
+    strb w1, [x0, #4]
+    ldp x19, x20, [sp], #16
+    unframe
+
+// x0 = object, x20 = id: the function table and id. Keeps x0.
+dev_obj_init:
     mov x1, #0x10000            // EFI_FILE_PROTOCOL_REVISION
     str x1, [x0]
     address x1, dev_efi_unsupported
@@ -51,24 +78,71 @@ dev_init:
     address x1, dev_efi_ok
     str x1, [x0, #80]           // Flush
     str x20, [x0, #DEV_ID]
-    address x1, dev_attributes
-    ldrh w1, [x1, x20, lsl #1]
-    str x1, [x0, #DEV_ATTR]
-    address x1, dev_display_names
-    add x1, x1, x20, lsl #3
-    str x1, [x0, #DEV_NAME]
-    add x20, x20, #1
-    cmp x20, #DEV_COUNT
+    str xzr, [x0, #DEV_DRV_READ]
+    str xzr, [x0, #DEV_DRV_WRITE]
+    ret
+
+// x0 = driver request (see ABI.md, "Installable device drivers"): +16 name,
+// +24 read, +32 write, +40 attribute. A driver named like a standard device
+// (CON, PRN...) takes over that device; otherwise a new device is added.
+// Returns x1 = 0, or x1 = 1 when the device table is full.
+dev_install:
+    frame
+    stp x19, x20, [sp, #-16]!
+    stp x21, x22, [sp, #-16]!
+    mov x21, x0
+    add x0, x21, #16            // upper-case the name in place
+    mov x2, #0
+1:
+    ldrb w3, [x0, x2]
+    cmp w3, #'a'
+    b.lo 2f
+    cmp w3, #'z'
+    b.hi 2f
+    sub w3, w3, #32
+    strb w3, [x0, x2]
+2:
+    add x2, x2, #1
+    cmp x2, #8
     b.lo 1b
-    address x0, handles
-    add x1, x19, #(DEV_AUX * DEV_OBJ_SIZE)
-    str x1, [x0, #24]
-    add x1, x19, #(DEV_PRN * DEV_OBJ_SIZE)
-    str x1, [x0, #32]
-    address x0, handle_modes
-    mov w1, #2
-    strb w1, [x0, #3]
-    strb w1, [x0, #4]
+    strb wzr, [x21, #23]        // names are at most 7 characters
+    add x0, x21, #16
+    bl dev_lookup
+    cbnz x0, 4f
+    address x9, dev_installed
+    ldr x20, [x9]
+    add x20, x20, #DEV_COUNT
+    cmp x20, #DEV_MAX
+    b.hs 9f
+    ldr x10, [x9]
+    add x10, x10, #1
+    str x10, [x9]
+    address x19, dev_objects
+    mov x9, #DEV_OBJ_SIZE
+    madd x0, x20, x9, x19
+    bl dev_obj_init
+    mov x22, x0
+    address x1, dev_installed_names
+    sub x2, x20, #DEV_COUNT
+    add x1, x1, x2, lsl #3
+    str x1, [x22, #DEV_NAME]
+    ldr x2, [x21, #16]
+    str x2, [x1]
+    ldr x1, [x21, #40]
+    orr x1, x1, #0x80           // always a character device
+    str x1, [x22, #DEV_ATTR]
+    mov x0, x22
+4:
+    ldr x1, [x21, #24]
+    str x1, [x0, #DEV_DRV_READ]
+    ldr x1, [x21, #32]
+    str x1, [x0, #DEV_DRV_WRITE]
+    mov x1, #0
+    b 10f
+9:
+    mov x1, #1
+10:
+    ldp x21, x22, [sp], #16
     ldp x19, x20, [sp], #16
     unframe
 
@@ -76,7 +150,7 @@ dev_init:
 dev_id_of:
     address x1, dev_objects
     sub x1, x0, x1
-    cmp x1, #(DEV_COUNT * DEV_OBJ_SIZE)
+    cmp x1, #(DEV_MAX * DEV_OBJ_SIZE)
     b.hs 1f
     ldr x0, [x0, #DEV_ID]
     ret
@@ -135,7 +209,47 @@ dev_lookup:
     madd x0, x2, x3, x0
     ret
 9:
+    address x11, dev_installed_names // second pass: DEVICE= names
+    address x14, dev_installed
+    ldr x14, [x14]
+    add x14, x11, x14, lsl #3
+    b 92f
+91:
     mov x0, #0
+    ret
+92:
+    cmp x11, x14
+    b.hs 91b
+    mov x12, x10
+    mov x13, x11
+93:
+    ldrb w3, [x13], #1
+    ldrb w4, [x12], #1
+    cmp w4, #'a'
+    b.lo 94f
+    cmp w4, #'z'
+    b.hi 94f
+    sub w4, w4, #32
+94:
+    cbz w3, 95f
+    cmp w3, w4
+    b.eq 93b
+    b 96f
+95:
+    cbz w4, 97f
+    cmp w4, #'.'
+    b.eq 97f
+96:
+    add x11, x11, #8
+    b 92b
+97:
+    address x2, dev_installed_names
+    sub x2, x11, x2
+    lsr x2, x2, #3
+    add x2, x2, #DEV_COUNT
+    address x0, dev_objects
+    mov x3, #DEV_OBJ_SIZE
+    madd x0, x2, x3, x0
     ret
 
 // x0 = object, x1 = buffer, x2 = count. Returns x0 = bytes, x1 = 0.
@@ -145,6 +259,13 @@ dev_read:
     stp x21, x22, [sp, #-16]!
     mov x19, x1
     mov x20, x2
+    ldr x9, [x0, #DEV_DRV_READ]
+    cbz x9, 1f
+    mov x0, x19
+    mov x1, x20
+    blr x9
+    b dev_read_return
+1:
     ldr x21, [x0, #DEV_ID]
     cmp x21, #DEV_AUX
     b.ls dev_read_console
@@ -195,6 +316,13 @@ dev_write:
     stp x21, x22, [sp, #-16]!
     mov x19, x1
     mov x20, x2
+    ldr x9, [x0, #DEV_DRV_WRITE]
+    cbz x9, 1f
+    mov x0, x19
+    mov x1, x20
+    blr x9
+    b dev_write_return
+1:
     ldr x21, [x0, #DEV_ID]
     cmp x21, #DEV_AUX
     b.ls dev_write_console
@@ -380,6 +508,9 @@ dev_lookup_names:
 
 .section .bss
 .balign 16
-dev_objects: .skip DEV_COUNT * DEV_OBJ_SIZE
+dev_objects: .skip DEV_MAX * DEV_OBJ_SIZE
+dev_installed: .skip 8
+dev_installed_names: .skip 8 * (DEV_MAX - DEV_COUNT)
+
 con_direct: .skip 8
 prn_target: .skip 8

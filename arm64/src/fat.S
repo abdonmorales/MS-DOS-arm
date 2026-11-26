@@ -12,7 +12,8 @@
 // (FAT.ASM, DIR.ASM, DIR2.ASM, CREATE.ASM); long names follow the VFAT
 // on-disk format. The calling conventions are AAPCS64 throughout.
 
-.equ FAT_SLOTS, 8               // write-through sector cache entries
+.equ FAT_SLOTS, 32              // write-through sector cache entries (BUFFERS= picks how many are used)
+.equ FAT_SLOTS_DEFAULT, 8
 .equ FAT_SLOT_SHIFT, 12         // 4 KiB per entry (largest sector size)
 .equ FAT_OBJECTS, 128
 .equ OBJ_SIZE, 128
@@ -390,13 +391,14 @@ fat_cache_get:
     ldr x23, [x2, :lo12:fat_cache_clock]
     add x23, x23, #1
     str x23, [x2, :lo12:fat_cache_clock]
+    ldv x6, fat_slot_count
     mov x24, #0
 1:
     ldr x2, [x21, x24, lsl #3]
     cmp x2, x19
     b.eq 5f
     add x24, x24, #1
-    cmp x24, #FAT_SLOTS
+    cmp x24, x6
     b.lo 1b
     mov x24, #0                 // miss: evict the least recently used
     ldr x3, [x22]
@@ -409,7 +411,7 @@ fat_cache_get:
     mov x24, x4
 3:
     add x4, x4, #1
-    cmp x4, #FAT_SLOTS
+    cmp x4, x6
     b.lo 2b
     mov x2, #-1
     str x2, [x21, x24, lsl #3]
@@ -3202,6 +3204,9 @@ fat_strcasecmp:
     mov x0, #1
     ret
 
+.section .data
+.balign 8
+fat_slot_count: .quad FAT_SLOTS_DEFAULT
 .section .rodata
 .balign 8
 block_io_guid:

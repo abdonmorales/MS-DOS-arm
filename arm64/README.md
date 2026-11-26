@@ -79,6 +79,11 @@ ASCII filenames are read and written as VFAT long-name entries and shown whole
 by `DIR`. Redirection supports `<`, `>`, `>>`, and pipes (`a | b`) run through
 temporary files in the root, as COMMAND did. `2>` is not a DOS 4.0 feature.
 
+`\CONFIG.SYS` is processed at boot: `BREAK`, `BUFFERS`, `COUNTRY`, `DEVICE`,
+`FCBS`, `FILES`, `INSTALL`, `LASTDRIVE`, `REM`, `SHELL` and `STACKS`. `DEVICE=`
+loads native AArch64 character drivers (`.SYS` PE32+ images; see
+[ABI.md](ABI.md)); `TESTDRV.SYS` is the example used by the tests.
+
 The environment holds `COMSPEC`, `PATH`, `PROMPT` and anything set with `SET`;
 it is passed to every program (descriptor +40). `PROMPT` supports `$P $G $L $B
 $Q $$ $E $H $N $_ $D $T $V`. Batch files support `%0`–`%9`, `%*`, `%%`,

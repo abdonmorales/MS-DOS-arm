@@ -97,6 +97,8 @@ def main():
             text = until(b'A:\\>')
             if b'SELFTEST PASS' not in text:
                 raise RuntimeError('Boot self-test did not complete')
+            if b'Error in CONFIG.SYS line 11' not in text:
+                raise RuntimeError('CONFIG.SYS errors are not reported')
             if b'AUTOEXEC.BAT ran' not in text:
                 raise RuntimeError('AUTOEXEC.BAT did not run at boot')
             if b'Storage: native FAT' not in text:
@@ -266,7 +268,9 @@ def main():
             command('verify on')
             command('verify', b'VERIFY is on')
             command('verify off')
-            command('break', b'BREAK is off')
+            command('break on')
+            command('break', b'BREAK is on')
+            command('break off')
             command('truename armtest.txt', b'A:\\ARMTEST.TXT')
             command('chcp', b'Active code page: 437')
             process.stdin.write(b'pause\r')
@@ -286,6 +290,10 @@ def main():
             checks += 1
             command('type TYPED.TXT', b'typed at the console\n')
             command('del TYPED.TXT')
+            # Milestone 5: CONFIG.SYS (DEVICE= driver, FILES=, SHELL= COMSPEC).
+            command('echo hello driver>UPPER$')
+            command('type UPPER$', b'HELLO DRIVER')
+            command('set', b'COMSPEC=\\EFI\\BOOT\\BOOTAA64.EFI')
             print(f'PASS: ARM64 UEFI disk boot, native API self-tests, {checks} console checks.')
         finally:
             selector.close()

@@ -55,6 +55,13 @@ efi_main:
     bl fat_print_backend
     bl selftest
     cbnz x0, boot_failed
+    bl config_process
+    address x0, config_shell_program
+    ldr x0, [x0]
+    cbz x0, 1f
+    bl config_start_shell       // SHELL= program instead of COMMAND
+    b shell_loop
+1:
     bl run_autoexec
 shell_loop:
     bl shell_prompt
@@ -179,6 +186,12 @@ open_common:
     mov x0, x19
     bl dev_lookup
     cbnz x0, open_device
+    bl sft_used                 // CONFIG.SYS FILES= bounds open files
+    address x9, config_files
+    ldr x9, [x9]
+    cmp x0, x9
+    mov x0, #4
+    b.hs open_error
     mov x0, x19
     mov x1, x23
     mov x2, x25
@@ -1159,3 +1172,4 @@ selftest_saved_cwd: .skip 256
 .include "src/env.S"
 .include "src/cmd2.S"
 .include "src/cmd3.S"
+.include "src/config.S"

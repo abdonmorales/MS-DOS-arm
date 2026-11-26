@@ -202,6 +202,37 @@ pointer to a table that starts with its u16 length (9 bytes). 20h upper-cases
 the character `x1` into `x0`; 21h a buffer (`x1`, `x2` bytes); 22h an ASCIIZ
 string (`x1`); 23h classifies `x1` as 0 no, 1 yes, 2 neither.
 
+## CONFIG.SYS and installable device drivers
+
+`\CONFIG.SYS` is read once at boot, before `AUTOEXEC.BAT`. Keywords:
+`BREAK=ON|OFF`, `BUFFERS=n` (1–99; up to 32 4 KiB sector buffers are cached,
+the value is reported by `52h`), `COUNTRY=nnn` (as `38h`), `DEVICE=path [args]`,
+`FCBS=` and `STACKS=` (accepted; no fixed tables to size), `FILES=n` (8–255,
+open files at once, at most 64; the standard devices use no entries),
+`INSTALL=path [args]` (run after every driver has loaded), `LASTDRIVE=x`,
+`REM`, `SHELL=path [args]` (sets `COMSPEC`; anything other than the built-in
+COMMAND, `\EFI\BOOT\BOOTAA64.EFI` or a name `COMMAND.COM`, runs instead of
+COMMAND and `AUTOEXEC.BAT`, and the built-in shell takes over when it exits).
+Unknown keywords and bad values print `Error in CONFIG.SYS line n`.
+
+A `DEVICE=` driver is a native PE32+ image like a program. It stays resident.
+Its entry point is called once with `x0` pointing to a 64-byte init request:
+
+| Offset | In/out | Meaning |
+| --- | --- | --- |
+| 0 | in | `dos_call` entry (same ABI as for programs) |
+| 8 | in | ASCIIZ arguments after the driver path (kept while resident) |
+| 16 | out | Device name, up to 7 characters, NUL padded |
+| 24 | out | `read(x0 buffer, x1 count)` returning `x0` bytes (0 = end of file) |
+| 32 | out | `write(x0 buffer, x1 count)` returning `x0` bytes written |
+| 40 | out | Device information word (44h/00h); 80h is always set |
+
+The entry returns `x1=0` to install or `x1=1` to refuse. A driver named after
+a standard device (`CON`, `AUX`, `PRN`, `NUL`, `CLOCK$`) takes over that
+device's reads and writes; any other name adds a device that opens like a file
+from any directory, with any extension. Up to 11 drivers can be added.
+Functions may be left 0 (reads then report end of file, writes discard).
+
 ## DTA and FCB layout
 
 For searches, the DTA must contain at least 280 bytes: u64 attributes at 0,

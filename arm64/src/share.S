@@ -110,6 +110,21 @@ sft_register:
     ldp x19, x20, [sp], #16
     unframe
 
+// Returns x0 = SFT entries in use.
+sft_used:
+    address x9, sft_objects
+    mov x10, #0
+    mov x0, #0
+1:
+    ldr x11, [x9, x10, lsl #3]
+    cbz x11, 2f
+    add x0, x0, #1
+2:
+    add x10, x10, #1
+    cmp x10, #SFT_ENTRIES
+    b.lo 1b
+    ret
+
 // x0 = object being closed for the last time: drop its entry and locks.
 sft_release:
     address x9, sft_objects

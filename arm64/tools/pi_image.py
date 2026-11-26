@@ -61,11 +61,12 @@ def main():
         boot_dir = source / 'EFI/BOOT'
         boot_dir.mkdir(parents=True)
         shutil.copyfile(args.efi, boot_dir / 'BOOTAA64.EFI')
-        shutil.copyfile(args.efi.parent / 'NATIVE.EXE', source / 'NATIVE.EXE')
-        shutil.copyfile(args.efi.parent / 'DOSTEST.EXE', source / 'DOSTEST.EXE')
+        for payload in sorted(args.efi.parent.iterdir()):
+            if payload.suffix in ('.EXE', '.SYS'):
+                shutil.copyfile(payload, source / payload.name)
         shutil.copyfile(Path(__file__).parent.parent.parent / 'LICENSE', source / 'DOS-MIT.TXT')
-        for name in ['SCRIPT.BAT', 'CHILD.BAT', 'AUTOEXEC.BAT', 'FEATURES.BAT']:
-            shutil.copyfile(Path(__file__).parent.parent / 'fixtures' / name, source / name)
+        for fixture in sorted((Path(__file__).parent.parent / 'fixtures').iterdir()):
+            shutil.copyfile(fixture, source / fixture.name)
         (source / 'ARMTEST.TXT').write_bytes(b'ARM64 FAT read\r\n')
         (source / 'ARMDOS.TXT').write_bytes(
             b'Native AArch64 MS-DOS 4.0 port development runtime.\r\n'
