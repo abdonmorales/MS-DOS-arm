@@ -4,7 +4,7 @@ shell_execute:
     frame
     stp x19, x20, [sp, #-16]!
     stp x21, x22, [sp, #-16]!
-    sub sp, sp, #128
+    sub sp, sp, #384            // redirection state, then the split tail
     mov x19, x0
     bl line_has_pipe
     cbz x0, 7f
@@ -18,6 +18,8 @@ shell_execute:
     cbnz x1, shell_redirect_failed
     mov x0, x19
     bl next_word
+    add x2, sp, #128
+    bl split_command_word
     mov x19, x0
     mov x20, x1
     mov x2, x19
@@ -64,22 +66,18 @@ shell_execute:
     bl puts
     b shell_execute_done
 81:
-    ldrb w2, [x19, #4]
+    ldrb w2, [x20]
     cmp w2, #'.'
     b.ne 9f
-    strb wzr, [x19, #4]
     mov x0, x19
     address x1, name_echo
     bl strcmp
-    cbnz x0, 10f
-    add x0, x19, #5               // ECHO.text prints text (or a blank line)
+    cbnz x0, 9f
+    add x0, x20, #1               // ECHO.text prints text (or a blank line)
     bl puts
     address x0, newline
     bl puts
     b shell_execute_done
-10:
-    mov w2, #'.'
-    strb w2, [x19, #4]
 9:
     address x21, commands
 4:
@@ -111,7 +109,7 @@ shell_redirect_failed:
     address x0, file_error
     bl puts
 shell_execute_return:
-    add sp, sp, #128
+    add sp, sp, #384
     ldp x21, x22, [sp], #16
     ldp x19, x20, [sp], #16
     unframe
@@ -126,6 +124,108 @@ shell_external:
     address x0, unknown_message
     bl puts
 1:
+    unframe
+
+// x0 = command word, x1 = tail (from next_word), x2 = 256-byte buffer.
+// COMMAND ends an internal command's name at = / + ; , . \ " [ as well
+// as at a blank (cd.., dir/w, echo.text, path=A:\); '/' ends any name.
+// Returns x0 = the word, x1 = the tail (in the buffer when split).
+split_command_word:
+    frame
+    stp x19, x20, [sp, #-16]!
+    stp x21, x22, [sp, #-16]!
+    stp x23, x24, [sp, #-16]!
+    sub sp, sp, #16
+    mov x19, x0
+    mov x20, x1
+    mov x21, x2
+    mov x22, x19
+    ldrb w9, [x22]
+    cmp w9, #'@'
+    b.ne 1f
+    add x22, x22, #1
+1:
+    mov x23, x22
+2:
+    ldrb w9, [x23]
+    cbz w9, 9f
+    cmp x23, x22
+    b.eq 4f
+    address x10, split_delimiters
+3:
+    ldrb w11, [x10], #1
+    cbz w11, 4f
+    cmp w11, w9
+    b.ne 3b
+    b 5f
+4:
+    add x23, x23, #1
+    b 2b
+5:
+    cmp w9, #'/'
+    b.eq 7f
+    sub x2, x23, x22            // an internal command name?
+    cmp x2, #15
+    b.hs 9f
+    mov x3, #0
+6:
+    ldrb w4, [x22, x3]
+    cmp w4, #'a'
+    b.lo 61f
+    cmp w4, #'z'
+    b.hi 61f
+    sub w4, w4, #32
+61:
+    strb w4, [sp, x3]
+    add x3, x3, #1
+    cmp x3, x2
+    b.lo 6b
+    strb wzr, [sp, x3]
+    address x24, commands
+62:
+    ldrsw x1, [x24]
+    cbz x1, 9f
+    add x1, x24, x1
+    mov x0, sp
+    bl strcmp
+    cbz x0, 7f
+    add x24, x24, #8
+    b 62b
+7:
+    // Put back the blank next_word cut, then move the rest to the buffer.
+    mov x0, x19
+8:
+    ldrb w9, [x0]
+    cbz w9, 81f
+    add x0, x0, #1
+    b 8b
+81:
+    add x1, x0, #1
+    cmp x1, x20
+    b.ne 82f
+    mov w9, #' '
+    strb w9, [x0]
+82:
+    ldrb w9, [x23]
+    mov x0, x23
+    cmp w9, #'='                // = and , separate like a blank
+    b.eq 83f
+    cmp w9, #','
+    b.ne 84f
+83:
+    add x0, x0, #1
+84:
+    mov x1, x21
+    bl copy_cstring
+    strb wzr, [x23]
+    mov x20, x21
+9:
+    mov x0, x19
+    mov x1, x20
+    add sp, sp, #16
+    ldp x23, x24, [sp], #16
+    ldp x21, x22, [sp], #16
+    ldp x19, x20, [sp], #16
     unframe
 
 // In-place tokenization, supporting quoted filenames. x0=token, x1=tail.
@@ -275,6 +375,7 @@ strcasecmp:
 
 
 .section .rodata
+split_delimiters: .asciz "=/+;,.\\\"["
 exe_suffix: .asciz ".EXE"
 bat_suffix: .asciz ".BAT"
 prompt_suffix: .asciz "> "

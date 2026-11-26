@@ -36,6 +36,15 @@ pipe_execute:
     sub sp, sp, #PIPE_FRAME
     mov x1, sp                  // [sp] line copy (256), [sp+256] stage (512)
     bl copy_cstring
+    // Temporary names carry the drive they start on and the nesting depth,
+    // so a stage that runs a pipe of its own (a batch file) uses others.
+    address x9, pipe_depth
+    ldr x10, [x9]
+    add x10, x10, #1
+    str x10, [x9]
+    adrp x24, current_drive
+    ldr x24, [x24, :lo12:current_drive]
+    add x24, x24, #'A'
     // Split at unquoted '|': x20 = stage count (at most 8).
     mov x19, sp
     mov x20, #1
@@ -118,20 +127,34 @@ pipe_error:
     address x0, syntax_error_message
     bl puts
 9:
+    address x9, pipe_depth
+    ldr x10, [x9]
+    sub x10, x10, #1
+    str x10, [x9]
     add sp, sp, #PIPE_FRAME
     ldp x23, x24, [sp], #16
     ldp x21, x22, [sp], #16
     ldp x19, x20, [sp], #16
     unframe
 
-// x0 = index, x1 = destination. Writes "\%PIPEn.$$$"; returns x0 = end.
+// x0 = index, x1 = destination, x24 = drive letter (pipe_execute's).
+// Writes "d:\%PIPEdn.$$$" (d = nesting depth); returns x0 = end.
 pipe_name:
     address x9, pipe_template
+    strb w24, [x1], #1
+    address x11, pipe_depth
+    ldr x11, [x11]
+    and x11, x11, #7            // the depth is at most 8 or so in practice
+    add w11, w11, #'0'
 1:
     ldrb w10, [x9], #1
     cmp w10, #'#'
-    b.ne 2f
+    b.ne 11f
     add w10, w0, #'1'
+11:
+    cmp w10, #'@'
+    b.ne 2f
+    mov w10, w11
 2:
     strb w10, [x1], #1
     cbnz w10, 1b
@@ -795,7 +818,13 @@ cmd_ctty:
 3:
     address x0, invalid_device_message
     bl puts
+    b 5f
 4:
+    address x9, ctty_generation // enclosing redirections keep the new
+    ldr x10, [x9]               // standard handles
+    add x10, x10, #1
+    str x10, [x9]
+5:
     ldp x19, x20, [sp], #16
     unframe
 
@@ -1163,7 +1192,7 @@ time_return:
     unframe
 
 .section .rodata
-pipe_template: .asciz "\\%PIPE#.$$$"
+pipe_template: .asciz ":\\%PIPE@#.$$$"
 for_in_keyword: .asciz "IN"
 for_do_keyword: .asciz "DO"
 for_nested_message: .asciz "FOR cannot be nested\r\n"
@@ -1202,3 +1231,8 @@ for_active: .skip 8
 for_dta: .skip 280
 if_dta: .skip 280
 date_numbers: .skip 24
+
+.section .bss
+.balign 8
+pipe_depth: .skip 8
+.section .text

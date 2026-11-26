@@ -12,6 +12,9 @@ batch_run:
     mov x21, sp
     mov x19, x0
     mov x20, x1
+    address x9, batch_calling   // run by CALL (returns to the caller)?
+    ldr x23, [x9]
+    str xzr, [x9]
     address x0, batch_depth
     ldr x0, [x0]
     cmp x0, #16
@@ -107,6 +110,14 @@ batch_command_error:
     mov x1, #1
     str x1, [x0]
 batch_finish:
+    // A batch file started from another without CALL replaces it: the
+    // caller ends too, as in COMMAND.
+    ldr x9, [x21]
+    cbz x9, 1f
+    cbnz x23, 1f
+    mov x10, #1
+    str x10, [x9, #96]
+1:
     ldr x0, [x21, #8]
     bl dos_close
     ldr x0, [x21, #112]
@@ -327,7 +338,12 @@ echo_return:
 cmd_call:
     frame
     bl next_word
+    address x9, batch_calling
+    mov x10, #1
+    str x10, [x9]
     bl shell_external
+    address x9, batch_calling   // a program (not a batch file) left it set
+    str xzr, [x9]
     unframe
 cmd_goto:
     frame
@@ -488,7 +504,6 @@ batch_echo_enabled: .quad 1
 .balign 16
 batch_context: .skip 8
 batch_depth: .skip 8
+batch_calling: .skip 8
 expansion_name: .skip 32
 expansion_number: .skip 32
-shell_expanded_line: .skip 256
-shell_empty_parameters: .skip 896

@@ -73,12 +73,7 @@ shell_loop:
     address x0, command_buffer
     mov x1, #255
     bl read_line
-    address x0, command_buffer
-    address x1, shell_expanded_line
-    address x2, shell_empty_parameters
-    bl batch_expand
-    cbnz x0, shell_loop
-    address x0, shell_expanded_line
+    address x0, command_buffer  // % expansion is for batch files only
     bl shell_execute
     address x0, shell_exit_requested
     ldr x0, [x0]
@@ -691,6 +686,9 @@ read_key:
     address x1, dev_objects
     cmp x0, x1
     b.eq read_key_pending       // stdin is CON itself
+    add x1, x1, #(DEV_AUX * DEV_OBJ_SIZE)
+    cmp x0, x1                  // or AUX (CTTY AUX), the same UART
+    b.eq read_key_pending
     mov x0, #0
     mov x1, sp
     mov x2, #1

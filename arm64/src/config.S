@@ -132,6 +132,10 @@ config_line:
     cbz w2, config_line
     cmp w2, #';'
     b.eq config_line
+    mov x0, x24                 // lines are at most 255 characters
+    bl fat_strlen
+    cmp x0, #255
+    b.hi config_bad_line
     mov x0, x24
     bl config_keyword
     mov x25, x1
@@ -385,6 +389,10 @@ config_shell:
     frame
     stp x19, x20, [sp, #-16]!
     mov x19, x0
+    bl fat_strlen               // the buffers hold 255 characters
+    cmp x0, #255
+    b.hi 9f
+    mov x0, x19
     address x1, config_shell_line
     bl copy_cstring
     address x0, config_shell_line
@@ -413,6 +421,10 @@ config_shell:
     str x1, [x9]
 2:
     mov x1, #0
+    ldp x19, x20, [sp], #16
+    unframe
+9:
+    mov x1, #1                  // too long: reported as a bad line
     ldp x19, x20, [sp], #16
     unframe
 

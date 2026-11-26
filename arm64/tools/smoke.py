@@ -108,6 +108,8 @@ def main():
             if platform not in text:
                 raise RuntimeError('Unexpected platform mode for ' + args.mode)
             command('ver', b'MS-DOS API baseline 4.00')
+            # % expansion is for batch files: EL.BAT reports ERRORLEVEL.
+            command('echo @echo code:%ERRORLEVEL%>EL.BAT')
             command('type ARMTEST.TXT', b'ARM64 FAT read')
             command('echo native-arm64-ok', b'\nnative-arm64-ok\n')
             command('selftest', b'SELFTEST PASS')
@@ -123,7 +125,7 @@ def main():
             checks += 1
             if args.mode == 'native':   # firmware mode keeps UEFI's vectors
                 command('native fault', b'Program terminated by CPU exception.')
-                command('echo code:%ERRORLEVEL%', b'code:1')
+                command('el', b'code:1')
             command('dostest', b'DOSTEST PASS')
             process.stdin.write(b'dostest ctrlc\r')
             process.stdin.flush()
@@ -135,7 +137,7 @@ def main():
                 raise RuntimeError('Ctrl-C did not end the program with type 1')
             checks += 1
             command('native exit7', b'Native AArch64 program OK')
-            command('echo code:%ERRORLEVEL%', b'code:7')
+            command('el', b'code:7')
             batch = command('script first second', b'script-finished')
             for expected in [b'parameter:first all:first second', b'exit-code-ok',
                              b'below-eight-ok', b'existing-file-ok', b'missing-file-ok',
@@ -145,7 +147,7 @@ def main():
                     raise RuntimeError('Batch semantics failed: ' + repr(expected))
             if b'BAD-' in batch:
                 raise RuntimeError('Batch branching or EXIT /B failed')
-            command('echo code:%ERRORLEVEL%', b'code:3')
+            command('el', b'code:3')
             command('echo first>OUTPUT.TXT')
             command('echo second>>OUTPUT.TXT')
             text = command('type OUTPUT.TXT', b'first\nsecond\n')
@@ -172,7 +174,7 @@ def main():
             command('native disk', b'Native AArch64 program OK')
             command('echo 50% done', b'\n50% done\n')
             command('cd NOSUCH', b'File/device error.')
-            command('echo code:%ERRORLEVEL%', b'code:3')
+            command('el', b'code:3')
             process.stdin.write(b'date\r')
             process.stdin.flush()
             date = until(b'Enter new date (mm-dd-yy): ').replace(b'\r', b'')
@@ -241,7 +243,31 @@ def main():
                     raise RuntimeError('FOR/SHIFT/IF failed: ' + repr(expected))
             command('set', b'ARMDOS=1')
             command('set GREETING=hello')
-            command('echo %GREETING%', b'\nhello\n')
+            command('echo %GREETING%', b'\n%GREETING%\n')
+            command('echo @echo %GREETING%>GR.BAT')
+            command('gr', b'\nhello\n')
+            command('del GR.BAT')
+            # A batch file run from another without CALL replaces it.
+            command('echo @c2>C1.BAT')
+            command('echo @echo after-chain>>C1.BAT')
+            command('echo @echo in-c2>C2.BAT')
+            if b'after-chain' in command('c1', b'in-c2'):
+                raise RuntimeError('batch chaining returned to the caller')
+            command('echo @call c2>C1.BAT')
+            command('echo @echo after-call>>C1.BAT')
+            command('c1', b'after-call')
+            command('del C?.BAT')
+            # CTTY lasts past its own command line (AUX is the same UART).
+            command('ctty aux')
+            command('echo via-aux', b'\nvia-aux\n')
+            command('ctty con')
+            command('del EL.BAT')
+            # The command word ends at = / . \\ as in COMMAND; & is text.
+            command('echo.hello World', b'\nhello World\n')
+            command('cd\\')
+            command('dir/w *.bat', b'AUTOEXEC BAT')
+            command('echo R&D', b'\nR&D\n')
+            command('for %f in (a b) do echo X%f', b'Xb')
             command('set GREETING=')
             if b'GREETING' in command('set', b'PATH=A:\\'):
                 raise RuntimeError('SET did not remove a variable')
