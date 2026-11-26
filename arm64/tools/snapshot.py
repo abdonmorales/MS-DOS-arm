@@ -48,6 +48,8 @@ def main():
         raise SystemExit('ISO bytes or test mismatch: run make iso-test')
     # Published uncompressed so it can be downloaded and booted (or attached
     # to a VM) as-is. It is ~31 MiB, well under GitHub's 100 MiB file limit.
+    if iso.stat().st_size >= 100 * 1024 * 1024:
+        raise SystemExit('ISO is over GitHub\'s 100 MiB file limit')
     output = args.output / 'armdos.iso'
     shutil.copyfile(iso, output)
     if digest(output) != record['sha256']:
