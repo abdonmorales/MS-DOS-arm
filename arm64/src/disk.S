@@ -653,6 +653,30 @@ ioctl_write_sectors:
     mov x21, #1
 1:
     cbz x3, ioctl_invalid
+    ldr x9, [x3, #16]           // no buffer
+    cbz x9, ioctl_invalid
+    // first + count must stay inside the volume (error 8, sector not
+    // found): the device size, else the boot record's total.
+    ldv x9, fat_total_sectors
+    cbnz x9, 11f
+    address x10, fat_boot_copy
+    ldrb w9, [x10, #19]
+    ldrb w11, [x10, #20]
+    orr w9, w9, w11, lsl #8
+    cbnz x9, 11f
+    ldr w9, [x10, #32]
+    cbz x9, 12f                 // size unknown
+11:
+    ldr x10, [x3]
+    ldr x11, [x3, #8]
+    adds x12, x10, x11
+    b.cs 13f
+    cmp x12, x9
+    b.ls 12f
+13:
+    mov x0, #8
+    b ioctl_error
+12:
     stp x23, x24, [sp, #-16]!
     stp x25, x26, [sp, #-16]!
     ldr x23, [x3]               // sector

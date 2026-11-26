@@ -8,6 +8,7 @@
 .equ FS_ATTR, 291
 .equ FS_EXT, 292                // caller used an extended FCB
 .equ FS_LABEL, 293              // volume-label search state
+.equ FS_DRIVE, 294              // drive searched (1 = A:)
 .equ FS_NAME, 296               // found name, 11 bytes FCB form
 .equ FS_SIZE, 320
 .equ FCB_LIST_MAX, 256
@@ -81,9 +82,17 @@ fcb_search_setup:
     add x0, x0, #7
 1:
     mov x19, x0
-    ldrb w9, [x19]
-    cmp w9, #1
+    ldrb w0, [x19]
+    cmp w0, #26
     b.hi 3f
+    cbnz w0, 11f
+    adrp x9, current_drive
+    ldr x0, [x9, :lo12:current_drive]
+    add x0, x0, #1
+11:
+    strb w0, [x20, #FS_DRIVE]
+    bl drive_physical           // a letter that names no drive
+    cbnz x1, 3f
     mov x21, #0
 2:
     add x9, x19, x21
@@ -221,7 +230,10 @@ fcb_search_core:
     mov x1, #FS_PATTERN
     bl dos_set_dta
     cbz x20, 1f
-    address x0, fcb_all_files
+    address x0, fcb_search_path // "d:*.*"
+    ldrb w9, [x19, #FS_DRIVE]
+    add w9, w9, #('A' - 1)
+    strb w9, [x0]
     ldrb w1, [x19, #FS_ATTR]
     mov x9, #0x16               // hidden, system, directory
     and x1, x1, x9
@@ -265,6 +277,9 @@ fcb_search_label:
     cbnz w9, 5f
     mov w9, #1
     strb w9, [x19, #FS_LABEL]
+    ldrb w0, [x19, #FS_DRIVE]   // that drive's volume
+    bl disk_check_drive
+    cbnz x1, 5f
     adrp x9, fat_mounted
     ldr x9, [x9, :lo12:fat_mounted]
     cbz x9, 5f
@@ -326,7 +341,7 @@ fcb_search_emit:
     strb w11, [x9, #6]
     add x9, x9, #7
 2:
-    mov w11, #1                 // drive A:
+    ldrb w11, [x0, #FS_DRIVE]
     strb w11, [x9]
     mov x12, #0
 4:
@@ -562,6 +577,10 @@ fcb_block_io:
     ldrh w22, [x19, #14]        // record size
     cbz x22, fcb_block_invalid
     ldr w23, [x19, #33]         // random record
+    cmp x22, #64                // records of 64 bytes or more use only
+    b.lo 1f                     // three bytes of it (FCBIO2.ASM)
+    and w23, w23, #0xffffff
+1:
     mov x0, x19
     bl fcb_handle
     mov x24, x0
@@ -638,7 +657,14 @@ fcb_block_wrote:
 fcb_block_advance:
     mov x26, x10
     add x23, x23, x10
-    str w23, [x19, #33]
+    strh w23, [x19, #33]
+    lsr w9, w23, #16
+    strb w9, [x19, #35]
+    cmp x22, #64
+    b.hs 1f
+    lsr w9, w23, #24
+    strb w9, [x19, #36]
+1:
     lsr x9, x23, #7
     strh w9, [x19, #12]
     and x9, x23, #127
@@ -710,9 +736,9 @@ dos_parse_filename:
     b.hi parse_bad_drive
     cbz w0, parse_bad_drive
     strb w0, [x20]
-    cmp w0, #1
-    b.eq 51f
-    mov x23, #1                 // only A: exists
+    bl drive_physical           // AL=FFh for a letter that names no drive
+    cbz x1, 51f
+    mov x23, #1
 51:
     add x19, x19, #2
     b 6f
@@ -1006,12 +1032,9 @@ xopen_missing:
     cbz x9, xopen_error
     mov x0, x19
     mov x1, x21
-    bl dos_create
+    mov x2, x20                 // the caller's access and sharing mode
+    bl dos_create_mode
     cbnz x1, xopen_return
-    address x9, handle_modes
-    mov x10, #0x87
-    and x10, x20, x10
-    strb w10, [x9, x0]
     mov x2, #2
 xopen_done:
     mov x1, #0
@@ -1034,8 +1057,9 @@ xopen_return:
     ldp x19, x20, [sp], #16
     unframe
 
+.section .data
+fcb_search_path: .asciz "A:*.*"
 .section .rodata
-fcb_all_files: .asciz "*.*"
 fcb_no_name: .ascii "NO NAME    "
 fcb_bad_chars: .asciz "\"*+,/:;<=>?[\\]|"
 parse_separators: .asciz ":.;,=+"

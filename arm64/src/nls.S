@@ -139,7 +139,7 @@ dos_ext_country:
     cbz x0, nls_not_found
     cmp x19, #1
     b.ne nls_table_pointer
-    cmp x21, #5
+    cmp x21, #7                 // room for the 7-byte header at least
     b.lo nls_too_small
     mov x9, x0
     mov w2, #1

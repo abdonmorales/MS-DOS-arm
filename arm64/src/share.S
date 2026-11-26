@@ -23,11 +23,21 @@ sft_check:
     strb wzr, [x1]
     bl canonicalize_path
     cbnz x1, sft_check_ok       // the open itself reports the bad path
+    adrp x9, canonical_drive
+    ldr x9, [x9, :lo12:canonical_drive]
+    address x10, sft_scratch_drive
+    strb w9, [x10]
     mov x21, #0
 1:
     address x9, sft_objects
     ldr x9, [x9, x21, lsl #3]
     cbz x9, 4f
+    address x9, sft_drives      // same drive and the same path
+    ldrb w9, [x9, x21]
+    address x10, sft_scratch_drive
+    ldrb w10, [x10]
+    cmp w9, w10
+    b.ne 4f
     address x0, sft_paths
     add x0, x0, x21, lsl #8
     address x1, sft_scratch
@@ -102,6 +112,10 @@ sft_register:
     orr w1, w1, w2, lsl #4
     address x9, sft_modes
     strb w1, [x9, x10]
+    address x9, sft_scratch_drive
+    ldrb w9, [x9]
+    address x11, sft_drives
+    strb w9, [x11, x10]
     address x0, sft_scratch
     address x1, sft_paths
     add x1, x1, x10, lsl #8
@@ -158,11 +172,17 @@ sft_path_open:
     address x1, sft_probe
     bl canonicalize_path
     cbnz x1, 3f
+    adrp x20, canonical_drive
+    ldr x20, [x20, :lo12:canonical_drive]
     mov x19, #0
 1:
     address x9, sft_objects
     ldr x9, [x9, x19, lsl #3]
     cbz x9, 2f
+    address x9, sft_drives
+    ldrb w9, [x9, x19]
+    cmp w9, w20
+    b.ne 2f
     address x0, sft_paths
     add x0, x0, x19, lsl #8
     address x1, sft_probe
@@ -344,6 +364,8 @@ lock_release_owner:
 .balign 16
 sft_objects: .skip 8 * SFT_ENTRIES
 sft_modes: .skip SFT_ENTRIES
+sft_drives: .skip SFT_ENTRIES
+sft_scratch_drive: .skip 8
 .balign 16
 sft_paths: .skip SFT_PATH * SFT_ENTRIES
 sft_scratch: .skip SFT_PATH

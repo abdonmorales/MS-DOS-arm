@@ -5,11 +5,18 @@
 .section .text
 fcb_filename:
     ldrb w1, [x0]
-    cmp w1, #1
-    b.hi fcb_name_invalid      // standard FCB, default drive or A:
+    cmp w1, #26
+    b.hi fcb_name_invalid      // drive byte: 0 default, 1 A:, ...
     add x9, x0, #1
     address x10, fcb_path
     mov x11, #0
+    cbz w1, 0f
+    add w1, w1, #('A' - 1)      // "d:NAME.EXT"
+    strb w1, [x10]
+    mov w1, #':'
+    strb w1, [x10, #1]
+    mov x11, #2
+0:
     mov x12, #8
     mov x13, #0
 1:
@@ -26,7 +33,12 @@ fcb_name_padding:
 2:
     subs x12, x12, #1
     b.ne 1b
-    cbz x11, fcb_name_invalid
+    ldrb w1, [x0]               // an empty name part
+    cmp w1, #0
+    mov x2, #2
+    csel x2, xzr, x2, eq
+    cmp x11, x2
+    b.eq fcb_name_invalid
     mov x12, #3
     mov x13, #0
     mov x14, #0
@@ -311,4 +323,4 @@ dos_fcb_get_length:
     unframe
 .section .bss
 .balign 16
-fcb_path: .skip 16
+fcb_path: .skip 24

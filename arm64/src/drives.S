@@ -252,6 +252,13 @@ canon_return:
     unframe
 canon_raw:
     ldrb w21, [x19, #1]
+    cmp w21, #DRIVES            // the drive byte must name a usable drive
+    b.hs canon_bad_drive
+    address x9, drive_table
+    mov x10, #DRV_SIZE
+    madd x9, x21, x10, x9
+    ldr x9, [x9, #DRV_FLAGS]
+    tbz x9, #0, canon_bad_drive
     adrp x9, canonical_logical_drive
     str x21, [x9, :lo12:canonical_logical_drive]
     add x0, x19, #2

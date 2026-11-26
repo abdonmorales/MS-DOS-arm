@@ -463,6 +463,14 @@ fat_add_volume:
     mov x19, x0
     mov x20, x1
     mov x21, x2
+    // Cache slots are 4 KiB: sectors must be 512..4096 bytes, a power of 2.
+    cmp x20, #512
+    b.lo 8f
+    cmp x20, #4096
+    b.hi 8f
+    sub x9, x20, #1
+    tst x9, x20
+    b.ne 8f
     ldv x22, fat_vol_count
     cmp x22, #FAT_VOLS
     b.hs 8f

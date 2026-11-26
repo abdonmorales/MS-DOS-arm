@@ -652,6 +652,48 @@ efi_main:
     address x0, fcb_wild
     dos 0x11
     expect x0, 255
+    // Drive bytes other than A: (B: is a RAM drive from CONFIG.SYS).
+    address x0, parse4
+    address x1, fcb
+    mov x2, #0
+    dos 0x29
+    expect x0, 0
+    address x9, fcb
+    expectb x9, 0, 2
+    address x0, fcb_create
+    address x1, fcb
+    mov x2, #37
+    bl memcpy
+    address x9, fcb
+    mov w10, #2
+    strb w10, [x9]
+    address x0, fcb
+    dos 0x16
+    expect x0, 0
+    address x0, fcb
+    dos 0x10
+    address x0, own_on_b        // it is on B:, not A:
+    mov x1, #0
+    dos 0x3d
+    ok
+    dos 0x3e
+    address x0, fcb_search
+    address x1, fcb
+    mov x2, #37
+    bl memcpy
+    address x0, fcb
+    mov w10, #2
+    strb w10, [x0]
+    dos 0x11
+    expect x0, 0
+    address x9, buffer
+    expectb x9, 0, 2
+    address x0, fcb_search      // and not on A:
+    dos 0x11
+    expect x0, 255
+    address x0, own_on_b
+    dos 0x41
+    ok
 
     step 25                     // 4Bh mode 1 load only
     address x0, own_name
@@ -847,6 +889,8 @@ sixteen: .ascii "0123456789ABCDEF"
 parse1: .asciz "  readme.txt rest"
 parse2: .asciz "a*.t? x"
 parse3: .asciz "q:FILE"
+parse4: .asciz "b:FCBTEST.DAT"
+own_on_b: .asciz "B:\\FCBTEST.DAT"
 fcb_readme: .ascii "\0README  TXT"
 fcb_create: .byte 0
     .ascii "FCBTEST DAT"

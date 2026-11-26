@@ -154,6 +154,17 @@ dos_create:
     orr x2, x2, #1
     mov x1, #2
     b open_common
+// 6Ch create: x0 = path, x1 = attributes, x2 = open mode (its access and
+// sharing apply to the new handle).
+dos_create_mode:
+    mov x3, #0x27
+    bic x3, x1, x3
+    cbnz x3, create_bad_attributes
+    lsl x3, x1, #8
+    orr x3, x3, #1
+    mov x1, x2
+    mov x2, x3
+    b open_common
 create_bad_attributes:
     mov x0, #1
     mov x1, #1
@@ -212,7 +223,9 @@ open_common:
     mov x0, x22
     add x1, x20, x21, lsl #3
     mov x3, #1                  // EFI_FILE_MODE_READ
+    cbnz x24, 2f                // creating needs READ | WRITE
     cbz x23, 3f
+2:
     mov x3, #3                  // READ | WRITE
 3:
     cbz x24, 4f
