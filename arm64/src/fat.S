@@ -350,6 +350,10 @@ fat_print_backend:
     ldv x2, platform_native
     cbz x2, 3f
     address x0, fat_backend_virtio
+    adrp x2, plat_disk_kind
+    ldr x2, [x2, :lo12:plat_disk_kind]
+    cbz x2, 3f
+    address x0, fat_backend_sd
 3:
     bl puts
 2:
@@ -375,7 +379,7 @@ fat_block_io:
     cmp x9, #32
     cset x3, eq
     mov x1, #1
-    b vio_rw
+    b plat_disk_rw
 1:
     frame
     mov x4, x1
@@ -3428,6 +3432,7 @@ fat_backend_fat16: .asciz "Storage: native FAT16 driver"
 fat_backend_fat32: .asciz "Storage: native FAT32 driver"
 fat_backend_blockio: .asciz " over UEFI Block I/O\r\n"
 fat_backend_virtio: .asciz " over the native virtio-blk driver\r\n"
+fat_backend_sd: .asciz " over the native SD card driver\r\n"
 fat_backend_firmware: .asciz "Storage: UEFI firmware file system (native FAT driver unavailable)\r\n"
 
 .section .bss

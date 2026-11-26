@@ -10,6 +10,7 @@
 .equ PLAT_GRANULE_SHIFT, 16             // 64 KiB arena granules
 .equ PLAT_GRANULES, 512
 .equ VQ_SIZE, 8
+.equ PI_EMMC, 0x3f300000              // BCM2837 Arasan SDHCI
 
 .section .text
 
@@ -22,9 +23,18 @@ plat_putc:
     ldr x1, [x1, :lo12:platform_native]
     cbz x1, 2f
     ldv x1, plat_uart
+    adrp x2, plat_uart_type
+    ldr x2, [x2, :lo12:plat_uart_type]
+    cbnz x2, 4f
 1:
     ldr w2, [x1, #0x18]         // UARTFR
     tbnz w2, #5, 1b             // TXFF
+    and w0, w0, #0xff
+    str w0, [x1]
+    ret
+4:
+    ldr w2, [x1, #0x14]         // mini UART LSR: transmitter empty
+    tbz w2, #5, 4b
     and w0, w0, #0xff
     str w0, [x1]
     ret
@@ -49,8 +59,16 @@ plat_poll_key:
     ldr x1, [x1, :lo12:platform_native]
     cbz x1, 2f
     ldv x1, plat_uart
+    adrp x2, plat_uart_type
+    ldr x2, [x2, :lo12:plat_uart_type]
+    cbz x2, 5f
+    ldr w2, [x1, #0x14]         // mini UART LSR: data ready
+    tbz w2, #0, 1f
+    b 6f
+5:
     ldr w2, [x1, #0x18]
     tbnz w2, #4, 1f             // RXFE
+6:
     ldr w0, [x1]
     and w0, w0, #0xff
     cmp w0, #0x7f               // terminals send DEL for backspace
@@ -298,7 +316,12 @@ platform_go_native:
     ldv x2, plat_uart
     cbz x2, plat_fail
     ldv x2, plat_ecam
-    cbz x2, plat_fail
+    cbnz x2, 11f
+    bl plat_pi_check            // no PCI: a Raspberry Pi 3 that opted in?
+    cbnz x0, plat_fail
+    mov x2, #1
+    stv x2, plat_disk_kind, x3
+11:
     // Memory the runtime keeps after firmware is gone.
     mov x0, #(PLAT_ARENA_BYTES >> 12)
     bl plat_alloc_pages
@@ -308,8 +331,11 @@ platform_go_native:
     bl plat_alloc_pages
     cbz x0, plat_fail
     stv x0, vio_queue, x2
+    ldv x2, plat_disk_kind
+    cbnz x2, 12f
     bl plat_find_disk
     cbnz x0, plat_fail
+12:
     // ExitBootServices needs the current memory map key; retry once if the
     // map changed between the two calls.
     mov x19, #2
@@ -352,8 +378,20 @@ platform_go_native:
     msr vbar_el2, x0
 4:
     isb
+    ldv x2, plat_disk_kind
+    cbnz x2, 5f
     // The firmware's virtio driver reset the device on exit; start ours.
     bl vio_init
+    cbnz x0, plat_dead
+    mov x0, #0
+    leave
+5:
+    // Raspberry Pi 3: the SD card on the Arasan controller, from scratch.
+    movz x0, #(PI_EMMC & 0xffff)
+    movk x0, #(PI_EMMC >> 16), lsl #16
+    bl sd_init
+    cbnz x0, plat_dead
+    bl plat_pi_partition
     cbnz x0, plat_dead
     mov x0, #0
     leave
@@ -445,11 +483,23 @@ plat_find_acpi:
     b.ne 4f
     ldrb w2, [x26, #40]         // address space: system memory
     cbnz w2, 6f
-    ldrb w2, [x26, #36]         // interface: PL011 (3) or SBSA generic (0xe)
-    cmp w2, #3
+    ldrb w2, [x26, #36]         // interface: PL011 (3), SBSA generic (0xe)
+    cmp w2, #3                  // or the BCM2835 mini UART (10h, Pi 3)
     b.eq 31f
     cmp w2, #0x0e
+    b.eq 31f
+    cmp w2, #0x10
     b.ne 6f
+    add x0, x26, #44
+    bl plat_ld64
+    tst x0, #0xff               // the AUX block: its UART is at +40h
+    b.ne 32f
+    add x0, x0, #0x40
+32:
+    stv x0, plat_uart, x2
+    mov x2, #1
+    stv x2, plat_uart_type, x3
+    b 6f
 31:
     add x0, x26, #44
     bl plat_ld64
@@ -479,6 +529,109 @@ plat_find_acpi:
 plat_acpi_fail:
     mov x0, #1
     leave
+
+// ---------------------------------------------------------------------------
+// Raspberry Pi 3 (BCM2837): no PCI, the console UART in the peripheral
+// window at 3F000000h, and the SD card on the Arasan SDHCI (src/sdhci.S).
+// Native mode there has not been validated on a physical board yet, so it
+// is used only when the boot volume has \NATIVE.ON; otherwise the Pi stays
+// in firmware mode.
+
+// Returns x0 = 0 to run the Pi natively.
+plat_pi_check:
+    frame
+    ldv x0, plat_uart
+    lsr x0, x0, #24
+    cmp x0, #0x3f
+    b.ne 1f
+    address x0, plat_pi_marker
+    mov x1, #0
+    bl dos_open
+    cbnz x1, 1f
+    bl dos_close
+    mov x0, #0
+    unframe
+1:
+    mov x0, #1
+    unframe
+
+// Finds the boot volume on the card: sector 0 itself, or the MBR partition
+// whose first sector is the boot sector the FAT driver mounted. Returns
+// x0 = 0 with sd_part_lba set.
+plat_pi_partition:
+    enter
+    ldv x19, vio_queue          // a page for the probe buffer
+    add x19, x19, #2048
+    stv x19, vio_buffer, x2
+    address x9, sd_part_lba
+    str xzr, [x9]
+    mov x0, #0
+    mov x1, #1
+    mov x2, x19
+    mov x3, #0
+    bl sd_rw
+    cbnz x0, 9f
+    bl vio_compare_boot
+    cbz x0, 8f
+    add x20, x19, #512          // keep the MBR
+    mov x2, #0
+1:
+    ldr x3, [x19, x2]
+    str x3, [x20, x2]
+    add x2, x2, #8
+    cmp x2, #512
+    b.lo 1b
+    mov x21, #0
+2:
+    mov x2, #16
+    mul x2, x21, x2
+    add x2, x2, #0x1c6
+    add x0, x20, x2
+    bl plat_ld32
+    mov x22, x0
+    cbz x22, 3f
+    address x9, sd_part_lba
+    str xzr, [x9]
+    mov x0, x22
+    mov x1, #1
+    mov x2, x19
+    mov x3, #0
+    bl sd_rw
+    cbnz x0, 3f
+    bl vio_compare_boot
+    cbnz x0, 3f
+    address x9, sd_part_lba
+    str x22, [x9]
+    b 8f
+3:
+    add x21, x21, #1
+    cmp x21, #4
+    b.lo 2b
+9:
+    mov x0, #1
+    leave
+8:
+    mov x0, #0
+    leave
+
+// x0 = address: little-endian u32 at any alignment.
+plat_ld32:
+    ldrb w1, [x0]
+    ldrb w2, [x0, #1]
+    orr w1, w1, w2, lsl #8
+    ldrb w2, [x0, #2]
+    orr w1, w1, w2, lsl #16
+    ldrb w2, [x0, #3]
+    orr w0, w1, w2, lsl #24
+    ret
+
+// x0 = partition-relative LBA, x1 = count, x2 = buffer, x3 = 0 read /
+// 1 write: the native disk, virtio-blk or the Pi's SD card.
+plat_disk_rw:
+    adrp x9, plat_disk_kind
+    ldr x9, [x9, :lo12:plat_disk_kind]
+    cbz x9, vio_rw
+    b sd_rw
 
 // ---------------------------------------------------------------------------
 // PCI and virtio-blk (virtio 1.0 "modern" transport).
@@ -942,12 +1095,16 @@ plat_exc_process: .asciz "Program terminated by CPU exception.\r\n"
 plat_exc_halt: .asciz "Kernel halted.\r\n"
 plat_disk_lost: .asciz "\r\nBoot disk did not restart after leaving firmware.\r\n"
 plat_native_message: .asciz "Platform: native AArch64 kernel (firmware exited; PL011 console, virtio-blk disk)\r\n"
+plat_pi_message: .asciz "Platform: native AArch64 kernel (firmware exited; Raspberry Pi 3 UART console, SD card)\r\n"
+plat_pi_marker: .asciz "A:\\NATIVE.ON"
 plat_firmware_message: .asciz "Platform: UEFI firmware services (no native drivers for this board)\r\n"
 
 .section .bss
 .balign 16
 platform_native: .skip 8
 plat_uart: .skip 8
+plat_uart_type: .skip 8           // 0 PL011, 1 BCM2835 mini UART
+plat_disk_kind: .skip 8           // 0 virtio-blk, 1 Pi SD card
 plat_ecam: .skip 8
 plat_bus_start: .skip 8
 plat_bus_end: .skip 8

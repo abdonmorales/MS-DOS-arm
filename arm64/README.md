@@ -9,10 +9,14 @@ UEFI is only the boot loader. At startup the kernel finds its console UART
 memory, calls `ExitBootServices` and owns the machine from then on: its own
 exception vectors, polled PL011 console, virtio-blk driver, FAT12/16/32
 filesystem (`src/fat.S`), memory arena and PE32+ program loader
-(`src/platform.S`, `src/process.S`). On boards it has no drivers for (today
-anything without ACPI SPCR/MCFG and virtio-blk, such as the Raspberry Pi 3), it
+(`src/platform.S`, `src/process.S`). On boards it has no drivers for, it
 stays in firmware mode and uses UEFI for the console, memory and sectors; the
-banner's `Platform:` line says which mode is active. See
+banner's `Platform:` line says which mode is active. The Raspberry Pi 3 has
+native drivers too (PL011 or mini UART console, SD card on the Arasan SDHCI,
+`src/sdhci.S`), tested bare metal on QEMU's `raspi3b` model by
+`make -C arm64 pi-test`; since they have not run on a physical board yet, the
+Pi uses them only when the card's FAT volume has a file named `NATIVE.ON`, and
+otherwise stays in firmware mode. See
 [PORT_STATUS.md](PORT_STATUS.md) for what remains.
 It contains no Linux guest, x86 interpreter, or x86 executable emulation.
 
@@ -188,7 +192,12 @@ This image targets Pi 3B/3B+, not Pi 4/5.
 To prepare an SD card, select the Pi image and the intended removable card in
 Raspberry Pi Imager's custom-image workflow. Use a card of at least 128 MiB.
 The firmware console can use HDMI/USB input or a supported serial console.
-The Pi image has been booted in QEMU only, not yet on real hardware.
+The Pi image's payload has been booted in QEMU only, not yet on real hardware.
+To try the native Pi drivers on a board, create an empty `NATIVE.ON` in the
+card's root; the banner then reads `Raspberry Pi 3 UART console, SD card`. If
+the card cannot be started after leaving firmware, the kernel prints `Boot disk
+did not restart after leaving firmware` and halts; delete `NATIVE.ON` to go
+back to firmware mode.
 
 Run `make -C arm64 validate FIRMWARE=/path/to/QEMU_EFI.fd` to check both FAT
 filesystems, compare their payloads to the build outputs, boot both images in
@@ -247,8 +256,8 @@ not been fully translated. In native mode no UEFI boot service is used after
 startup; UEFI runtime services are used only for power-off.
 
 The complete MS-DOS 4.0 rewrite remains unfinished; [PORT_STATUS.md](PORT_STATUS.md)
-tracks it. Outstanding work is native drivers for boards other than QEMU
-`virt` and physical hardware bring-up. The checked-in historical source archives
+tracks it. Outstanding work is physical hardware bring-up: booting the Pi 3
+image, and its native drivers, on a real board. The checked-in historical source archives
 remain x86 assembly. All-model native Apple Silicon support also remains unmet
 because required boot-stack/driver support and hardware validation are absent.
 These image snapshots are development artifacts, with incomplete status recorded

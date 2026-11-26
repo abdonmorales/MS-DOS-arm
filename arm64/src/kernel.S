@@ -51,6 +51,10 @@ efi_main:
     ldr x1, [x1, :lo12:platform_native]
     cbz x1, 1f
     address x0, plat_native_message
+    adrp x1, plat_disk_kind
+    ldr x1, [x1, :lo12:plat_disk_kind]
+    cbz x1, 1f
+    address x0, plat_pi_message
 1:
     bl puts
     bl fat_print_backend
@@ -1191,6 +1195,7 @@ selftest_saved_cwd: .skip 256
 .include "src/drives.S"
 .include "src/fat.S"
 .include "src/platform.S"
+.include "src/sdhci.S"
 .include "src/api_test.S"
 .include "src/search.S"
 

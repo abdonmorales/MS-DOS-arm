@@ -10,7 +10,7 @@ SOURCES := $(wildcard src/*.S)
 FIXTURES := $(wildcard fixtures/*)
 
 .SECONDARY:
-.PHONY: all payloads image pi-image unit smoke smoke-firmware check validate snapshot fat-test clean
+.PHONY: all payloads image pi-image unit smoke smoke-firmware check validate snapshot fat-test pi-test clean
 all: $(BUILD)/BOOTAA64.EFI payloads
 image: $(BUILD)/msdos-arm64.img
 payloads: $(PAYLOADS)
@@ -28,7 +28,7 @@ smoke: image
 smoke-firmware: image
 	$(PYTHON) tools/smoke.py $(BUILD)/msdos-arm64.img --firmware $(FIRMWARE) --mode firmware --log $(BUILD)/smoke-firmware.log
 
-check: unit
+check: unit pi-test
 	$(MAKE) smoke
 
 validate: image pi-image
@@ -69,6 +69,15 @@ PROGRAM_NAMES := $(patsubst programs/%.S,%,$(wildcard programs/*.S))
 DRIVER_NAMES := $(patsubst drivers/%.S,%,$(wildcard drivers/*.S))
 PAYLOADS := $(foreach p,$(PROGRAM_NAMES),$(BUILD)/$(call upper,$(p)).EXE) \
 	$(foreach p,$(DRIVER_NAMES),$(BUILD)/$(call upper,$(p)).SYS) $(BUILD)/COUNTRY.SYS
+
+# The Pi 3 SD card and UART drivers, bare metal on QEMU raspi3b.
+pi-test: $(BUILD)/sdtest.bin $(BUILD)/msdos-arm64.img
+	$(PYTHON) tools/pi_test.py $(BUILD)/sdtest.bin $(BUILD)/msdos-arm64.img
+
+$(BUILD)/sdtest.bin: tests/pi/sdtest.S tests/pi/link.ld src/sdhci.S | $(BUILD)
+	$(AS) -march=armv8-a -o $(BUILD)/sdtest.o $<
+	$(LD) -T tests/pi/link.ld --no-warn-rwx-segments -o $(BUILD)/sdtest.elf $(BUILD)/sdtest.o
+	$(OBJCOPY) -O binary $(BUILD)/sdtest.elf $@
 
 # COUNTRY.SYS is data: the DOS 4.0 file assembled from MKCNTRY.ASM.
 $(BUILD)/COUNTRY.SYS: ../v4.0/src/DEV/COUNTRY/MKCNTRY.ASM ../v4.0/src/DEV/COUNTRY/MKCNTRY.INC tools/mkcntry.py | $(BUILD)
