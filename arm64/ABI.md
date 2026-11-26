@@ -1,4 +1,4 @@
-# Native AArch64 DOS ABI, version 2
+# ARM DOS native AArch64 ABI, version 2
 
 This ABI adapts selected DOS 4.0 public operations to flat pointers and AAPCS64.
 It does not run x86 DOS binaries or recreate segment registers, interrupt 21h,

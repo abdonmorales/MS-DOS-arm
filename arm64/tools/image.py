@@ -120,8 +120,8 @@ def main():
         *[(short(p), p.read_bytes()) for p in payloads],
         *[(short(p), p.read_bytes()) for p in sorted(fixtures.iterdir())],
         (b'ARMTEST TXT', b'ARM64 FAT read\r\n'),
-        (b'README  TXT', b'MS-DOS 4.0 AArch64 development runtime.\r\n'
-         b'This is a partial native port, not the full MS-DOS system.\r\n'
+        (b'README  TXT', b'ARM DOS 4.0: MS-DOS 4.0 ported natively to AArch64.\r\n'
+         b'x86 programs do not run; programs are native ARM64 PE32+ files.\r\n'
          b'Boot with ARM64 UEFI; HELP lists implemented commands.\r\n'),
     ]:
         cluster = fs.add(data)

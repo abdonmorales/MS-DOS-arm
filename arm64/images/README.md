@@ -1,6 +1,6 @@
-# Validated AArch64 development disk snapshots
+# ARM DOS disk image snapshots
 
-These snapshots are the MS-DOS 4.0 AArch64 port with every software
+These snapshots are ARM DOS, MS-DOS 4.0 ported to AArch64, with every software
 milestone done; physical hardware (milestone 8) is not yet verified, so their
 manifests still record the port as incomplete. They contain native ARM64 assembly, a separately linked native test
 program and batch fixtures. They do not run historical x86 executables.

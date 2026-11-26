@@ -536,7 +536,7 @@ path_equals: .asciz "PATH="
 no_path_message: .asciz "No Path\r\n"
 env_full_message: .asciz "Out of environment space\r\n"
 syntax_error_message: .asciz "Syntax error\r\n"
-version_message_short: .asciz "MS-DOS Version 4.00 (AArch64)"
+version_message_short: .asciz "ARM DOS Version 4.00 (AArch64)"
 
 .section .bss
 .balign 16

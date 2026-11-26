@@ -1,4 +1,4 @@
-# MS-DOS 4.0 AArch64 port: definition of done and status
+# ARM DOS (MS-DOS 4.0 on AArch64): definition of done and status
 
 This file is the checklist for "the port is finished". Each milestone lands
 with tests that run in CI-style `make` targets (`smoke`, `validate`,
