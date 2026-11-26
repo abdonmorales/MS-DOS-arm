@@ -1071,7 +1071,6 @@ commands:
     .long name_copy - ., cmd_copy - (. - 4)
     .long name_ren - ., cmd_ren - (. - 4)
     .long name_rename - ., cmd_ren - (. - 4)
-    .long name_attrib - ., cmd_attrib - (. - 4)
     .long name_rem - ., cmd_rem - (. - 4)
     .long name_call - ., cmd_call - (. - 4)
     .long name_goto - ., cmd_goto - (. - 4)
@@ -1110,7 +1109,6 @@ name_rmdir: .asciz "RMDIR"
 name_copy: .asciz "COPY"
 name_ren: .asciz "REN"
 name_rename: .asciz "RENAME"
-name_attrib: .asciz "ATTRIB"
 name_rem: .asciz "REM"
 name_call: .asciz "CALL"
 name_goto: .asciz "GOTO"
@@ -1139,7 +1137,7 @@ carriage_return: .asciz "\r"
 erase_char: .asciz "\b \b"
 ctrl_c_mark: .asciz "^C"
 unknown_message: .asciz "Bad command or file name\r\n"
-help_message: .asciz "HELP VER ECHO CLS DIR TYPE DEL ERASE CD MD RD COPY REN ATTRIB DATE TIME VOL\r\nSET PATH PROMPT FOR SHIFT REM CALL GOTO IF PAUSE VERIFY BREAK CTTY CHCP TRUENAME\r\nSELFTEST EXIT. Native ARM64 EXE and BAT files; quote paths containing spaces.\r\nRedirection: < input, > output, >> append, | pipe. A: is the boot volume.\r\n"
+help_message: .asciz "HELP VER ECHO CLS DIR TYPE DEL ERASE CD MD RD COPY REN DATE TIME VOL\r\nSET PATH PROMPT FOR SHIFT REM CALL GOTO IF PAUSE VERIFY BREAK CTTY CHCP TRUENAME\r\nSELFTEST EXIT. Native ARM64 EXE and BAT files; quote paths containing spaces.\r\nRedirection: < input, > output, >> append, | pipe. A: is the boot volume.\r\n"
 version_message: .asciz "MS-DOS API baseline 4.00; AArch64 development port (partial).\r\n"
 passed_message: .asciz "SELFTEST PASS: file/FCB APIs, directories/search, memory, clock, native processes.\r\n"
 failed_message: .asciz "SELFTEST FAIL\r\n"
@@ -1188,6 +1186,7 @@ selftest_saved_cwd: .skip 256
 .include "src/nls.S"
 .include "src/disk.S"
 .include "src/dos3.S"
+.include "src/append.S"
 .include "src/env.S"
 .include "src/cmd2.S"
 .include "src/cmd3.S"

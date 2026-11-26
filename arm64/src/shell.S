@@ -213,93 +213,6 @@ strcasecmp:
     sub w0, w2, w3
     ret
 
-cmd_attrib:
-    frame
-    stp x19, x20, [sp, #-16]!
-    stp x21, x22, [sp, #-16]!
-    mov x19, #0                 // bits to add
-    mov x20, #0                 // bits to clear
-1:
-    bl next_word
-    ldrb w2, [x0]
-    cmp w2, #'+'
-    b.eq 2f
-    cmp w2, #'-'
-    b.ne attrib_path
-2:
-    ldrb w3, [x0, #1]
-    bic w3, w3, #0x20
-    mov x4, #1
-    cmp w3, #'R'
-    b.eq 3f
-    mov x4, #2
-    cmp w3, #'H'
-    b.eq 3f
-    mov x4, #4
-    cmp w3, #'S'
-    b.eq 3f
-    mov x4, #32
-    cmp w3, #'A'
-    b.ne attrib_cmd_error
-3:
-    ldrb w3, [x0, #2]
-    cbnz w3, attrib_cmd_error
-    cmp w2, #'+'
-    b.ne 4f
-    orr x19, x19, x4
-    bic x20, x20, x4
-    b 5f
-4:
-    orr x20, x20, x4
-    bic x19, x19, x4
-5:
-    mov x0, x1
-    b 1b
-attrib_path:
-    cbz w2, attrib_cmd_error
-    mov x21, x0
-    mov x1, #0
-    bl dos_attributes
-    cbnz x1, attrib_cmd_error
-    mov x22, x0
-    orr x2, x19, x20
-    cbnz x2, attrib_update
-    mov x19, #0
-    address x20, attribute_letters
-1:
-    ldrb w1, [x20, x19]
-    cbz w1, 2f
-    mov x0, #' '
-    lsr x2, x22, x19
-    tst x2, #1
-    csel x0, x1, x0, ne
-    bl stdout_putc
-    add x19, x19, #1
-    b 1b
-2:
-    mov x0, #' '
-    bl stdout_putc
-    mov x0, x21
-    bl puts
-    address x0, newline
-    bl puts
-    b attrib_cmd_return
-attrib_update:
-    orr x2, x22, x19
-    bic x2, x2, x20
-    bic x2, x2, #16
-    mov x0, x21
-    mov x1, #1
-    bl dos_attributes
-    cbnz x1, attrib_cmd_error
-    b attrib_cmd_return
-attrib_cmd_error:
-    address x0, file_error
-    bl puts
-attrib_cmd_return:
-    ldp x21, x22, [sp], #16
-    ldp x19, x20, [sp], #16
-    unframe
 
 .section .rodata
 exe_suffix: .asciz ".EXE"
@@ -307,7 +220,6 @@ bat_suffix: .asciz ".BAT"
 drive_prefix: .asciz "A:"
 prompt_suffix: .asciz "> "
 copy_success: .asciz "        1 file(s) copied.\r\n"
-attribute_letters: .asciz "RHSVDA"
 directory_marker: .asciz "  <DIR>"
 directory_glob_suffix: .asciz "\\*"
 .section .bss

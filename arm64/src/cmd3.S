@@ -1195,7 +1195,7 @@ dir_header:
     mov x24, #0                 // /W column
     mov x27, #4                 // lines on screen
     mov x0, x20
-    mov x1, #0x16
+    mov x1, #0x10                // hidden and system files are not listed
     bl dos_find_first
 dir_loop:
     cbnz x1, dir_end

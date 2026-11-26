@@ -259,6 +259,10 @@ dos_list_of_lists:
     address x1, image_handle
     ldr x1, [x1]
     str x1, [x9, #104]
+    address x1, append_state
+    str x1, [x9, #112]
+    mov x1, #ENV_SIZE
+    str x1, [x9, #120]
     mov x0, x9
     mov x1, #0
     unframe
@@ -657,4 +661,4 @@ ioctl_return:
 .section .bss
 .balign 16
 dos_dpb: .skip 64
-dos_sysvars: .skip 112
+dos_sysvars: .skip 128

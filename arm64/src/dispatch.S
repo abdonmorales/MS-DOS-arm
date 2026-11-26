@@ -126,7 +126,7 @@ dos_table:
     dosfn dos_rmdir                 // 3A
     dosfn dos_chdir                 // 3B
     dosfn dos_create                // 3C
-    dosfn dos_open                  // 3D
+    dosfn dos_open_append           // 3D
     dosfn dos_close                 // 3E
     dosfn dos_read                  // 3F
     dosfn dos_write                 // 40
@@ -140,10 +140,10 @@ dos_table:
     dosfn dos_allocate              // 48
     dosfn dos_free                  // 49
     dosfn dos_resize                // 4A
-    dosfn dos_exec_call             // 4B
+    dosfn dos_exec_append           // 4B
     dosfn dos_terminate             // 4C
     dosfn dos_get_exit_code         // 4D
-    dosfn dos_find_first            // 4E
+    dosfn dos_find_first_append     // 4E
     dosfn dos_find_next             // 4F
     dosfn dos_set_psp               // 50
     dosfn dos_get_psp               // 51
@@ -173,7 +173,7 @@ dos_table:
     dosfn dos_media_id              // 69
     dosfn dos_commit                // 6A
     dosfn dos_null_function         // 6B
-    dosfn dos_extended_open         // 6C
+    dosfn dos_extended_open_append  // 6C
 
 // Reserved CP/M-compatibility and network-only numbers: AL=0, no effect.
 dos_null_function:

@@ -478,16 +478,20 @@ resync_here:
     unframe
 
 // x0 = first line, x1 = resync line, x2 = line count, x3 = table,
-// x4 = file name. Prints "***** NAME" and the lines (with the first
-// matching line, as DOS does).
+// x4 = file name. Prints "***** NAME" and the lines, framed by the last
+// matching line before them and the first one after, as DOS does.
 print_block:
     enter
     mov x19, x0
+    cbz x19, 1f                 // the last matching line comes first
+    sub x19, x19, #1
+1:
     mov x20, x1
     mov x21, x2
     mov x22, x3
+    mov x23, x4
     say "***** "
-    mov x0, x4
+    mov x0, x23
     bl puts
     bl crlf
     cmp x20, x21
