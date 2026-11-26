@@ -393,6 +393,7 @@ walk:
     tbz x21, #4, 9f             // /S
     cmp x19, #MAX_DEPTH - 1
     b.lo 7788f
+    add x0, x20, #L_SRC
     bl depth_note               // deeper directories are skipped, not lost
     b 9f
 7788:

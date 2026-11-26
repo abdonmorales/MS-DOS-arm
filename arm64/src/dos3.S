@@ -182,6 +182,16 @@ fcb_name11_bad:
     ldp x19, x20, [sp], #16
     unframe
 
+// The same, as "d:NAME.EXT" with the drive of the last fcb_collect.
+fcb_name_ascii_drive:
+    address x9, fcb_collect_state
+    ldrb w9, [x9, #FS_DRIVE]
+    add w9, w9, #('A' - 1)
+    strb w9, [x1], #1
+    mov w9, #':'
+    strb w9, [x1], #1
+    b fcb_name_ascii
+
 // x0 = 11-byte FCB name, x1 = destination. Writes "NAME.EXT".
 fcb_name_ascii:
     mov x9, #0
@@ -470,7 +480,7 @@ dos_fcb_delete_wild:
     mov x2, #11
     madd x0, x20, x2, x0
     address x1, fcb_ascii_old
-    bl fcb_name_ascii
+    bl fcb_name_ascii_drive     // on the drive the FCB named
     address x0, fcb_ascii_old
     bl dos_delete
     cbnz x1, 3f
@@ -528,10 +538,10 @@ dos_fcb_rename:
     b.lo 2b
     mov x0, x24
     address x1, fcb_ascii_old
-    bl fcb_name_ascii
+    bl fcb_name_ascii_drive
     address x0, fcb_new_name
     address x1, fcb_ascii_new
-    bl fcb_name_ascii
+    bl fcb_name_ascii_drive
     address x0, fcb_ascii_old
     address x1, fcb_ascii_new
     bl dos_rename

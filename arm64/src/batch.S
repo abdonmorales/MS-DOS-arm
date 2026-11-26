@@ -24,6 +24,30 @@ batch_run:
     bl dos_open
     cbnz x1, batch_return
     str x0, [x21, #8]
+    // Started from a batch line without CALL (and not inside a pipe):
+    // the running batch file is replaced, so restart loops never nest.
+    cbnz x23, 2f
+    address x9, batch_context
+    ldr x9, [x9]
+    cbz x9, 2f
+    address x9, pipe_depth
+    ldr x9, [x9]
+    cbnz x9, 2f
+    ldr x0, [x21, #8]
+    bl dos_close
+    mov x0, x19
+    address x1, chain_path
+    bl copy_cstring
+    mov x0, x20
+    address x1, chain_tail
+    bl copy_cstring
+    address x9, chain_pending
+    mov x10, #1
+    str x10, [x9]
+    mov x0, #0
+    mov x1, #0
+    b batch_return
+2:
     address x0, batch_context
     ldr x1, [x0]
     str x1, [x21]
@@ -36,6 +60,7 @@ batch_run:
     address x0, batch_echo_enabled  // ECHO state is restored when it ends
     ldr x0, [x0]
     str x0, [x21, #112]
+batch_parameters:
     mov x0, x19
     add x1, x21, #1152
     bl copy_cstring
@@ -99,7 +124,27 @@ batch_next_line:
 4:
     mov x0, x19
     bl shell_execute
-    b batch_next_line
+    address x9, chain_pending
+    ldr x10, [x9]
+    cbz x10, batch_next_line
+    // The line named another batch file: it takes over this frame (its
+    // CALL status, saved ECHO state and depth stay those of this one).
+    str xzr, [x9]
+    ldr x0, [x21, #8]
+    bl dos_close
+    address x0, chain_path
+    mov x1, #0
+    bl dos_open
+    cbnz x1, batch_chain_missing
+    str x0, [x21, #8]
+    str xzr, [x21, #96]
+    address x19, chain_path
+    address x20, chain_tail
+    b batch_parameters
+batch_chain_missing:
+    address x0, batch_missing_message
+    bl puts
+    b batch_finish_closed
 batch_read_end:
     cmp x1, #1
     b.eq batch_finish
@@ -120,6 +165,7 @@ batch_finish:
 1:
     ldr x0, [x21, #8]
     bl dos_close
+batch_finish_closed:
     ldr x0, [x21, #112]
     address x1, batch_echo_enabled
     str x0, [x1]
@@ -484,6 +530,7 @@ environment_get:
     ldr x19, [sp], #16
     unframe
 .section .rodata
+batch_missing_message: .asciz "Batch file missing\r\n"
 errorlevel_keyword: .asciz "ERRORLEVEL"
 echo_off_keyword: .asciz "OFF"
 echo_on_keyword: .asciz "ON"
@@ -505,5 +552,8 @@ batch_echo_enabled: .quad 1
 batch_context: .skip 8
 batch_depth: .skip 8
 batch_calling: .skip 8
+chain_pending: .skip 8
+chain_path: .skip 256
+chain_tail: .skip 256
 expansion_name: .skip 32
 expansion_number: .skip 32

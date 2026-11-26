@@ -61,6 +61,10 @@ main:
     ldr x10, [x9]
     address x9, partial_load
     str x10, [x9]
+    address x9, load_offset     // T loads later must not move it
+    ldr x10, [x9]
+    address x9, partial_offset
+    str x10, [x9]
     say "End of input file\r\n"
 command_loop:
     mov x0, #'*'
@@ -1023,6 +1027,21 @@ do_end:
     address x1, backup_name
     dos 0x56
 2:
+    // A partial load needs NAME.BAK for the unread rest: open it before
+    // the file is rewritten.
+    address x9, partial_load
+    ldr x9, [x9]
+    cbz x9, 21f
+    address x0, backup_name
+    mov x1, #0
+    bl fopen
+    cbz x1, 20f
+    say "Cannot open the backup file; file not written\r\n"
+    b done
+20:
+    address x9, bak_handle
+    str x0, [x9]
+21:
     address x0, file_name
     mov x1, #0
     bl fcreate
@@ -1057,12 +1076,10 @@ do_end:
     address x9, partial_load
     ldr x9, [x9]
     cbz x9, 7f
-    address x0, backup_name
-    mov x1, #0
-    bl fopen
-    cbnz x1, 7f
+    address x9, bak_handle
+    ldr x0, [x9]
     mov x24, x0
-    address x9, load_offset
+    address x9, partial_offset
     ldr x1, [x9]
     mov x2, #0
     bl fseek
@@ -1147,6 +1164,8 @@ binary_mode: .skip 8
 partial_load: .skip 8
 load_partial: .skip 8
 load_offset: .skip 8
+partial_offset: .skip 8
+bak_handle: .skip 8
 new_file: .skip 8
 line_count: .skip 8
 current: .skip 8

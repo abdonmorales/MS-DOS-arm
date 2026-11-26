@@ -256,6 +256,15 @@ def main():
             command('echo @call c2>C1.BAT')
             command('echo @echo after-call>>C1.BAT')
             command('c1', b'after-call')
+            # Restart loops (no CALL) replace the batch file: 20 rounds, more
+            # than the 16 nested levels allowed.
+            command('set N=')
+            command('echo @set N=%N%x>LOOP.BAT')
+            command('echo @if not "%N%"=="xxxxxxxxxxxxxxxxxxxx" loop>>LOOP.BAT')
+            command('echo @echo loop-done>>LOOP.BAT')
+            command('loop', b'loop-done')
+            command('set N=')
+            command('del LOOP.BAT')
             command('del C?.BAT')
             # CTTY lasts past its own command line (AUX is the same UART).
             command('ctty aux')
@@ -264,6 +273,7 @@ def main():
             command('del EL.BAT')
             # The command word ends at = / . \\ as in COMMAND; & is text.
             command('echo.hello World', b'\nhello World\n')
+            command('echo .dot', b'\n.dot\n')
             command('cd\\')
             command('dir/w *.bat', b'AUTOEXEC BAT')
             command('echo R&D', b'\nR&D\n')
@@ -442,7 +452,8 @@ def main():
             command('chcp 865', b'Invalid code page')
             command('chcp 437')
             # The UEFI console shows ESC as '?': ANSI sequences must become
-            # ConOut calls in firmware mode, never reach it as text.
+            # ConOut calls in firmware mode, never reach it as text (checked
+            # in both modes so `check` and `validate` cover it).
             if b'?[' in output:
                 raise RuntimeError('an ANSI sequence reached the UEFI console')
             checks += 1

@@ -691,7 +691,40 @@ efi_main:
     address x0, fcb_search      // and not on A:
     dos 0x11
     expect x0, 255
-    address x0, own_on_b
+    // 17h and 13h with drive byte 2 act on B:, not on A:'s file.
+    address x0, own_on_a
+    mov x1, #0
+    dos 0x3c
+    ok
+    dos 0x3e
+    address x0, fcb_rename_b
+    address x1, fcb
+    mov x2, #37
+    bl memcpy
+    address x0, fcb
+    dos 0x17
+    expect x0, 0
+    address x0, renamed_on_b
+    mov x1, #0
+    dos 0x3d
+    ok
+    dos 0x3e
+    address x0, fcb_search
+    address x1, fcb
+    mov x2, #37
+    bl memcpy
+    address x0, fcb
+    mov w10, #2
+    strb w10, [x0]
+    mov w10, #'?'
+    strb w10, [x0, #8]          // FCBTEST? ???: the renamed file
+    dos 0x13
+    expect x0, 0
+    address x0, renamed_on_b
+    mov x1, #0
+    dos 0x3d
+    cbz x1, fail
+    address x0, own_on_a        // A:'s file is untouched
     dos 0x41
     ok
 
@@ -891,6 +924,13 @@ parse2: .asciz "a*.t? x"
 parse3: .asciz "q:FILE"
 parse4: .asciz "b:FCBTEST.DAT"
 own_on_b: .asciz "B:\\FCBTEST.DAT"
+own_on_a: .asciz "A:\\FCBTEST.DAT"
+renamed_on_b: .asciz "B:\\FCBTESTB.DAT"
+fcb_rename_b: .byte 2
+    .ascii "FCBTEST DAT"
+    .skip 5
+    .ascii "FCBTESTBDAT"
+    .skip 9
 fcb_readme: .ascii "\0README  TXT"
 fcb_create: .byte 0
     .ascii "FCBTEST DAT"

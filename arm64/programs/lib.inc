@@ -728,18 +728,50 @@ lr_getline:
     mov x1, #0
     leave
 
-// Directory walkers call this when a tree is deeper than they can follow:
-// says so once.
+// Directory walkers call this when a tree is deeper than they can follow,
+// with x0 = the directory they cannot descend from: if it really has a
+// subdirectory, says once that deeper levels were skipped.
 depth_note:
-    frame
+    enter
+    mov x19, x0
     address x9, depth_noted
     ldr x10, [x9]
-    cbnz x10, 1f
+    cbnz x10, 9f
+    dos 0x2f                    // keep the caller's DTA
+    mov x20, x0
+    mov x21, x2
+    address x0, depth_dta
+    mov x1, #280
+    dos 0x1a
+    mov x0, x19
+    address x1, depth_all
+    address x2, depth_path
+    bl join_path
+    address x0, depth_path
+    mov x1, #0x10
+    dos 0x4e
+1:
+    cbnz x1, 8f
+    address x9, depth_dta
+    ldrb w10, [x9]              // attributes (native DTA)
+    tbz w10, #4, 2f
+    ldrb w10, [x9, #24]         // name: "." and ".." do not count
+    cmp w10, #'.'
+    b.eq 2f
+    address x9, depth_noted
     mov x10, #1
     str x10, [x9]
     say "Directory tree too deep: deeper levels were skipped\r\n"
-1:
-    unframe
+    b 8f
+2:
+    dos 0x4f
+    b 1b
+8:
+    mov x0, x20
+    mov x1, x21
+    dos 0x1a
+9:
+    leave
 
 // x0 = question text. Reads Y or N; returns x0 = 1 for yes.
 ask_yn:
@@ -1011,10 +1043,14 @@ lib_error_table:
     .byte 80
     .asciz "File exists"
     .byte 0
+.section .rodata
+depth_all: .asciz "*.*"
 .section .bss
 .balign 8
 lib_descriptor: .skip 8
 lib_dos: .skip 8
 lib_split_char: .skip 8
 depth_noted: .skip 8
+depth_dta: .skip 280
+depth_path: .skip 260
 .section .text

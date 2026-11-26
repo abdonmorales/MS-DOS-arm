@@ -66,6 +66,9 @@ shell_execute:
     bl puts
     b shell_execute_done
 81:
+    add x9, sp, #128            // only when the word was split at the dot
+    cmp x20, x9                 // ("echo .text" keeps it)
+    b.ne 9f
     ldrb w2, [x20]
     cmp w2, #'.'
     b.ne 9f

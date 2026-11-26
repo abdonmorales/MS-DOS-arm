@@ -54,7 +54,8 @@ recover_file:
 1:
     cmp x22, #2
     b.lo 5f
-    cmp x22, x25
+    sub x9, x25, #1             // the bad-cluster marker ends the walk too
+    cmp x22, x9
     b.hs 5f
     mov x0, x22
     bl fl_get
@@ -75,8 +76,11 @@ recover_file:
     bl fl_set
     b 4f
 2:
-    cmp x26, x25                // the file now starts at the next unit,
-    csel x2, xzr, x26, hs       // or at none (0) when that was the end
+    sub x9, x25, #1             // the file now starts at the next unit,
+    cmp x26, x9                 // or at none (0) when that is the end, a
+    csel x2, xzr, x26, hs       // bad-cluster mark, free or reserved
+    cmp x26, #2
+    csel x2, xzr, x2, lo
     strh w2, [x20, #26]
     lsr x2, x2, #16
     strh w2, [x20, #20]
