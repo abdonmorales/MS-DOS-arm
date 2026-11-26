@@ -40,6 +40,18 @@ def main():
         (args.output / (name + '.img.xz.sha256')).write_text(
             f"{manifest['compressed_sha256']}  {output.name}\n")
         print(f'{output}: {output.stat().st_size} compressed bytes')
+    # The live ISO, packaged only when make iso-test passed on these bytes.
+    iso = args.build / 'armdos.iso'
+    record = json.loads(iso.with_suffix('.test.json').read_text())
+    if (record['iso_test'] != 'pass' or record['sha256'] != digest(iso) or
+            record['source_files_sha256'] != report['source_files_sha256']):
+        raise SystemExit('ISO bytes or test mismatch: run make iso-test')
+    output = args.output / 'armdos.iso.xz'
+    with iso.open('rb') as raw, lzma.open(output, 'wb', preset=6) as compressed:
+        shutil.copyfileobj(raw, compressed)
+    (args.output / 'armdos.iso.sha256').write_text(f"{record['sha256']}  armdos.iso\n")
+    (args.output / 'armdos.iso.xz.sha256').write_text(f'{digest(output)}  {output.name}\n')
+    print(f'{output}: {output.stat().st_size} compressed bytes')
     shutil.copyfile(args.build / 'validation.json', args.output / 'validation.json')
 
 

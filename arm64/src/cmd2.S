@@ -570,8 +570,17 @@ if_file_exists:
 // VOL: label and serial number from the boot record.
 // x0 = arguments: an optional drive ("B:").
 cmd_vol:
+    mov x1, #0
+    b vol_common
+// The same, for DIR's header: a drive without a boot record (the firmware
+// file system) prints nothing instead of an error.
+.global cmd_vol_quiet
+cmd_vol_quiet:
+    mov x1, #1
+vol_common:
     frame
-    str x19, [sp, #-16]!
+    stp x19, x20, [sp, #-16]!
+    mov x20, x1
     sub sp, sp, #32
     mov x19, #0                 // DOS drive number (0: the current one)
 5:
@@ -637,11 +646,12 @@ cmd_vol:
     bl puts
     b 4f
 3:
+    cbnz x20, 4f
     address x0, invalid_drive_message
     bl puts
 4:
     add sp, sp, #32
-    ldr x19, [sp], #16
+    ldp x19, x20, [sp], #16
     unframe
 
 // x0 = DOS drive number (0 current, 1 A:). Returns x0 = its letter.

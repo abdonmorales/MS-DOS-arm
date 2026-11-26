@@ -6,6 +6,7 @@
 // AAPCS64: w8 = function, x0-x5 = arguments. x1=0 success; x1=1 error with
 // the DOS error code in x0. Every failing call is recorded for 59h.
 .equ DOS_MAX_FUNCTION, 0x6c
+.equ ARMDOS_DISK_FUNCTION, 0xe0  // ARM DOS extension: table slot 6Dh
 .equ SDA_CRITICAL, 0
 .equ SDA_INDOS, 1
 .equ SDA_EXPLICIT, 2
@@ -18,7 +19,8 @@
 .global dos_call
 dos_call:
     cmp w8, #DOS_MAX_FUNCTION
-    b.hi dos_call_invalid
+    b.hi dos_call_extension
+dos_call_dispatch:
     stp x29, x30, [sp, #-16]!
     mov x29, sp
     adrp x9, dos_break_flag
@@ -51,6 +53,11 @@ dos_call:
 2:
     ldp x29, x30, [sp], #16
     ret
+dos_call_extension:
+    cmp w8, #ARMDOS_DISK_FUNCTION
+    b.ne dos_call_invalid
+    mov w8, #(DOS_MAX_FUNCTION + 1)
+    b dos_call_dispatch
 dos_call_invalid:
     mov x0, #1
     adrp x9, dos_sda
@@ -174,6 +181,7 @@ dos_table:
     dosfn dos_commit                // 6A
     dosfn dos_null_function         // 6B
     dosfn dos_extended_open_append  // 6C
+    dosfn disk_services             // E0 (ARM DOS disk services, slot 6Dh)
 
 // Reserved CP/M-compatibility and network-only numbers: AL=0, no effect.
 dos_null_function:

@@ -1193,7 +1193,7 @@ dir_header:
     strb w0, [x1, #1]
     strb wzr, [x1, #2]
     address x0, dir_drive
-    bl cmd_vol
+    bl cmd_vol_quiet
     address x0, c3_directory_of
     bl puts
     address x0, dir_drive

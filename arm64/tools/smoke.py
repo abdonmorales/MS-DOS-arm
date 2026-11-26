@@ -390,6 +390,14 @@ def main():
             if b'Format complete.' not in text:
                 raise RuntimeError('FORMAT failed')
             checks += 1
+            # FORMAT /SELECT (INSTALL's call) asks nothing; INSTALL offers no
+            # disk here: the only disk is the boot disk (or the native kernel).
+            text = command('format c: /select /v:WORK', b'Format complete.')
+            if b'(Y/N)' in text or b'Volume label' in text:
+                raise RuntimeError('FORMAT /SELECT asked a question')
+            command('install', b'No disk to install on')
+            command('install /x', b'Usage: INSTALL [disk] [/Y]')
+            command('install /y', b'needs the disk number')
             command('sys c:', b'System transferred')
             command('diskcopy b: c:', b'Insert TARGET diskette in drive C:', prompt=b'continue . . .')
             if b'Copying' not in keys(b' ', b'(Y/N)? '):
@@ -445,6 +453,49 @@ def main():
             keys(b'\b' * 8 + b'prompt $p$g\r', b'A:\\>')
             checks += 1
             command('echo done', b'echo done\ndone')
+            # ARM BASIC: a program from the disk, typed lines, INPUT, SAVE,
+            # Ctrl-C in a loop and an error report.
+            command('basic primes', b' 89  97 \nOk', prompt=b'Ok\r\n')
+            command('LIST 30', b'30 FOR N = 2 TO 99', prompt=b'Ok\r\n')
+            command('NEW', prompt=b'Ok\r\n')
+            command('10 A$="ARM": FOR I=1 TO 3: PRINT A$;I;: NEXT: PRINT',
+                    prompt=b'NEXT: PRINT')
+            command('20 INPUT "N";N: PRINT N*2; LEFT$(A$,2); LEN(A$)',
+                    prompt=b'LEN(A$)')
+            command('RUN', b'ARM 1 ARM 2 ARM 3 \nN? ', prompt=b'N? ')
+            command('21', b' 42 AR 3 \nOk', prompt=b'Ok\r\n')
+            command('SAVE "T1"', prompt=b'Ok\r\n')
+            command('PRINT 1/0', b'Division by zero', prompt=b'Ok\r\n')
+            command('RUN', b'N? ', prompt=b'N? ')
+            keys(b'\x03', b'^C')
+            command('', b'Break in 20', prompt=b'Ok\r\n')
+            command('NEW', prompt=b'Ok\r\n')
+            command('30 GOTO 30', prompt=b'GOTO 30')
+            keys(b'RUN\r', b'RUN')
+            time.sleep(1)
+            if b'Break in 30' not in keys(b'\x03', b'Ok\r\n'):
+                raise RuntimeError('Ctrl-C did not stop the BASIC program')
+            checks += 1
+            command('NEW', prompt=b'Ok\r\n')
+            for line in ('10 DATA 3, ok,, 7',
+                         '20 READ N, M$, Z, S: ON N GOSUB 100, 100, 200: PRINT M$; Z+S',
+                         '30 IF DIFF THEN PRINT "bad" ELSE PRINT "else-ok": REM ELSE PRINT "bad"',
+                         '40 PRINT 2^3^2; 10 \\ 3 * 2 \' precedence as in GW-BASIC',
+                         '50 END', '100 PRINT "one-two": RETURN', '200 PRINT "three": RETURN'):
+                command(line, prompt=line[-12:].encode())
+            command('RUN', b'three\nok 7 \nelse-ok\n 64  1 \nOk', prompt=b'Ok\r\n')
+            if b'50 END' in command('LIST 100-200', b'100 PRINT "one-two"', prompt=b'Ok\r\n'):
+                raise RuntimeError('LIST 100-200 listed line 50')
+            command('SAVE "T2"', prompt=b'Ok\r\n')
+            command('NEW', prompt=b'Ok\r\n')
+            command('LOAD "T2"', prompt=b'Ok\r\n')
+            command('LIST -10', b'10 DATA 3, ok,, 7\nOk', prompt=b'Ok\r\n')
+            command('RUN', b'three\nok 7 \nelse-ok', prompt=b'Ok\r\n')
+            command('PRINT 9223372036854775807+1', b'Overflow', prompt=b'Ok\r\n')
+            command('SYSTEM')
+            command('del T2.BAS')
+            command('type T1.BAS', b'20 INPUT "N";N: PRINT N*2; LEFT$(A$,2); LEN(A$)')
+            command('del T1.BAS')
             # COUNTRY.SYS (assembled from MKCNTRY.ASM) supplies other code pages.
             command('chcp', b'Active code page: 437')
             command('chcp 850')

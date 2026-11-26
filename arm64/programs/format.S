@@ -4,6 +4,8 @@
 // asks for a volume label, and with /S transfers the system. The drive's
 // boot record is re-read with IOCTL 0840h when the layout is written.
 // Floppy geometry switches (/1 /4 /8 /B /N /T /F) have no device here.
+// /SELECT (undocumented, as DOS 4's SELECT used it) is for INSTALL: no
+// questions; the disk was confirmed and the label is given with /V.
 .include "lib.inc"
 .include "fatlib.inc"
 .include "cds.inc"
@@ -34,6 +36,12 @@ main:
     b 1b
 2:
     mov x22, x0
+    address x1, select_switch
+    bl strcmpi
+    cbnz x0, 20f
+    orr x21, x21, #4
+    b 1b
+20:
     ldrb w0, [x22, #1]
     bl toupper
     cmp w0, #'S'
@@ -94,6 +102,7 @@ main:
     add x0, x20, #'A'
     bl putc
     say ": WILL BE LOST!\r\n"
+    tbnz x21, #2, 4f            // /SELECT: INSTALL asked already
     address x0, proceed
     bl ask_yn
     cbnz x0, 4f
@@ -130,6 +139,7 @@ main:
     say "No room for system on destination disk\r\n"
 5:
     tbnz x21, #1, 6f
+    tbnz x21, #2, 6f            // /SELECT without /V: no label
 51:
     say "\r\nVolume label (11 characters, ENTER for none)? "
     address x0, line
@@ -611,6 +621,7 @@ copy:
 
 .section .rodata
 proceed: .asciz "Proceed with Format (Y/N)?"
+select_switch: .asciz "/SELECT"
 geometry_switches: .asciz "148BNTF"
 oem: .ascii "MSDOS4.0"
 no_name: .ascii "NO NAME    "

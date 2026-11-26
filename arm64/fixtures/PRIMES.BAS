@@ -1,0 +1,11 @@
+10 REM PRIMES.BAS: the primes below 100, for ARM BASIC
+20 PRINT "Primes below 100:"
+30 FOR N = 2 TO 99
+40 P = 1: D = 2
+50 WHILE D * D <= N AND P
+60 IF N MOD D = 0 THEN P = 0
+70 D = D + 1
+80 WEND
+90 IF P THEN PRINT N;
+100 NEXT N
+110 PRINT
