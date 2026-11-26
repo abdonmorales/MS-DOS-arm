@@ -41,6 +41,15 @@ main:
 3:
     address x9, opt_flags
     str x20, [x9]
+    address x0, spec            // the drive: from the specification
+    bl path_drive_letter
+    address x9, root_text
+    strb w0, [x9]
+    address x9, error_drive
+    strb w0, [x9]
+    sub x0, x0, #('A' - 1)
+    address x9, fl_drive
+    str x0, [x9]
     bl fl_init
     cbnz x1, disk_error
     flp x2, FL_BPS
@@ -87,7 +96,10 @@ no_memory:
     mov x0, #1
     leave
 disk_error:
-    say "Disk error reading drive A\r\n"
+    say "Disk error reading drive "
+    address x0, error_drive
+    bl puts
+    bl crlf
     mov x0, #1
     leave
 
@@ -743,7 +755,8 @@ summary:
     bl crlf
 1:
     mov x0, #0
-    mov x1, #0
+    address x9, fl_drive
+    ldr x1, [x9]
     address x2, media
     dos 0x69
     cbnz x1, 2f
@@ -945,7 +958,6 @@ report_contiguity:
     unframe
 
 .section .rodata
-root_text: .asciz "A:\\"
 convert_question: .asciz "Convert lost chains to files (Y/N)? "
 .section .data
 chk_name: .asciz "\\FILE0000.CHK"
@@ -980,3 +992,6 @@ path: .skip 1024
 specs: .skip 128 * MAX_SPECS
 dir: .skip DIR_SIZE
 pool: .skip POOL_SIZE
+.section .data
+root_text: .asciz "A:\\"
+error_drive: .asciz "A"

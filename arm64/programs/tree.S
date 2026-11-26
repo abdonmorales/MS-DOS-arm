@@ -41,9 +41,15 @@ main:
     address x1, dta_top
     str x0, [x1]
     // Header from the boot record.
+    address x0, path            // the drive listed
+    bl path_drive_letter
+    address x9, drive_text
+    strb w0, [x9]
     say "Directory PATH listing"
+    address x9, drive_text
+    ldrb w1, [x9]
+    sub x1, x1, #('A' - 1)
     mov x0, #0
-    mov x1, #0
     address x2, media
     dos 0x69
     cbnz x1, 4f
@@ -72,7 +78,10 @@ main:
     address x19, path
     ldrb w2, [x19]
     cbnz w2, 5f
-    say "A:."
+    address x0, drive_text
+    bl puts
+    mov x0, #'.'
+    bl putc
     b 6f
 5:
     mov x0, x19
@@ -80,10 +89,18 @@ main:
     ldrb w2, [x19, #1]
     cmp w2, #':'
     b.eq 51f
-    say "A:"
+    address x0, drive_text
+    bl puts
 51:
     mov x0, x19
     bl puts
+    ldrb w2, [x19, #2]          // "B:" is that drive's current directory
+    cbnz w2, 6f
+    ldrb w2, [x19, #1]
+    cmp w2, #':'
+    b.ne 6f
+    mov x0, #'.'
+    bl putc
 6:
     bl crlf
     address x0, prefix
@@ -323,3 +340,5 @@ dta_stack: .skip 8
 path: .skip 512
 prefix: .skip 512
 pool: .skip POOL_SIZE
+.section .data
+drive_text: .asciz "A:"

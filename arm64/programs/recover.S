@@ -13,6 +13,13 @@ main:
     mov x19, x0
     ldrb w2, [x19]
     cbz w2, missing
+    mov x0, x19                 // the drive named (fl_resolve also sets it)
+    bl path_drive_letter
+    address x9, drive_text
+    strb w0, [x9]
+    sub x0, x0, #('A' - 1)
+    address x9, fl_drive
+    str x0, [x9]
     bl fl_init
     cbnz x1, disk_error
     flp x2, FL_BPS
@@ -35,8 +42,7 @@ recover_file:
     mov x20, x0                 // the entry
     ldrb w2, [x20, #11]
     tbnz w2, #4, not_found      // directories are not files
-    say "\r\nPress any key to begin recovery of the\r\nfile(s) on drive A:\r\n\r\n"
-    dos 0x08
+    bl press_to_begin
     ldr w21, [x20, #28]         // original size
     mov x0, x20
     bl fl_entry_cluster
@@ -103,8 +109,7 @@ recover_file:
 
 recover_drive:
     mov w0, w2
-    say "\r\nPress any key to begin recovery of the\r\nfile(s) on drive A:\r\n\r\n"
-    dos 0x08
+    bl press_to_begin
     mov x0, #0
     address x1, dir
     mov x2, #DIR_SIZE
@@ -188,6 +193,15 @@ disk_error:
     mov x0, #1
     leave
 
+press_to_begin:
+    frame
+    say "\r\nPress any key to begin recovery of the\r\nfile(s) on drive "
+    address x0, drive_text
+    bl puts
+    say "\r\n\r\n"
+    dos 0x08
+    unframe
+
 // x0 = first cluster. Returns x0 = clusters in the chain.
 chain_length:
     enter
@@ -220,3 +234,5 @@ rec_name: .ascii "FILE0000REC\0\0\0\0\0"
 cluster_bytes: .skip 8
 cluster: .skip 65536
 dir: .skip DIR_SIZE
+.section .data
+drive_text: .asciz "A:"

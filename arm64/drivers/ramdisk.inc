@@ -260,6 +260,21 @@ rd_format:
     bl rd_copy_label
     mov w4, #0x08
     strb w4, [x8, #11]
+    str x8, [sp, #-16]!         // the label's time and date: now
+    dos 0x2c
+    lsl w4, w0, #11
+    orr w4, w4, w2, lsl #5
+    lsr w3, w3, #1
+    orr w4, w4, w3
+    ldr x8, [sp]
+    strh w4, [x8, #22]
+    dos 0x2a
+    sub w0, w0, #1980
+    lsl w4, w0, #9
+    orr w4, w4, w2, lsl #5
+    orr w4, w4, w3
+    ldr x8, [sp], #16
+    strh w4, [x8, #24]
     ldp x29, x30, [sp], #16
     ret
 

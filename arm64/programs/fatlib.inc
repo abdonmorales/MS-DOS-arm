@@ -7,7 +7,8 @@
 // Reads the volume geometry. Returns x1 = 0, or x1 = 1 on failure.
 fl_init:
     frame
-    mov x0, #0
+    address x0, fl_drive        // DOS drive number: 0 default, 1 A:, ...
+    ldr x0, [x0]
     mov x1, #0x0d
     mov x2, #0x0860
     address x3, fl_params
@@ -33,7 +34,8 @@ fl_transfer:
     str x2, [sp, #16]
     mov x2, x3
     mov x3, sp
-    mov x0, #0
+    address x0, fl_drive
+    ldr x0, [x0]
     mov x1, #0x0d
     dos 0x44
     add sp, sp, #32
@@ -51,6 +53,7 @@ fl_transfer:
 .equ FL_ROOT_START, 64
 .equ FL_ROOT_ENTRIES, 72
 .equ FL_ROOT_CLUSTER, 80
+.equ FL_TOTAL, 88               // sectors on the device
 .macro flp reg, field
     adrp \reg, fl_params
     add \reg, \reg, :lo12:fl_params
@@ -486,6 +489,13 @@ fl_resolve:
     address x1, fl_true
     dos 0x60                    // canonical "A:\DIR\FILE"
     cbnz x1, 8f
+    address x22, fl_true        // the geometry of the drive it is on
+    ldrb w2, [x22]
+    sub x2, x2, #('A' - 1)
+    address x9, fl_drive
+    str x2, [x9]
+    bl fl_init
+    cbnz x1, 8f
     address x22, fl_true
     add x22, x22, #3            // past "A:\"
     mov x23, #0                 // directory cluster
@@ -531,7 +541,8 @@ fl_resolve:
 .equ FL_MAX_DIR_SECTORS, 1024
 .section .bss
 .balign 8
-fl_params: .skip 88
+fl_params: .skip 96
+fl_drive: .skip 8
 fl_fat_cached: .skip 8
 fl_dir_count: .skip 8
 fl_dir_sectors: .skip 8 * FL_MAX_DIR_SECTORS

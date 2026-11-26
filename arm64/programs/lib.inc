@@ -922,6 +922,27 @@ join_path:
     ldp x19, x20, [sp], #16
     unframe
 
+// x0 = path. Returns x0 = its drive letter ('A'...): the "d:" it starts
+// with, or the current drive.
+path_drive_letter:
+    frame
+    ldrb w1, [x0]
+    cbz w1, 1f
+    ldrb w2, [x0, #1]
+    cmp w2, #':'
+    b.ne 1f
+    sub w3, w1, #'a'
+    cmp w3, #26
+    b.hs 2f
+    sub w1, w1, #32
+2:
+    mov x0, x1
+    unframe
+1:
+    dos 0x19
+    add x0, x0, #'A'
+    unframe
+
 // x0 = line buffer (DOS 0Ah format, capacity in byte 0). Reads a line from
 // the console; returns x0 = the NUL-terminated text.
 read_console_line:

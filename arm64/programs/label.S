@@ -15,18 +15,33 @@ main:
     b.ne 1f
     mov w0, w2
     bl toupper
-    cmp w0, #'A'
-    b.ne bad_drive
+    sub x2, x0, #('A' - 1)
+    cmp x2, #26
+    b.hi bad_drive
+    address x9, fl_drive
+    str x2, [x9]
     add x0, x19, #2
     bl skip_blanks
     mov x19, x0
 1:
     mov x0, x19
     bl rtrim
+    address x9, fl_drive        // the drive's letter for the messages
+    ldr x0, [x9]
+    cbnz x0, 11f
+    dos 0x19
+    add x0, x0, #1
+    address x9, fl_drive
+    str x0, [x9]
+11:
+    add x0, x0, #('A' - 1)
+    address x9, drive_letter
+    strb w0, [x9]
     bl fl_init
-    cbnz x1, disk_error
+    cbnz x1, bad_drive
     mov x0, #0
-    mov x1, #0
+    address x9, fl_drive
+    ldr x1, [x9]
     address x2, media
     dos 0x69
     cbnz x1, disk_error
@@ -39,7 +54,13 @@ main:
     mov x20, x0
     bl find_label
     mov x21, x0                 // entry or 0
-    say "Volume in drive A "
+    ldrb w2, [x19]              // a label given: set it without a word
+    cbnz w2, 5f
+    say "Volume in drive "
+    address x0, drive_letter
+    bl puts
+    mov x0, #' '
+    bl putc
     cbz x21, 2f
     say "is "
     mov x0, x21
@@ -251,7 +272,8 @@ set_boot_label:
     cmp x3, #11
     b.lo 1b
     mov x0, #1
-    mov x1, #0
+    address x9, fl_drive
+    ldr x1, [x9]
     address x2, media
     dos 0x69
     unframe
@@ -267,3 +289,5 @@ new_label: .skip 16
 text: .skip 16
 line: .skip 16
 dir: .skip 65536
+.section .data
+drive_letter: .asciz "A"
