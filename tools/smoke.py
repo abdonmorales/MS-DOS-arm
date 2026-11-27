@@ -33,6 +33,202 @@ def check_filesystem(image):
     print('PASS: fsck.fat clean after the session; mtools reads native long names.')
 
 
+# ---------------------------------------------------------------------------
+# Multi-disk checks (native block layer, src/blk.S): a second session boots
+# with three more virtio-blk disks: an MBR disk with two FAT partitions, a
+# GPT disk with one Basic Data FAT partition, and a blank disk for INSTALL.
+MIB = 1 << 20
+
+
+def fat_partition(path, sectors, label, files, fat=None):
+    """A FAT file system image of `sectors` 512-byte sectors holding files."""
+    path.unlink(missing_ok=True)
+    cmd = ['mkfs.fat', '-C', '-n', label, '-i', '12345678']
+    if fat:
+        cmd += ['-F', str(fat)]
+    subprocess.run(cmd + [str(path), str(sectors // 2)], check=True, capture_output=True)
+    env = dict(os.environ, MTOOLS_SKIP_CHECK='1')
+    for name, data in files.items():
+        source = path.with_name('src-' + name)
+        source.write_bytes(data)
+        subprocess.run(['mcopy', '-i', str(path), str(source), '::/' + name],
+                       check=True, env=env)
+    return path.read_bytes()
+
+
+def mbr_entry(kind, start, sectors):
+    return struct.pack('<B3sB3sII', 0, b'\xfe\xff\xff', kind, b'\xfe\xff\xff', start, sectors)
+
+
+def make_mbr_disk(path, size, partitions):
+    """partitions: (type, start sector, file system image bytes)."""
+    disk = bytearray(size)
+    table = b''.join(mbr_entry(kind, start, len(data) // 512) for kind, start, data in partitions)
+    disk[446:446 + len(table)] = table
+    disk[510:512] = b'\x55\xaa'
+    for _, start, data in partitions:
+        disk[start * 512:start * 512 + len(data)] = data
+    path.write_bytes(disk)
+
+
+def make_gpt_disk(path, size, start, data):
+    import uuid
+    import zlib
+    sectors = size // 512
+    disk = bytearray(size)
+    disk[446:462] = mbr_entry(0xee, 1, min(sectors - 1, 0xffffffff))
+    disk[510:512] = b'\x55\xaa'
+    entry = bytearray(128)
+    entry[0:16] = uuid.UUID('ebd0a0a2-b9e5-4433-87c0-68b6b72699c7').bytes_le
+    entry[16:32] = uuid.UUID('6e1c5b2a-0d6f-4c1e-9a3b-2f1d4c5b6a7e').bytes_le
+    struct.pack_into('<QQ', entry, 32, start, start + len(data) // 512 - 1)
+    entry[56:56 + 8] = 'ARMDOS'.encode('utf-16-le')[:8]
+    entries = bytes(entry) + bytes(127 * 128)
+    disk[1024:1024 + len(entries)] = entries
+    header = bytearray(92)
+    struct.pack_into('<8sIIIIQQQQ16sQIII', header, 0, b'EFI PART', 0x10000, 92, 0, 0,
+                     1, sectors - 1, 34, sectors - 34,
+                     uuid.UUID('11111111-2222-3333-4444-555555555555').bytes_le,
+                     2, 128, 128, zlib.crc32(entries))
+    struct.pack_into('<I', header, 16, zlib.crc32(header))
+    disk[512:512 + 92] = header
+    disk[start * 512:start * 512 + len(data)] = data
+    path.write_bytes(disk)
+
+
+def check_partition(image, start, sectors, label, files=()):
+    """fsck.fat a partition of a disk image and read files back with mtools."""
+    part = image.with_name(image.stem + f'-{start}.part')
+    with image.open('rb') as disk:
+        disk.seek(start * 512)
+        part.write_bytes(disk.read(sectors * 512))
+    fsck = subprocess.run(['fsck.fat', '-n', str(part)], capture_output=True, text=True)
+    if fsck.returncode:
+        raise RuntimeError(f'fsck.fat {label}:\n' + fsck.stdout + fsck.stderr)
+    env = dict(os.environ, MTOOLS_SKIP_CHECK='1')
+    for name, data in files:
+        got = subprocess.run(['mtype', '-i', str(part), '::/' + name],
+                             capture_output=True, env=env)
+        if got.returncode or got.stdout != data:
+            raise RuntimeError(f'{label}: {name} has the wrong contents')
+
+
+def multidisk_session(args, directory, image):
+    directory = Path(directory)
+    hello = b'hello from disk one\r\n'
+    second = b'second partition\r\n'
+    disk1 = directory / 'disk1.img'
+    make_mbr_disk(disk1, 48 * MIB, [
+        (0x06, 2048, fat_partition(directory / 'p1.fs', 32768, 'DISK1P1', {'HELLO.TXT': hello}, 16)),
+        (0x01, 2048 + 32768, fat_partition(directory / 'p2.fs', 16384, 'DISK1P2', {'P2.TXT': second}, 12)),
+    ])
+    disk2 = directory / 'disk2.img'
+    make_gpt_disk(disk2, 24 * MIB, 2048,
+                  fat_partition(directory / 'g1.fs', 20480, 'GPTDISK', {'GPT.TXT': b'gpt ok\r\n'}, 12))
+    blank = directory / 'blank.img'
+    with blank.open('wb') as f:
+        f.truncate(64 * MIB)
+    drives = []
+    for index, path in enumerate([image, disk1, disk2, blank]):
+        drives += ['-drive', f'file={path},format=raw,if=none,id=d{index}',
+                   '-device', f'virtio-blk-pci,drive=d{index}']
+    cmd = [args.qemu, '-machine', 'virt', '-cpu', 'cortex-a72', '-m', '256',
+           '-bios', str(args.firmware), *drives, '-nographic', '-monitor', 'none',
+           '-net', 'none', '-no-reboot', '-boot', 'menu=on,splash-time=0']
+    process = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                               stderr=subprocess.STDOUT)
+    output = bytearray()
+    selector = selectors.DefaultSelector()
+    selector.register(process.stdout, selectors.EVENT_READ)
+
+    def until(expected):
+        deadline = time.monotonic() + args.timeout
+        mark = len(output)
+        while time.monotonic() < deadline:
+            for key, _ in selector.select(timeout=0.1):
+                chunk = os.read(key.fileobj.fileno(), 8192)
+                if not chunk:
+                    raise RuntimeError('QEMU exited (multi-disk session)')
+                output.extend(chunk)
+            cleaned = re.sub(rb'\x1b\[[0-9;=?]*[A-Za-z]', b'', output[mark:])
+            if expected in cleaned:
+                return cleaned.replace(b'\r', b'')
+            if b'CPU exception' in cleaned or b'Synchronous Exception' in cleaned:
+                raise RuntimeError('Fault in the multi-disk session: ' +
+                                   output[-400:].decode(errors='replace'))
+        raise RuntimeError('Timed out waiting for ' + repr(expected) + ' (multi-disk session)')
+
+    checks = 0
+
+    def command(line, expected=b'', prompt=b'A:\\>'):
+        nonlocal checks
+        process.stdin.write(line.encode() + b'\r')
+        process.stdin.flush()
+        text = until(prompt)
+        if expected not in text:
+            raise RuntimeError('Incorrect output for ' + line + ' (multi-disk session)')
+        checks += 1
+        return text
+
+    try:
+        text = until(b'A:\\>')
+        for expected in [b'Drive C: is disk 1, partition 1', b'Drive D: is disk 1, partition 2',
+                         b'Drive E: is disk 2, partition 1']:
+            if expected not in text:
+                raise RuntimeError('Not mounted at boot: ' + expected.decode())
+        checks += 1
+        command('dir c:', b'HELLO    TXT')
+        command('vol d:', b'Volume in drive D is DISK1P2')
+        command('type d:\\P2.TXT', second.replace(b'\r', b''))
+        command('dir e:', b'GPT      TXT')
+        command('copy c:\\HELLO.TXT e:\\', b'1 File(s) copied')
+        command('type e:\\HELLO.TXT', b'hello from disk one')
+        command('md c:\\NEWDIR')
+        command('copy ARMTEST.TXT c:\\NEWDIR\\X.TXT', b'1 File(s) copied')
+        command('copy e:\\GPT.TXT d:\\', b'1 File(s) copied')
+        command('c:', prompt=b'C:\\>')
+        command('dir', b'NEWDIR', prompt=b'C:\\>')
+        command('a:')
+        text = command('chkdsk c:', b'bytes total disk space')
+        if b'rror' in text or b'lost' in text:
+            raise RuntimeError('CHKDSK C: found problems')
+        command('chkdsk e:', b'bytes total disk space')
+        # INSTALL natively: disk 3 is the blank one (E0h offers disks 1-3).
+        text = command('install 3 /y', b'ARM DOS is installed on disk 3')
+        found = re.search(rb'Formatting drive ([A-Z]):', text)
+        if not found:
+            raise RuntimeError('INSTALL did not name the new drive')
+        letter = found.group(1).decode()
+        command(f'dir {letter}:\\EFI\\BOOT', b'BOOTAA64 EFI')
+        command(f'type {letter}:\\ARMTEST.TXT', b'ARM64 FAT read')
+        # Disk 1's volumes are drives C: and D:: INSTALL must not wipe it.
+        command('install 1 /y', b'part of it is already a drive')
+    finally:
+        selector.close()
+        process.terminate()
+        try:
+            process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait()
+        if args.log:
+            args.log.with_name(args.log.stem + '-disks.log').write_bytes(output)
+    check_partition(disk1, 2048, 32768, 'disk 1 partition 1',
+                    [('HELLO.TXT', hello), ('NEWDIR/X.TXT', b'ARM64 FAT read\r\n')])
+    check_partition(disk1, 2048 + 32768, 16384, 'disk 1 partition 2', [('GPT.TXT', b'gpt ok\r\n')])
+    check_partition(disk2, 2048, 20480, 'GPT disk', [('HELLO.TXT', hello)])
+    mbr = blank.read_bytes()[:512]
+    kind, start, sectors = mbr[446 + 4], *struct.unpack_from('<II', mbr, 446 + 8)
+    if mbr[510:512] != b'\x55\xaa' or kind != 0xef:
+        raise RuntimeError('INSTALL wrote no MBR partition')
+    check_partition(blank, start, sectors, 'installed disk',
+                    [('ARMTEST.TXT', b'ARM64 FAT read\r\n')])
+    print(f'PASS: multi-disk session (C:-E: on two more disks, MBR and GPT, native INSTALL '
+          f'to drive {letter}:), {checks} checks; fsck.fat clean on every volume.')
+# End of the multi-disk checks.
+# ---------------------------------------------------------------------------
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('image', type=Path)
@@ -42,6 +238,8 @@ def main():
     parser.add_argument('--log', type=Path)
     parser.add_argument('--mode', choices=['native', 'firmware'], default='native',
                         help='firmware: boot without ACPI so the kernel must stay on UEFI')
+    parser.add_argument('--no-disks', action='store_true',
+                        help='skip the multi-disk session (native mode)')
     args = parser.parse_args()
     output = bytearray()
     with tempfile.TemporaryDirectory(prefix='arm64-smoke-') as directory:
@@ -520,6 +718,8 @@ def main():
             if args.log:
                 args.log.write_bytes(output)
         check_filesystem(image)
+        if args.mode == 'native' and not args.no_disks:
+            multidisk_session(args, directory, image)
 
 
 if __name__ == '__main__':
