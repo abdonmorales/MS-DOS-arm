@@ -508,6 +508,10 @@ platform_go_native:
     // The firmware's virtio driver reset the device on exit; start ours.
     bl vio_init
     cbnz x0, plat_dead
+    bl plat_rtc_probe           // a PL031 RTC: reload the clock from it
+    cbnz x0, 6f
+    bl clock_init
+6:
     mov x0, #0
     leave
 5:
@@ -523,6 +527,40 @@ platform_go_native:
 plat_fail:
     mov x0, #1
     leave
+
+// QEMU virt (ACPI OEM "BOCHS ", PCI present): the PL031 RTC sits at
+// 09010000h (ACPI does not describe it). Its PrimeCell ID registers are
+// checked before use. Sets plat_rtc; returns x0 = 0 when found.
+.equ PLAT_VIRT_PL031, 0x09010000
+plat_rtc_probe:
+    ldv x0, plat_qemu_virt
+    cbz x0, 9f
+    ldv x0, plat_ecam
+    cbz x0, 9f
+    movz x0, #(PLAT_VIRT_PL031 & 0xffff)
+    movk x0, #(PLAT_VIRT_PL031 >> 16), lsl #16
+    address x1, plat_pl031_id
+    mov x2, #0
+1:
+    add x3, x0, #0xfe0
+    ldr w4, [x3, x2, lsl #2]
+    and w4, w4, #0xff
+    ldrb w5, [x1, x2]
+    cmp x2, #2                  // PeriphID2: revision in bits 7:4
+    b.ne 2f
+    and w4, w4, #0x0f
+2:
+    cmp w4, w5
+    b.ne 9f
+    add x2, x2, #1
+    cmp x2, #8
+    b.lo 1b
+    stv x0, plat_rtc, x1
+    mov x0, #0
+    ret
+9:
+    mov x0, #1
+    ret
 plat_dead:
     address x0, plat_disk_lost
     bl puts
@@ -589,6 +627,22 @@ plat_find_acpi:
     ldrb w2, [x22, #15]
     cmp w2, #2
     b.lo plat_acpi_fail
+    // QEMU's ACPI tables carry OEM ID "BOCHS ": the PL031 RTC probe in
+    // plat_rtc_probe touches its fixed virt address only on QEMU.
+    add x0, x22, #9
+    address x1, plat_qemu_oem
+    mov x2, #0
+21:
+    ldrb w3, [x0, x2]
+    ldrb w4, [x1, x2]
+    cmp w3, w4
+    b.ne 22f
+    add x2, x2, #1
+    cmp x2, #6
+    b.lo 21b
+    mov x2, #1
+    stv x2, plat_qemu_virt, x3
+22:
     add x0, x22, #24
     bl plat_ld64
     mov x23, x0                 // XSDT
@@ -1212,6 +1266,8 @@ acpi20_guid:
     .short 0xe4f1, 0x11d3
     .byte 0xbc,0x22,0x00,0x80,0xc7,0x3c,0x88,0x81
 rsdp_signature: .ascii "RSD PTR "
+plat_qemu_oem: .ascii "BOCHS "
+plat_pl031_id: .byte 0x31, 0x10, 0x04, 0x00, 0x0d, 0xf0, 0x05, 0xb1
 plat_cls_sequence: .asciz "\x1b[2J\x1b[H"
 plat_exc_message: .asciz "\r\nCPU exception: ESR="
 plat_exc_pc: .asciz " PC="
@@ -1233,6 +1289,7 @@ fw_attribute: .quad 0x07
 fw_esc_state: .skip 48          // state, parameter count, 4 parameters
 .balign 16
 platform_native: .skip 8
+plat_qemu_virt: .skip 8           // ACPI OEM ID is QEMU's
 plat_uart: .skip 8
 plat_uart_type: .skip 8           // 0 PL011, 1 BCM2835 mini UART
 plat_disk_kind: .skip 8           // 0 virtio-blk, 1 Pi SD card

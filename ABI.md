@@ -84,12 +84,23 @@ binary's table matches this list.
 | `27h`, `28h` | `x0` open FCB, `x1` record count | Random block read / write at the random record, which advances; `x2` records moved. `28h` with `x1=0` sets the file size |
 | `29h` | `x0` string, `x1` FCB, `x2` control bits 0–3 | Parse a filename into the FCB; `x0` 0 / 1 wildcards / FFh bad drive, `x2` next character |
 | `2Ah` | None | `x0` year, `x2` month, `x3` day, `x4` weekday (Sunday=0) |
-| `2Bh` | `x0` year, `x1` month, `x2` day | Set runtime date; 1980–2107 with leap-year validation |
+| `2Bh` | `x0` year, `x1` month, `x2` day | Set date; 1980–2107 with leap-year validation. Also written to the real-time clock (see below) |
 | `2Ch` | None | `x0` hour, `x2` minute, `x3` second, `x4` hundredths |
-| `2Dh` | `x0` hour, `x1` minute, `x2` second, `x3` hundredths | Set runtime time |
+| `2Dh` | `x0` hour, `x1` minute, `x2` second, `x3` hundredths | Set time; also written to the real-time clock |
 | `2Eh`, `54h` | `2Eh`: `x0` flag | Set / get (`x0`) the verify flag |
 | `2Fh` | None | `x0` DTA pointer, `x2` capacity |
 | `30h` | None | `x0=4`, minor version 0, `x2=0`, `x3=FFh` |
+
+Date and time (`src/clock.S`): the clock is loaded from the real-time clock at
+boot, and `2Bh`/`2Dh` (so also `DATE`, `TIME` and `CLOCK$` writes) store it
+back, so a setting survives a reboot. Native mode on QEMU `virt` uses the
+PL031 directly (09010000h, used only when the ACPI OEM ID is QEMU's and the
+PrimeCell ID registers match); firmware mode uses UEFI `GetTime`/`SetTime`.
+The Raspberry Pi 3 has no battery-backed RTC: native mode there keeps the
+firmware's boot-time value and nothing persists. The RTC is read as local
+time (DOS has no time zones); RTC values before 1980 read as 1980-01-01, and
+dates after 2106-02-07 06:28 (the 32-bit PL031 limit) last only until reboot.
+Hundredths come from the generic timer and are not stored.
 | `31h` | `x0` exit code, `x1` bytes to keep | Terminate and stay resident: the image and its blocks stay allocated; status type 3 |
 | `33h` | `x0` 0 get / 1 set / 2 exchange / 5 boot drive, `x1` value | `x2` BREAK state (or boot drive 1). BREAK ON checks for Ctrl-C on every call |
 | `34h` | None | `x0` InDOS byte, `x2` critical-error byte (both 0 while a program runs) |

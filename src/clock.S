@@ -1,49 +1,232 @@
 // SPDX-License-Identifier: MIT
-// Initialize local DOS time from EFI, then advance it using the architectural
-// virtual counter. SetDate/SetTime affect this runtime, not firmware NVRAM.
+// DOS date and time. The clock is an anchor (seconds since 1980-01-01 00:00,
+// hundredths) plus the architectural virtual counter at the moment it was
+// set, so sub-second ticks come from the generic timer.
+//
+// The anchor is loaded at boot from the real-time clock (rtc_read_unix) and
+// SET DATE / SET TIME (2Bh/2Dh, the DATE and TIME commands, CLOCK$) write it
+// back (rtc_write_unix), so the setting survives a reboot:
+//   native mode, QEMU virt: the PL031 directly (RTCDR read, RTCLR write);
+//   firmware mode: UEFI runtime GetTime / SetTime;
+//   native mode without an RTC (Raspberry Pi 3 has no battery-backed clock):
+//   the boot-time firmware value only, and nothing is persisted.
+// The RTC counts seconds since 1970-01-01 and DOS has no time zones, so it
+// is taken as local time. Values before 1980 read as 1980-01-01 00:00; the
+// 32-bit PL031 cannot hold dates after 2106-02-07 06:28:15, so those are kept
+// for this session only.
 .macro day_seconds reg
     movz \reg, #0x5180
     movk \reg, #1, lsl #16
 .endm
+.macro unix_1980 reg                    // 315532800: 1980-01-01 in Unix time
+    movz \reg, #0xa600
+    movk \reg, #0x12ce, lsl #16
+.endm
+.macro dos_clock_max reg                // 2107-12-31 23:59:59, DOS seconds
+    movz \reg, #0x9e7f
+    movk \reg, #0xf0c2, lsl #16
+.endm
+.equ PL031_DR, 0x00
+.equ PL031_LR, 0x08
 .section .text
+// Load the clock from the RTC (or 1980-01-01 when there is none). Called
+// once in firmware mode at boot and again after the platform switches to
+// native mode and has probed its RTC.
 clock_init:
     frame
-    address x0, clock_efi_time
-    mov x1, #0
-    address x2, system_table
-    ldr x2, [x2]
-    ldr x2, [x2, #88]
-    ldr x2, [x2, #24]
-    blr x2
-    cbnz x0, clock_default
-    address x3, clock_efi_time
-    ldrh w0, [x3]
-    ldrb w1, [x3, #2]
-    ldrb w2, [x3, #3]
-    bl validate_date
-    cbnz x0, clock_default
-    address x3, clock_efi_time
-    ldrh w0, [x3]
-    ldrb w1, [x3, #2]
-    ldrb w2, [x3, #3]
-    bl date_to_days
-    day_seconds x1
-    mul x0, x0, x1
-    address x3, clock_efi_time
-    ldrb w1, [x3, #4]
-    mov x2, #3600
-    madd x0, x1, x2, x0
-    ldrb w1, [x3, #5]
-    mov x2, #60
-    madd x0, x1, x2, x0
-    ldrb w1, [x3, #6]
-    add x0, x0, x1
+    bl rtc_read_unix
+    cbnz x1, clock_default
+    bl clock_unix_to_dos
     b clock_anchor_init
 clock_default:
     mov x0, #0
 clock_anchor_init:
     mov x1, #0
     bl clock_anchor
+    unframe
+
+// Returns x0 = Unix seconds, x1 = 0, or x1 = 1 when no clock can be read.
+rtc_read_unix:
+    adrp x0, plat_rtc
+    ldr x0, [x0, :lo12:plat_rtc]
+    cbz x0, 1f
+    ldr w0, [x0, #PL031_DR]
+    mov x1, #0
+    ret
+1:
+    adrp x0, platform_native
+    ldr x0, [x0, :lo12:platform_native]
+    cbnz x0, 2f
+    frame
+    address x0, clock_efi_time
+    mov x1, #0
+    address x2, system_table
+    ldr x2, [x2]
+    ldr x2, [x2, #88]           // RuntimeServices
+    ldr x2, [x2, #24]           // GetTime
+    blr x2
+    cbnz x0, 3f
+    address x0, clock_efi_time
+    bl efi_time_to_unix
+    unframe
+3:
+    mov x1, #1
+    unframe
+2:
+    mov x1, #1
+    ret
+
+// x0 = Unix seconds. Returns x0 = 0 when the clock was stored, 1 when there
+// is no writable RTC or the value does not fit it.
+rtc_write_unix:
+    unix_1980 x1
+    cmp x0, x1
+    b.lo 9f
+    adrp x1, plat_rtc
+    ldr x1, [x1, :lo12:plat_rtc]
+    cbz x1, 1f
+    lsr x2, x0, #32             // PL031 is a 32-bit counter
+    cbnz x2, 9f
+    str w0, [x1, #PL031_LR]
+    mov x0, #0
+    ret
+1:
+    adrp x1, platform_native
+    ldr x1, [x1, :lo12:platform_native]
+    cbnz x1, 9f
+    frame
+    address x1, clock_set_efi_time
+    bl unix_to_efi_time
+    address x0, clock_set_efi_time
+    address x2, system_table
+    ldr x2, [x2]
+    ldr x2, [x2, #88]           // RuntimeServices
+    ldr x2, [x2, #32]           // SetTime
+    blr x2
+    cmp x0, #0
+    cset x0, ne
+    unframe
+9:
+    mov x0, #1
+    ret
+
+// x0 = Unix seconds. Returns x0 = DOS seconds since 1980-01-01 00:00,
+// clamped to 1980-01-01 00:00:00 .. 2107-12-31 23:59:59; x1 = 1 if clamped.
+clock_unix_to_dos:
+    unix_1980 x1
+    subs x0, x0, x1
+    b.lo 1f
+    dos_clock_max x1
+    cmp x0, x1
+    b.hi 2f
+    mov x1, #0
+    ret
+1:
+    mov x0, #0
+    mov x1, #1
+    ret
+2:
+    mov x0, x1
+    mov x1, #1
+    ret
+
+// x0 = DOS seconds since 1980-01-01. Returns x0 = Unix seconds.
+clock_dos_to_unix:
+    unix_1980 x1
+    add x0, x0, x1
+    ret
+
+// x0 = EFI_TIME. Returns x0 = Unix seconds, x1 = 0; x1 = 1 when the fields
+// are not a valid DOS date and time (1980-2107). Time zone fields are ignored.
+efi_time_to_unix:
+    frame
+    str x19, [sp, #-16]!
+    mov x19, x0
+    ldrb w2, [x19, #4]
+    cmp w2, #23
+    b.hi 1f
+    ldrb w2, [x19, #5]
+    cmp w2, #59
+    b.hi 1f
+    ldrb w2, [x19, #6]
+    cmp w2, #59
+    b.hi 1f
+    ldrh w0, [x19]
+    ldrb w1, [x19, #2]
+    ldrb w2, [x19, #3]
+    bl validate_date
+    cbnz x0, 1f
+    ldrh w0, [x19]
+    ldrb w1, [x19, #2]
+    ldrb w2, [x19, #3]
+    bl date_to_days
+    day_seconds x1
+    mul x0, x0, x1
+    ldrb w1, [x19, #4]
+    mov x2, #3600
+    madd x0, x1, x2, x0
+    ldrb w1, [x19, #5]
+    mov x2, #60
+    madd x0, x1, x2, x0
+    ldrb w1, [x19, #6]
+    add x0, x0, x1
+    bl clock_dos_to_unix
+    mov x1, #0
+    b 2f
+1:
+    mov x0, #0
+    mov x1, #1
+2:
+    ldr x19, [sp], #16
+    unframe
+
+// x0 = Unix seconds (1980 or later), x1 = 16-byte EFI_TIME to fill. The
+// time zone is EFI_UNSPECIFIED_TIMEZONE (local time), no daylight flags.
+unix_to_efi_time:
+    frame
+    stp x19, x20, [sp, #-16]!
+    mov x19, x1
+    unix_1980 x2
+    sub x0, x0, x2
+    day_seconds x2
+    udiv x3, x0, x2
+    msub x20, x3, x2, x0        // seconds within the day
+    stp xzr, xzr, [x19]
+    mov x0, x3
+    bl days_to_date
+    strh w0, [x19]
+    strb w1, [x19, #2]
+    strb w2, [x19, #3]
+    mov x2, #3600
+    udiv x0, x20, x2
+    strb w0, [x19, #4]
+    msub x20, x0, x2, x20
+    mov x2, #60
+    udiv x0, x20, x2
+    strb w0, [x19, #5]
+    msub x20, x0, x2, x20
+    strb w20, [x19, #6]
+    mov w0, #0x07ff             // TimeZone: EFI_UNSPECIFIED_TIMEZONE
+    strh w0, [x19, #12]
+    ldp x19, x20, [sp], #16
+    unframe
+
+// Write the running DOS clock to the RTC. Returns x0 as rtc_write_unix.
+// Does nothing while clock_no_persist is set (the boot self-test sets and
+// then restores the clock and must not leave its test dates in the RTC).
+clock_persist:
+    adrp x0, clock_no_persist
+    ldr x0, [x0, :lo12:clock_no_persist]
+    cbz x0, 1f
+    mov x0, #1
+    ret
+1:
+    frame
+    bl clock_now
+    day_seconds x3
+    madd x0, x0, x3, x1
+    bl clock_dos_to_unix
+    bl rtc_write_unix
     unframe
 clock_anchor:
     address x2, clock_epoch
@@ -107,6 +290,7 @@ dos_set_date:
     madd x0, x19, x3, x1
     mov x1, x2
     bl clock_anchor
+    bl clock_persist
     mov x0, #0
     mov x1, #0
     b set_date_return
@@ -151,6 +335,7 @@ dos_set_time:
     madd x0, x0, x3, x19
     mov x1, x20
     bl clock_anchor
+    bl clock_persist
     mov x0, #0
     mov x1, #0
     b set_time_return
@@ -303,3 +488,6 @@ month_lengths: .byte 31,28,31,30,31,30,31,31,30,31,30,31
 .balign 16
 clock_epoch: .skip 24
 clock_efi_time: .skip 16
+clock_set_efi_time: .skip 16
+clock_no_persist: .skip 8
+plat_rtc: .skip 8                       // PL031 base, 0 when none (native only)

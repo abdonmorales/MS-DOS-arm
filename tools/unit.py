@@ -203,6 +203,125 @@ def test_pack_efi_time(kernel):
     return calls
 
 
+# ---- RTC / Unix time conversions (workstream: DATE/TIME persistence) ----
+UNIX_1980 = 315532800
+DOS_MAX = (datetime.date(2108, 1, 1) - datetime.date(1980, 1, 1)).days * 86400 - 1
+UNIX_EPOCH = datetime.datetime(1970, 1, 1)
+
+
+def unix_samples():
+    """Unix seconds around every boundary that matters, plus every day
+    1970-2110 at a few times of day."""
+    marks = [datetime.datetime(*v) for v in [
+        (1970, 1, 1), (1979, 12, 31, 23, 59, 59), (1980, 1, 1), (1980, 2, 29),
+        (1980, 3, 1), (1999, 12, 31, 23, 59, 59), (2000, 1, 1), (2000, 2, 29),
+        (2000, 3, 1), (2038, 1, 19, 3, 14, 7), (2038, 1, 19, 3, 14, 8),
+        (2099, 12, 31, 23, 59, 59), (2100, 2, 28, 23, 59, 59), (2100, 3, 1),
+        (2104, 2, 29), (2106, 2, 7, 6, 28, 15), (2106, 2, 7, 6, 28, 16),
+        (2107, 12, 31, 23, 59, 59), (2108, 1, 1)]]
+    values = set()
+    for mark in marks:
+        base = int((mark - UNIX_EPOCH).total_seconds())
+        values.update(base + delta for delta in range(-2, 3))
+    day = 0
+    while day < (datetime.date(2111, 1, 1) - datetime.date(1970, 1, 1)).days:
+        for second in (0, 1, 43199, 86399):
+            values.add(day * 86400 + second)
+        day += 1
+    values.update((0, 2**32 - 1, 2**32, 2**40))
+    return sorted(v for v in values if v >= 0)
+
+
+def test_unix_to_dos(kernel):
+    """clock_unix_to_dos / clock_dos_to_unix, then days_to_date on the result:
+    leap years, 2000, 2100, the 1980 and 2107 clamps, the 32-bit RTC limit."""
+    calls = 0
+    for unix in unix_samples():
+        dos, clamped = kernel.call('clock_unix_to_dos', unix, results=2)
+        expected = min(max(unix - UNIX_1980, 0), DOS_MAX)
+        if dos != expected or clamped != (expected != unix - UNIX_1980):
+            raise AssertionError(f'clock_unix_to_dos({unix}) = {dos}, {clamped}')
+        calls += 1
+        if clamped:
+            continue
+        back = kernel.call('clock_dos_to_unix', dos, results=1)[0]
+        if back != unix:
+            raise AssertionError(f'clock_dos_to_unix({dos}) = {back}, expected {unix}')
+        when = UNIX_EPOCH + datetime.timedelta(seconds=unix)
+        got = kernel.call('days_to_date', dos // 86400)[:3]
+        if got != [when.year, when.month, when.day]:
+            raise AssertionError(f'unix {unix}: days_to_date gave {got}, expected {when}')
+        calls += 2
+    return calls
+
+
+def test_efi_unix(kernel):
+    """efi_time_to_unix / unix_to_efi_time against Python for every date
+    1975-2111 and every hour/minute, plus invalid fields."""
+    (buffer,) = kernel.strings(bytes(16))
+    calls = 0
+
+    def to_unix(*fields):
+        kernel.cpu.mem_write(buffer, efi_time(*fields))
+        return kernel.call('efi_time_to_unix', buffer, results=2)[:2]
+
+    def check(when):
+        nonlocal calls
+        unix = int((when - UNIX_EPOCH).total_seconds())
+        valid = 1980 <= when.year <= 2107
+        got = to_unix(when.year, when.month, when.day, when.hour, when.minute, when.second)
+        if got != ([unix, 0] if valid else [0, 1]):
+            raise AssertionError(f'efi_time_to_unix({when}) = {got}, expected {unix}')
+        calls += 1
+        if not valid:
+            return
+        kernel.cpu.mem_write(buffer, bytes([0xaa]) * 16)
+        kernel.call('unix_to_efi_time', unix, buffer, results=1)
+        expected = efi_time(when.year, when.month, when.day, when.hour, when.minute,
+                            when.second)
+        expected = expected[:12] + b'\xff\x07' + expected[14:]   # unspecified zone
+        actual = bytes(kernel.cpu.mem_read(buffer, 16))
+        if actual != expected:
+            raise AssertionError(f'unix_to_efi_time({unix}) = {actual.hex()}, '
+                                 f'expected {expected.hex()}')
+        calls += 1
+
+    day = datetime.datetime(1975, 1, 1, 23, 59, 59)
+    while day.year < 2112:
+        check(day)
+        day += datetime.timedelta(days=1)
+    for hour, minute in itertools.product(range(24), range(60)):
+        check(datetime.datetime(2100, 2, 28, hour, minute, minute))
+    for fields in [(2026, 2, 29), (2100, 2, 29), (2026, 13, 1), (2026, 1, 0),
+                   (2026, 1, 1, 24), (2026, 1, 1, 0, 60), (2026, 1, 1, 0, 0, 60)]:
+        if to_unix(*fields)[1] != 1:
+            raise AssertionError(f'efi_time_to_unix accepted {fields}')
+        calls += 1
+    return calls
+
+
+def test_rtc_pl031(kernel):
+    """rtc_read_unix / rtc_write_unix on a fake PL031 in scratch memory."""
+    rtc = SCRATCH + 0x1000
+    kernel.cpu.mem_write(kernel.address('plat_rtc'), rtc.to_bytes(8, 'little'))
+    calls = 0
+    for unix in (0, UNIX_1980, 1700000000, 2**31, 2**32 - 1):
+        kernel.cpu.mem_write(rtc, unix.to_bytes(4, 'little'))
+        if kernel.call('rtc_read_unix', results=2) != [unix, 0]:
+            raise AssertionError(f'rtc_read_unix did not return RTCDR {unix}')
+        calls += 1
+    for unix, stored in ((UNIX_1980, True), (1700000000, True), (2**32 - 1, True),
+                         (UNIX_1980 - 1, False), (2**32, False), (UNIX_1980 + DOS_MAX, False)):
+        kernel.cpu.mem_write(rtc + 8, bytes(4))
+        result = kernel.call('rtc_write_unix', unix, results=1)[0]
+        written = int.from_bytes(kernel.cpu.mem_read(rtc + 8, 4), 'little')
+        if (result == 0) != stored or written != (unix if stored else 0):
+            raise AssertionError(f'rtc_write_unix({unix}) = {result}, RTCLR {written}')
+        calls += 1
+    return calls
+# ---- end RTC / Unix time conversions ----
+
+
 def reference_wildcard(pattern, name):
     """DOS-flavoured glob: ? is one character, * any run, ASCII letters fold
     case, and the exact pattern *.* also matches names with no extension."""
@@ -334,7 +453,7 @@ def test_dispatcher(kernel):
 
 
 TESTS = [test_wildcard_strings, test_dates, test_pack_efi_time, test_wildcard_bytes,
-         test_dispatcher]
+         test_dispatcher, test_unix_to_dos, test_efi_unix, test_rtc_pl031]
 
 
 def run_test(build, nm, test):
