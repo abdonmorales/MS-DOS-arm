@@ -6,6 +6,7 @@ Fetch and boot the ISO of the latest release: run.py --iso latest
 Boot the live ISO:     run.py --iso images/armdos.iso
 Install to a new disk: run.py --iso images/armdos.iso --disk armdos-disk.img
 Boot the installed disk afterwards: run.py armdos-disk.img
+With a screen window as well:      run.py --screen build/msdos-arm64.img
 
 The image argument and every --disk are writable VirtIO disks; the image is
 the one the firmware tries first, unless --iso is given, in which case the
@@ -100,9 +101,15 @@ def build_command(args, firmware):
     cpu = 'cortex-a72' if accel == 'tcg' else 'host'
     cmd = [args.qemu, '-machine', 'virt', '-accel', accel, '-cpu', cpu,
            '-m', str(args.memory), '-bios', str(firmware.absolute()),
-           '-nographic', '-net', 'none', '-no-reboot',
+           '-net', 'none', '-no-reboot',
            # EDK2 otherwise waits out a hidden boot-menu timeout (~5 s).
            '-boot', 'menu=on,splash-time=0']
+    if args.screen:
+        # A ramfb screen in a QEMU window (EDK2 gives it a GOP, which the
+        # native console mirrors); the serial console stays in the terminal.
+        cmd += ['-device', 'ramfb', '-serial', 'mon:stdio']
+    else:
+        cmd += ['-nographic']
     boot = 0
     if args.iso:
         cmd += ['-device', 'virtio-scsi-pci',
@@ -136,6 +143,8 @@ def main():
     parser.add_argument('--qemu', default='qemu-system-aarch64')
     parser.add_argument('--accel', choices=['auto', 'tcg', 'hvf', 'kvm'], default='auto')
     parser.add_argument('--memory', type=positive_mib, default=256, help='RAM in MiB')
+    parser.add_argument('--screen', action='store_true',
+                        help='also show the console on a screen in a QEMU window (ramfb)')
     parser.add_argument('--print', action='store_true', dest='print_only',
                         help='print the QEMU command instead of running it')
     args = parser.parse_args()
