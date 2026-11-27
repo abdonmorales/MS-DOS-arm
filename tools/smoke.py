@@ -169,8 +169,17 @@ def multidisk_session(args, directory, image):
     bad[ebr + 446:ebr + 478] = mbr_entry(0x06, 0xffffff00, 0x1000) + mbr_entry(0x05, 0, 8192)
     bad[ebr + 510:ebr + 512] = b'\x55\xaa'
     corrupt.write_bytes(bad)
+    # A GPT whose entry array lies past the end of the disk, with an entry
+    # count far over the 128 read.
+    badgpt = directory / 'badgpt.img'
+    bad = bytearray(8 * MIB)
+    bad[446:462] = mbr_entry(0xee, 1, 8 * MIB // 512 - 1)
+    bad[510:512] = b'\x55\xaa'
+    struct.pack_into('<8sIIIIQQQQ16sQIII', bad, 512, b'EFI PART', 0x10000, 92, 0, 0,
+                     1, 16383, 34, 16000, bytes(16), 16380, 0xffffffff, 128, 0)
+    badgpt.write_bytes(bad)
     drives = []
-    for index, path in enumerate([image, disk1, disk2, blank, corrupt]):
+    for index, path in enumerate([image, disk1, disk2, blank, corrupt, badgpt]):
         drives += ['-drive', f'file={path},format=raw,if=none,id=d{index}',
                    '-device', f'virtio-blk-pci,drive=d{index}']
     cmd = [args.qemu, '-machine', 'virt', '-cpu', 'cortex-a72', '-m', '256',
@@ -218,7 +227,7 @@ def multidisk_session(args, directory, image):
                          b'Drive G: is disk 2, partition 1']:
             if expected not in text:
                 raise RuntimeError('Not mounted at boot: ' + expected.decode())
-        if b'is disk 4' in text:
+        if b'is disk 4' in text or b'is disk 5' in text:
             raise RuntimeError('A corrupt partition table was mounted')
         checks += 1
         command('type c:\\BOOT2.TXT', b'boot two')
