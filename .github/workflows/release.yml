@@ -1,0 +1,147 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing tag to (re)build and publish, e.g. v1.0.0
+        required: true
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ inputs.tag || github.ref }}
+  cancel-in-progress: false
+
+env:
+  FIRMWARE: /usr/share/qemu-efi-aarch64/QEMU_EFI.fd
+  PYTHONUNBUFFERED: '1'
+  DIST: build/release
+
+jobs:
+  release:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+
+      - name: Resolve the tag
+        id: tag
+        env:
+          INPUT_TAG: ${{ inputs.tag }}
+        run: |
+          tag="${INPUT_TAG:-$GITHUB_REF_NAME}"
+          case "$tag" in v*) ;; *) echo "::error::tag '$tag' does not start with v"; exit 1;; esac
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "version=${tag#v}" >> "$GITHUB_OUTPUT"
+
+      - uses: ./.github/actions/setup
+        with:
+          packages: gcc-aarch64-linux-gnu libc6-dev-arm64-cross qemu-user
+          unicorn: 'true'
+          pi-firmware: 'true'
+
+      # A release that fails any of these is never published.
+      - run: make unit
+      - run: make fat-test
+      - run: make smoke FIRMWARE="$FIRMWARE"
+      - run: make smoke-firmware FIRMWARE="$FIRMWARE"
+      - run: make pi-test
+      - name: ROM tests (when the Makefile has them)
+        run: |
+          if make -n rom-test >/dev/null 2>&1; then
+            sudo apt-get install -y -qq --no-install-recommends \
+              u-boot-tools u-boot-qemu device-tree-compiler
+            make rom-test FIRMWARE="$FIRMWARE"
+          else
+            echo "No rom-test target; skipping."
+          fi
+
+      # make image, make pi-image and make iso, then validate (FAT checks,
+      # payload comparison and a QEMU boot of both disk images) and iso-test;
+      # snapshot packages only bytes that passed, into $DIST with SHA256SUMS.
+      - name: Build and package the validated images
+        run: make snapshot FIRMWARE="$FIRMWARE" SNAPSHOT_DIR="$DIST"
+
+      - name: Build ROM images (when the Makefile has them)
+        run: |
+          stamp=$(mktemp)
+          built=false
+          for target in rom-generic rom-pi; do
+            if make -n "$target" >/dev/null 2>&1; then
+              make "$target"
+              built=true
+            else
+              echo "No $target target; skipping."
+            fi
+          done
+          if $built; then
+            find build -maxdepth 2 -type f -newer "$stamp" -iname '*rom*' \
+              \( -name '*.bin' -o -name '*.img' -o -name '*.itb' -o -name '*.fd' \) \
+              -not -path "$DIST/*" -print | while read -r rom; do
+                echo "ROM asset: $rom"
+                xz -T0 -9 -c "$rom" > "$DIST/$(basename "$rom").xz"
+              done
+          fi
+
+      - name: Write SHA256SUMS over every asset
+        working-directory: ${{ env.DIST }}
+        run: |
+          sums=$(mktemp)
+          find . -maxdepth 1 -type f ! -name SHA256SUMS -printf '%f\n' | sort \
+            | xargs sha256sum > "$sums"
+          mv "$sums" SHA256SUMS
+          cat SHA256SUMS
+          sha256sum -c SHA256SUMS
+
+      - name: Release notes from CHANGELOG.md
+        id: notes
+        env:
+          VERSION: ${{ steps.tag.outputs.version }}
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          notes=build/release-notes.md
+          : > "$notes"
+          if [ -f CHANGELOG.md ]; then
+            # The body of the "## [x.y.z]" section, up to the next "## " heading.
+            awk -v v="$VERSION" '
+              /^## / { if (found) exit; found = index($0, "## [" v "]") == 1; next }
+              found { print }
+            ' CHANGELOG.md | sed -e '/^\[[^]]*\]: /d' -e '/./,$!d' > "$notes"
+          fi
+          if [ -s "$notes" ]; then
+            echo "Using CHANGELOG.md section [$VERSION]"
+            echo "generate=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "No CHANGELOG.md section for [$VERSION]; generating notes"
+            echo "generate=true" >> "$GITHUB_OUTPUT"
+          fi
+          {
+            echo
+            echo "Verify downloads with \`sha256sum -c SHA256SUMS\` (or \`python3 tools/fetch_release.py --tag $TAG\`)."
+          } >> "$notes"
+        shell: bash
+
+      - name: Publish the GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.tag.outputs.tag }}
+          name: ARM DOS ${{ steps.tag.outputs.tag }}
+          body_path: build/release-notes.md
+          generate_release_notes: ${{ steps.notes.outputs.generate == 'true' }}
+          prerelease: ${{ contains(steps.tag.outputs.tag, '-') }}
+          fail_on_unmatched_files: true
+          files: ${{ env.DIST }}/*
+
+      - name: Upload build logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: logs-release
+          path: build/*.log
+          if-no-files-found: ignore

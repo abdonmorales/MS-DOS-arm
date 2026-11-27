@@ -44,8 +44,10 @@ fat-test: $(BUILD)/fat_host
 $(BUILD)/fat_host: tests/fat_host.c tests/fat_host_glue.S src/fat.S | $(BUILD)
 	$(HOST_CC) -static -O1 -Wall -Wa,-I. -o $@ tests/fat_host.c tests/fat_host_glue.S
 
+# Release assets (not committed): see .github/workflows/release.yml.
+SNAPSHOT_DIR ?= $(BUILD)/release
 snapshot: validate iso-test
-	$(PYTHON) tools/snapshot.py --build $(BUILD) --output images
+	$(PYTHON) tools/snapshot.py --build $(BUILD) --output $(SNAPSHOT_DIR)
 
 $(BUILD):
 	mkdir -p $@

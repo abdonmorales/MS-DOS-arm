@@ -1,0 +1,74 @@
+name: Nightly
+
+on:
+  schedule:
+    - cron: '17 7 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nightly-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  FIRMWARE: /usr/share/qemu-efi-aarch64/QEMU_EFI.fd
+  PYTHONUNBUFFERED: '1'
+
+jobs:
+  fuzz:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check for the fuzz target
+        id: target
+        run: |
+          if make -n fuzz >/dev/null 2>&1; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::No fuzz target in the Makefile; skipping."
+          fi
+      - if: steps.target.outputs.present == 'true'
+        uses: ./.github/actions/setup
+        with:
+          packages: gcc-aarch64-linux-gnu libc6-dev-arm64-cross qemu-user
+          unicorn: 'true'
+      - if: steps.target.outputs.present == 'true'
+        run: make fuzz FUZZ_SECONDS=1800
+      - name: Upload fuzz crashes
+        if: always() && hashFiles('build/fuzz-crashes/**') != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-crashes
+          path: build/fuzz-crashes/
+      - name: Upload build logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: logs-nightly-fuzz
+          path: build/*.log
+          if-no-files-found: ignore
+
+  validate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+        with:
+          pi-firmware: 'true'
+      - run: make validate FIRMWARE="$FIRMWARE"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: validation
+          path: build/validation.json
+      - name: Upload build logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: logs-nightly-validate
+          path: build/*.log
+          if-no-files-found: ignore

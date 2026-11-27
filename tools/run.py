@@ -2,6 +2,7 @@
 """Run ARM DOS in QEMU `virt`, including HVF on Apple Silicon hosts.
 
 Boot a disk image:     run.py build/msdos-arm64.img
+Fetch and boot the ISO of the latest release: run.py --iso latest
 Boot the live ISO:     run.py --iso images/armdos.iso
 Install to a new disk: run.py --iso images/armdos.iso --disk armdos-disk.img
 Boot the installed disk afterwards: run.py armdos-disk.img
@@ -9,7 +10,9 @@ Boot the installed disk afterwards: run.py armdos-disk.img
 The image argument and every --disk are writable VirtIO disks; the image is
 the one the firmware tries first, unless --iso is given, in which case the
 read-only CD comes first. A --disk that does not exist is created as a blank
-sparse file of --disk-size. Without --firmware the runner looks for ARM64
+sparse file of --disk-size. `--iso latest` downloads armdos.iso of the
+latest GitHub release into images/ (tools/fetch_release.py, SHA-256 checked)
+and boots it. Without --firmware the runner looks for ARM64
 UEFI firmware where Homebrew, Debian/Ubuntu and Fedora install it.
 """
 import argparse
@@ -120,7 +123,8 @@ def main():
     parser.add_argument('image', type=Path, nargs='?',
                         help='raw disk image to boot (writable)')
     parser.add_argument('--iso', type=Path,
-                        help='live ISO to boot from a read-only CD drive')
+                        help='live ISO to boot from a read-only CD drive; "latest" '
+                             'downloads the latest release ISO into images/ first')
     parser.add_argument('--disk', type=Path, action='append', default=[],
                         help='extra writable raw disk, e.g. an INSTALL target; '
                              'created blank if missing (repeatable)')
@@ -137,6 +141,9 @@ def main():
 
     if not args.image and not args.iso:
         parser.error('give a disk image, --iso, or both')
+    if args.iso and str(args.iso) == 'latest' and not args.iso.exists():
+        import fetch_release
+        args.iso = fetch_release.fetch(['armdos.iso'])['armdos.iso']
     if args.image and not args.image.is_file():
         parser.error(f'{args.image}: not an existing disk image file')
     if args.iso and not args.iso.is_file():
