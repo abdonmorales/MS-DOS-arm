@@ -119,3 +119,17 @@ $(BUILD)/msdos-arm64-pi3.img: $(BUILD)/BOOTAA64.EFI $(PAYLOADS) $(FIXTURES) tool
 
 clean:
 	rm -rf -- $(BUILD)
+
+# Fuzz src/fat.S with corrupt FAT12/16/32 images (tools/fuzz_fat.py).
+# Findings are minimised into build/fuzz-crashes/fat/.
+FUZZ_SECONDS ?= 60
+FUZZ_SEED ?= 1
+.PHONY: fuzz-fat
+fuzz-fat: $(BUILD)/fat_host
+	$(PYTHON) tools/fuzz_fat.py --host $(BUILD)/fat_host --qemu $(QEMU_USER) fuzz --seconds $(FUZZ_SECONDS) --seed $(FUZZ_SEED)
+
+# Regenerated images for every bug the fuzzer found; also run by fat-test.
+.PHONY: fuzz-fat-regress
+fuzz-fat-regress: $(BUILD)/fat_host
+	$(PYTHON) tools/fuzz_fat.py --host $(BUILD)/fat_host --qemu $(QEMU_USER) regress
+fat-test: fuzz-fat-regress
