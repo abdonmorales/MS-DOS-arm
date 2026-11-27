@@ -113,23 +113,64 @@ def check_partition(image, start, sectors, label, files=()):
             raise RuntimeError(f'{label}: {name} has the wrong contents')
 
 
+def make_ebr_chain(disk, base, logicals):
+    """Logical drives (type, start relative to base, image) in an extended
+    partition at sector `base`; each EBR sits one MiB before its drive."""
+    for index, (kind, start, data) in enumerate(logicals):
+        ebr = start - 2048
+        entries = mbr_entry(kind, 2048, len(data) // 512)
+        if index + 1 < len(logicals):
+            nxt = logicals[index + 1][1] - 2048
+            entries += mbr_entry(0x05, nxt, len(logicals[index + 1][2]) // 512 + 2048)
+        offset = (base + ebr) * 512
+        disk[offset + 446:offset + 446 + len(entries)] = entries
+        disk[offset + 510:offset + 512] = b'\x55\xaa'
+        disk[(base + start) * 512:(base + start) * 512 + len(data)] = data
+
+
 def multidisk_session(args, directory, image):
     directory = Path(directory)
     hello = b'hello from disk one\r\n'
     second = b'second partition\r\n'
+    # The boot disk grows by 16 MiB holding a second partition (type 0Eh).
+    boot = bytearray(image.read_bytes())
+    extra = fat_partition(directory / 'b2.fs', 32768 - 2048, 'BOOTP2', {'BOOT2.TXT': b'boot two\r\n'}, 16)
+    boot_start = len(boot) // 512 + 2048
+    boot += bytes(16 * MIB)
+    boot[462:478] = mbr_entry(0x0e, boot_start, len(extra) // 512)
+    boot[boot_start * 512:boot_start * 512 + len(extra)] = extra
+    image = directory / 'boot2.img'
+    image.write_bytes(boot)
     disk1 = directory / 'disk1.img'
-    make_mbr_disk(disk1, 48 * MIB, [
+    make_mbr_disk(disk1, 64 * MIB, [
         (0x06, 2048, fat_partition(directory / 'p1.fs', 32768, 'DISK1P1', {'HELLO.TXT': hello}, 16)),
-        (0x01, 2048 + 32768, fat_partition(directory / 'p2.fs', 16384, 'DISK1P2', {'P2.TXT': second}, 12)),
+        (0x01, 2048 + 32768, fat_partition(directory / 'p2.fs', 8192, 'DISK1P2', {'P2.TXT': second}, 12)),
     ])
+    ext_base = 2048 + 32768 + 8192
+    logical = fat_partition(directory / 'l5.fs', 8192, 'LOGICAL5', {'L5.TXT': b'logical\r\n'}, 12)
+    disk = bytearray(disk1.read_bytes())
+    disk[478:494] = mbr_entry(0x0f, ext_base, 64 * MIB // 512 - ext_base)
+    make_ebr_chain(disk, ext_base, [(0x0e, 2048, logical)])
+    disk1.write_bytes(disk)
     disk2 = directory / 'disk2.img'
     make_gpt_disk(disk2, 24 * MIB, 2048,
                   fat_partition(directory / 'g1.fs', 20480, 'GPTDISK', {'GPT.TXT': b'gpt ok\r\n'}, 12))
     blank = directory / 'blank.img'
     with blank.open('wb') as f:
         f.truncate(64 * MIB)
+    # A corrupt table must mount nothing and not hang: entries off the disk,
+    # an overflowing length, an EBR chain that links to itself.
+    corrupt = directory / 'corrupt.img'
+    bad = bytearray(8 * MIB)
+    bad[446:510] = (mbr_entry(0x06, 0xfffffff0, 0x100) + mbr_entry(0x0c, 2048, 0xffffffff) +
+                    mbr_entry(0x05, 4096, 8192) + mbr_entry(0x0b, 8192, 0))
+    bad[510:512] = b'\x55\xaa'
+    ebr = 4096 * 512
+    bad[ebr + 446:ebr + 478] = mbr_entry(0x06, 0xffffff00, 0x1000) + mbr_entry(0x05, 0, 8192)
+    bad[ebr + 510:ebr + 512] = b'\x55\xaa'
+    corrupt.write_bytes(bad)
     drives = []
-    for index, path in enumerate([image, disk1, disk2, blank]):
+    for index, path in enumerate([image, disk1, disk2, blank, corrupt]):
         drives += ['-drive', f'file={path},format=raw,if=none,id=d{index}',
                    '-device', f'virtio-blk-pci,drive=d{index}']
     cmd = [args.qemu, '-machine', 'virt', '-cpu', 'cortex-a72', '-m', '256',
@@ -172,27 +213,34 @@ def multidisk_session(args, directory, image):
 
     try:
         text = until(b'A:\\>')
-        for expected in [b'Drive C: is disk 1, partition 1', b'Drive D: is disk 1, partition 2',
-                         b'Drive E: is disk 2, partition 1']:
+        for expected in [b'Drive C: is disk 0, partition 2', b'Drive D: is disk 1, partition 1',
+                         b'Drive E: is disk 1, partition 2', b'Drive F: is disk 1, partition 5',
+                         b'Drive G: is disk 2, partition 1']:
             if expected not in text:
                 raise RuntimeError('Not mounted at boot: ' + expected.decode())
+        if b'is disk 4' in text:
+            raise RuntimeError('A corrupt partition table was mounted')
         checks += 1
-        command('dir c:', b'HELLO    TXT')
-        command('vol d:', b'Volume in drive D is DISK1P2')
-        command('type d:\\P2.TXT', second.replace(b'\r', b''))
-        command('dir e:', b'GPT      TXT')
-        command('copy c:\\HELLO.TXT e:\\', b'1 File(s) copied')
-        command('type e:\\HELLO.TXT', b'hello from disk one')
-        command('md c:\\NEWDIR')
-        command('copy ARMTEST.TXT c:\\NEWDIR\\X.TXT', b'1 File(s) copied')
-        command('copy e:\\GPT.TXT d:\\', b'1 File(s) copied')
-        command('c:', prompt=b'C:\\>')
-        command('dir', b'NEWDIR', prompt=b'C:\\>')
+        command('type c:\\BOOT2.TXT', b'boot two')
+        command('dir d:', b'HELLO    TXT')
+        command('vol e:', b'Volume in drive E is DISK1P2')
+        command('type e:\\P2.TXT', second.replace(b'\r', b''))
+        command('type f:\\L5.TXT', b'logical')
+        command('dir g:', b'GPT      TXT')
+        command('copy d:\\HELLO.TXT g:\\', b'1 File(s) copied')
+        command('type g:\\HELLO.TXT', b'hello from disk one')
+        command('md d:\\NEWDIR')
+        command('copy ARMTEST.TXT d:\\NEWDIR\\X.TXT', b'1 File(s) copied')
+        command('copy g:\\GPT.TXT e:\\', b'1 File(s) copied')
+        command('copy f:\\L5.TXT c:\\', b'1 File(s) copied')
+        command('d:', prompt=b'D:\\>')
+        command('dir', b'NEWDIR', prompt=b'D:\\>')
         command('a:')
-        text = command('chkdsk c:', b'bytes total disk space')
-        if b'rror' in text or b'lost' in text:
-            raise RuntimeError('CHKDSK C: found problems')
-        command('chkdsk e:', b'bytes total disk space')
+        for drive in 'cd':
+            text = command(f'chkdsk {drive}:', b'bytes total disk space')
+            if b'rror' in text or b'lost' in text:
+                raise RuntimeError(f'CHKDSK {drive.upper()}: found problems')
+        command('chkdsk g:', b'bytes total disk space')
         # INSTALL natively: disk 3 is the blank one (E0h offers disks 1-3).
         text = command('install 3 /y', b'ARM DOS is installed on disk 3')
         found = re.search(rb'Formatting drive ([A-Z]):', text)
@@ -213,9 +261,12 @@ def multidisk_session(args, directory, image):
             process.wait()
         if args.log:
             args.log.with_name(args.log.stem + '-disks.log').write_bytes(output)
+    check_partition(image, boot_start, len(extra) // 512, 'boot disk partition 2',
+                    [('L5.TXT', b'logical\r\n')])
+    check_partition(disk1, ext_base + 2048, 8192, 'disk 1 logical drive', [('L5.TXT', b'logical\r\n')])
     check_partition(disk1, 2048, 32768, 'disk 1 partition 1',
                     [('HELLO.TXT', hello), ('NEWDIR/X.TXT', b'ARM64 FAT read\r\n')])
-    check_partition(disk1, 2048 + 32768, 16384, 'disk 1 partition 2', [('GPT.TXT', b'gpt ok\r\n')])
+    check_partition(disk1, 2048 + 32768, 8192, 'disk 1 partition 2', [('GPT.TXT', b'gpt ok\r\n')])
     check_partition(disk2, 2048, 20480, 'GPT disk', [('HELLO.TXT', hello)])
     mbr = blank.read_bytes()[:512]
     kind, start, sectors = mbr[446 + 4], *struct.unpack_from('<II', mbr, 446 + 8)
@@ -223,7 +274,7 @@ def multidisk_session(args, directory, image):
         raise RuntimeError('INSTALL wrote no MBR partition')
     check_partition(blank, start, sectors, 'installed disk',
                     [('ARMTEST.TXT', b'ARM64 FAT read\r\n')])
-    print(f'PASS: multi-disk session (C:-E: on two more disks, MBR and GPT, native INSTALL '
+    print(f'PASS: multi-disk session (C:-G: on the boot disk and two more disks, MBR, EBR and GPT, native INSTALL '
           f'to drive {letter}:), {checks} checks; fsck.fat clean on every volume.')
 # End of the multi-disk checks.
 # ---------------------------------------------------------------------------
