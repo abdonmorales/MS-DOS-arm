@@ -492,6 +492,7 @@ class BasicGen:
     def __init__(self, rng):
         self.rng = rng
         self.finite = True
+        self.depth = 0
 
     def number(self):
         r = self.rng
@@ -576,15 +577,24 @@ class BasicGen:
                 target = line + 100000
             return r.choice(['GOTO ', 'GOSUB ']) + str(target)
         if k < 0.5:
+            self.finite = False         # NEXT, RETURN, WEND may jump back
             return r.choice(['RETURN', 'NEXT', 'NEXT ' + self.numvar(), 'WEND', 'END',
                              'STOP', 'RESTORE', 'CLEAR', 'RANDOMIZE 7', 'CLS', 'REM x'])
         if k < 0.6:
             a, b = r.randint(-3, 6), r.randint(-3, 12)
             step = r.choice(['', ' STEP 1', ' STEP -1', ' STEP 2', ' STEP ' + self.number()])
-            v = self.numvar()
+            if step and step[6:] not in ('1', '-1', '2'):
+                self.finite = False     # STEP 0 loops forever, as asked
+            # Loop variables K0.. belong to one nesting depth each and are
+            # never assigned elsewhere, so a loop always ends.
+            v = f'K{self.depth}'
+            self.depth += 1
             body = ': '.join(self.statement(line, []) for _ in range(r.randint(0, 2)))
-            return f'FOR {v}={a} TO {b}{step}: {body}: NEXT {v}' if r.random() < 0.8 \
-                else f'FOR {v}={a} TO {b}{step}'
+            self.depth -= 1
+            if r.random() < 0.8:
+                return f'FOR {v}={a} TO {b}{step}: {body}: NEXT {v}'
+            self.finite = False
+            return f'FOR {v}={a} TO {b}{step}'
         if k < 0.68:
             return 'IF ' + self.nexpr() + ' THEN ' + self.statement(line, lines) + \
                 (' ELSE ' + self.statement(line, lines) if r.random() < 0.4 else '')
@@ -611,8 +621,56 @@ class BasicGen:
                          'PRINT CHR$(', 'X=-' * 30 + '1', 'PRINT ' + '-' * 200 + '1',
                          'PRINT ' + '(' * 3000 + '1'])
 
+    def stress(self):
+        """Programs aimed at the interpreter's fixed limits."""
+        r = self.rng
+        n = r.choice([10, 63, 64, 65, 100, 511, 512, 513, 700, 2000])
+        k = r.randrange(9)
+        if k == 0:      # variable table
+            return ''.join(f'{10 + i} V{i}=1: S{i}$="x"\r\n' for i in range(min(n, 1500)))
+        if k == 1:      # FOR stack
+            body = ':'.join(f'FOR K{i}=1 TO 1' for i in range(n))
+            return f'10 {body}\r\n20 PRINT "deep"\r\n'
+        if k == 2:      # GOSUB stack
+            return ''.join(f'{10 + i} GOSUB {11 + i}\r\n' for i in range(n)) + \
+                f'{10 + n} PRINT "bottom"\r\n'
+        if k == 3:      # string space
+            size = r.choice([100, 1000, 5000, 100000])
+            return (f'10 DIM S$({size})\r\n20 FOR K0=0 TO {size}: S$(K0)=SPACE$(255): '
+                    f'NEXT K0\r\n30 PRINT LEN(S$({size}))\r\n')
+        if k == 4:      # numeric arrays and the heap
+            dims = [r.choice([10, 1000, 100000, 1000000, 2**31, 2**62]) for _ in range(3)]
+            return ''.join(f'{10 * (i + 1)} DIM A{i}({d})\r\n' for i, d in enumerate(dims)) + \
+                '40 A0(5)=1: PRINT A0(5)\r\n'
+        if k == 5:      # string concatenation past 255
+            return ('10 A$="x"\r\n20 FOR K0=1 TO 10: A$=A$+A$: PRINT LEN(A$): '
+                    'NEXT K0\r\n')
+        if k == 6:      # program space
+            return ''.join(f'{i + 1} REM ' + 'r' * 240 + '\r\n'
+                           for i in range(r.choice([200, 270, 300, 1000])))
+        if k == 7:      # DATA/READ mismatch and numbers
+            return ('10 DATA 1,,"a",9223372036854775808,-,&HFFFFFFFFFFFFFFFFF,1E999\r\n'
+                    '20 FOR K0=1 TO 9: READ A$: PRINT A$: NEXT K0\r\n'
+                    '30 RESTORE: READ A: READ B: READ C\r\n')
+        # arithmetic edges
+        ops = ['-9223372036854775808/-1', '-9223372036854775808\\-1',
+               '-9223372036854775808 MOD -1', '2^63', '2^62*2', '(-2)^63', '0^0', '0^-1',
+               '2^-1', 'ABS(-9223372036854775808)', '-(-9223372036854775808)',
+               'SQR(-1)', 'SQR(9223372036854775807)', 'INT(-9223372036854775808)',
+               'VAL("-9223372036854775808")', 'VAL("99999999999999999999")',
+               'SGN(-9223372036854775808)', 'RND(-9223372036854775808)', 'RND(0)',
+               '1 MOD 0', '1\\0', 'ASC("")', 'CHR$(-1)', 'MID$("abc",0)',
+               'MID$("abc",-9223372036854775808)', 'LEFT$("abc",-1)',
+               'SPACE$(9223372036854775807)', 'INSTR("","")', 'STR$(-9223372036854775808)',
+               'TAB(-9223372036854775808)', 'SPC(9223372036854775807)',
+               '-9223372036854775807-1-1', '9223372036854775807*-1-2']
+        return ''.join(f'{10 * (i + 1)} PRINT {op}\r\n' for i, op in
+                       enumerate(r.sample(ops, 1)))
+
     def program(self):
         r = self.rng
+        if r.random() < 0.15:
+            return self.stress().encode()
         count = r.randint(1, 30)
         lines = sorted(r.sample(range(1, 65530), count)) if r.random() < 0.2 else \
             [10 * (i + 1) for i in range(count)]
