@@ -11,6 +11,7 @@ right checksum is not downloaded again. Standard library only.
 """
 import argparse
 import hashlib
+import re
 import os
 from pathlib import Path
 import sys
@@ -48,7 +49,7 @@ def parse_sums(text):
             continue
         checksum, name = line.split(None, 1)
         name = name.lstrip('*')
-        if '/' in name or '\\' in name or name in ('.', '..') or len(checksum) != 64:
+        if '/' in name or '\\' in name or name in ('.', '..') or not re.fullmatch(r'[0-9a-fA-F]{64}', checksum):
             raise SystemExit('Malformed SHA256SUMS line: ' + line)
         sums[name] = checksum.lower()
     return sums

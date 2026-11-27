@@ -22,6 +22,7 @@ import platform
 import re
 import shlex
 import shutil
+import sys
 
 FIRMWARE_NAMES = ['share/qemu/edk2-aarch64-code.fd']       # under a Homebrew prefix
 FIRMWARE_PATHS = [
@@ -142,8 +143,16 @@ def main():
     if not args.image and not args.iso:
         parser.error('give a disk image, --iso, or both')
     if args.iso and str(args.iso) == 'latest' and not args.iso.exists():
+        import urllib.error
         import fetch_release
-        args.iso = fetch_release.fetch(['armdos.iso'])['armdos.iso']
+        cached = Path(__file__).resolve().parent.parent / 'images' / 'armdos.iso'
+        try:
+            args.iso = fetch_release.fetch(['armdos.iso'])['armdos.iso']
+        except (urllib.error.URLError, OSError, SystemExit) as error:
+            if not cached.is_file():
+                parser.error(f'--iso latest: could not download the release ISO ({error})')
+            print(f'run.py: download failed ({error}); using {cached}', file=sys.stderr)
+            args.iso = cached
     if args.image and not args.image.is_file():
         parser.error(f'{args.image}: not an existing disk image file')
     if args.iso and not args.iso.is_file():

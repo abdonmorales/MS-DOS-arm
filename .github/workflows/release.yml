@@ -6,14 +6,14 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: Existing tag to (re)build and publish, e.g. v1.0.0
+        description: Existing tag to (re)build and publish, e.g. v1.0.0 (only tags that contain .github/actions/setup, i.e. made after the CI PR)
         required: true
 
 permissions:
   contents: write
 
 concurrency:
-  group: release-${{ inputs.tag || github.ref }}
+  group: release-${{ inputs.tag || github.ref_name }}
   cancel-in-progress: false
 
 env:
@@ -70,7 +70,6 @@ jobs:
 
       - name: Build ROM images (when the Makefile has them)
         run: |
-          stamp=$(mktemp)
           built=false
           for target in rom-generic rom-pi; do
             if make -n "$target" >/dev/null 2>&1; then
@@ -81,12 +80,20 @@ jobs:
             fi
           done
           if $built; then
-            find build -maxdepth 2 -type f -newer "$stamp" -iname '*rom*' \
+            # Fresh checkout: every ROM file under build/ came from this job
+            # (rom-test may have built them already, so no timestamp check).
+            found=0
+            while read -r rom; do
+              echo "ROM asset: $rom"
+              xz -T0 -9 -c "$rom" > "$DIST/$(basename "$rom").xz"
+              found=$((found + 1))
+            done < <(find build -maxdepth 2 -type f -iname '*rom*' \
               \( -name '*.bin' -o -name '*.img' -o -name '*.itb' -o -name '*.fd' \) \
-              -not -path "$DIST/*" -print | while read -r rom; do
-                echo "ROM asset: $rom"
-                xz -T0 -9 -c "$rom" > "$DIST/$(basename "$rom").xz"
-              done
+              -not -path "$DIST/*" -print)
+            if [ "$found" -eq 0 ]; then
+              echo "::error::ROM targets exist but no ROM files were found under build/"
+              exit 1
+            fi
           fi
 
       - name: Write SHA256SUMS over every asset
