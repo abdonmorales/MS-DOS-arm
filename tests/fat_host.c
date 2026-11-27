@@ -49,14 +49,26 @@ status fat_unmount(void);
 static uint8_t *disk;
 static uint64_t disk_bytes, reads, writes;
 static struct media media = { .id = 7, .present = 1 };
+static void check_transfer(const char *what, uint64_t lba, uint64_t n, const void *buf);
+static void violation(int code, const char *fmt, ...);
+static int fuzz_mode, ro_armed;
+// Like firmware: refuse LBAs past the last block before any arithmetic.
+static int bad_range(uint64_t lba, uint64_t n) {
+    return n % media.block || lba > media.last || n / media.block > media.last + 1 - lba ||
+           lba * media.block + n > disk_bytes;
+}
 static status bio_read(struct blockio *b, uint32_t id, uint64_t lba, uint64_t n, void *buf) {
     (void)b;
-    if (id != media.id || n % media.block || (lba * media.block + n) > disk_bytes) return ERR(2);
+    if (id != media.id || bad_range(lba, n)) return ERR(2);
+    check_transfer("read", lba, n, buf);
     memcpy(buf, disk + lba * media.block, n); reads++; return 0;
 }
 static status bio_write(struct blockio *b, uint32_t id, uint64_t lba, uint64_t n, const void *buf) {
     (void)b;
-    if (id != media.id || n % media.block || (lba * media.block + n) > disk_bytes) return ERR(2);
+    if (fuzz_mode && ro_armed) violation(96, "write to LBA %llu during a read-only run", (unsigned long long)lba);
+    if (fuzz_mode && lba == 0) violation(95, "write to the boot sector");
+    if (id != media.id || bad_range(lba, n)) return ERR(2);
+    check_transfer("write", lba, n, buf);
     memcpy(disk + lba * media.block, buf, n); writes++; return 0;
 }
 static status bio_flush(struct blockio *b) { (void)b; return 0; }
@@ -71,8 +83,41 @@ static status handle_protocol(void *handle, const uint8_t *guid, void **out) {
     if (!memcmp(guid, block_io_guid, 16) && handle == (void *)0x1234) { *out = &bio; return 0; }
     return NOT_FOUND;
 }
+// Fuzz mode (tools/fuzz_fat.py): every page the driver gets from
+// AllocatePages sits between PROT_NONE guard pages, the disk image too, and
+// each Block I/O transfer must land inside one such allocation.
+static struct { uint8_t *base; uint64_t bytes; } regions[16];
+static int nregions;
+static void *guarded(uint64_t bytes) {
+    uint64_t span = (bytes + 4095) & ~4095ull;
+    uint8_t *p = mmap(NULL, span + 2 * 4096, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    if (p == MAP_FAILED) return NULL;
+    if (span && mprotect(p + 4096, span, PROT_READ | PROT_WRITE)) return NULL;
+    // Put the end of the buffer right against the upper guard page.
+    return p + 4096 + (span - bytes);
+}
+static void violation(int code, const char *fmt, ...) {
+    va_list ap; va_start(ap, fmt);
+    fprintf(stderr, "VIOLATION: "); vfprintf(stderr, fmt, ap); fputc('\n', stderr);
+    va_end(ap); fflush(stderr); _exit(code);
+}
+static void check_transfer(const char *what, uint64_t lba, uint64_t n, const void *buf) {
+    if (!fuzz_mode) return;
+    const uint8_t *b = buf;
+    for (int i = 0; i < nregions; i++)
+        if (b >= regions[i].base && n <= regions[i].bytes && b + n <= regions[i].base + regions[i].bytes)
+            return;
+    violation(97, "%s of %llu bytes at LBA %llu with buffer %p outside driver memory", what,
+              (unsigned long long)n, (unsigned long long)lba, buf);
+}
 static status allocate_pages(uint64_t type, uint64_t mem, uint64_t pages, uint64_t *addr) {
     (void)type; (void)mem;
+    if (fuzz_mode) {
+        void *g = guarded(pages * 4096);
+        if (!g || nregions == 16) return ERR(9);
+        regions[nregions].base = g; regions[nregions++].bytes = pages * 4096;
+        *addr = (uint64_t)g; return 0;
+    }
     void *p = aligned_alloc(4096, pages * 4096);
     if (!p) return ERR(9);
     *addr = (uint64_t)p; return 0;
@@ -174,7 +219,205 @@ static status rename_to(const char *from, const char *to) {
     f->close(f); return s;
 }
 
+// ---------------------------------------------------------------------------
+// Fuzz run over a possibly corrupt image. Errors are fine; the harness only
+// reports crashes (signals), hangs (the caller's timeout), Block I/O outside
+// the driver's memory or the disk, and writes during a read-only run. Work is
+// capped so a valid but large tree cannot look like a hang.
+static int fz_entries, fz_dirs, fz_files;
+static uint64_t fz_bytes;
+static uint8_t fz_buf[70000];
+static uint16_t fz_wpath[600];
+static uint16_t *fz_w(const char *s) {
+    size_t i = 0; for (; s[i] && i < 599; i++) fz_wpath[i] = (uint8_t)s[i];
+    fz_wpath[i] = 0; return fz_wpath;
+}
+static status fz_open(file *dir, const char *path, uint64_t mode, uint64_t attr, file **out) {
+    *out = NULL;
+    status s = dir->open(dir, out, fz_w(path), mode, attr);
+    if (s) *out = NULL;
+    return s;
+}
+static void fz_close(file *f) { if (f) f->close(f); }
+// Read a file in uneven chunks, seek around, query its info.
+static void fz_read_file(file *f) {
+    uint64_t n = sizeof info; f->getinfo(f, file_info_guid, &n, info);
+    static const uint64_t chunks[] = {1, 511, 512, 4096, 7777, 65536};
+    uint64_t total = 0;
+    for (int i = 0; total < 200000 && fz_bytes < 4000000; i++) {
+        uint64_t m = chunks[i % 6];
+        status s = f->read(f, &m, fz_buf);
+        if (s || !m) break;
+        if (m > chunks[i % 6]) violation(94, "read returned %llu bytes for a %llu-byte buffer",
+                                         (unsigned long long)m, (unsigned long long)chunks[i % 6]);
+        total += m; fz_bytes += m;
+    }
+    uint64_t pos;
+    f->setpos(f, 3000); { uint64_t m = 600; f->read(f, &m, fz_buf); }
+    f->setpos(f, ~0ull); f->getpos(f, &pos);
+    { uint64_t m = 16; f->read(f, &m, fz_buf); }
+    f->setpos(f, 0x7ffffff0ull); { uint64_t m = 64; f->read(f, &m, fz_buf); }
+}
+static void fz_walk(file *dir, const char *path, int depth) {
+    if (fz_dirs++ > 150 || depth > 8) return;
+    char sub[600];
+    for (int k = 0; fz_entries < 3000; k++) {
+        uint64_t n = 40;
+        status s = dir->read(dir, &n, info);
+        if (s == TOO_SMALL) {
+            if (n > sizeof info) violation(94, "directory entry claims %llu bytes", (unsigned long long)n);
+            n = sizeof info; s = dir->read(dir, &n, info);
+        }
+        if (s || !n) break;
+        if (n > sizeof info) violation(94, "directory read overflow %llu", (unsigned long long)n);
+        fz_entries++;
+        char name[300]; uint16_t *u = (uint16_t *)(info + 80); int i = 0;
+        for (; i < 299 && u[i]; i++) name[i] = (char)u[i];
+        name[i] = 0;
+        uint64_t attr = info_attr();
+        if (!strcmp(name, ".") || !strcmp(name, "..") || !name[0]) continue;
+        snprintf(sub, sizeof sub, "%s\\%s", path, name);
+        file *f;
+        // Alternate between relative opens and absolute paths.
+        if (k & 1) fz_open(dir, name, RD, 0, &f); else fz_open(root(), sub, RD, 0, &f);
+        if (!f) continue;
+        if (attr & 0x10) fz_walk(f, sub, depth + 1);
+        else if (fz_files++ < 400) fz_read_file(f);
+        fz_close(f);
+    }
+}
+static void fz_write_tests(void) {
+    file *f, *g;
+    // A new file: write, rewrite, grow, shrink, delete.
+    if (!fz_open(root(), "\\FUZZNEW.TXT", CR, 0, &f)) {
+        for (uint64_t i = 0; i < 9000; i++) fz_buf[i] = (uint8_t)(i * 7);
+        uint64_t m = 9000; f->write(f, &m, fz_buf);
+        f->setpos(f, 100); m = 50; f->write(f, &m, fz_buf);
+        f->setpos(f, 0); m = 9000; f->read(f, &m, fz_buf);
+        uint64_t n = sizeof info;
+        if (!f->getinfo(f, file_info_guid, &n, info)) {
+            *(uint64_t *)(info + 8) = 20000; f->setinfo(f, file_info_guid, *(uint64_t *)info, info);
+            *(uint64_t *)(info + 8) = 10; f->setinfo(f, file_info_guid, *(uint64_t *)info, info);
+        }
+        f->del(f);
+    }
+    // A directory with a long-named file, renames, a move, then cleanup.
+    if (!fz_open(root(), "\\Fuzz Directory", CR, 0x10, &f)) {
+        if (!fz_open(f, "a long file name inside.txt", CR, 0, &g)) {
+            uint64_t m = 3000; g->write(g, &m, fz_buf);
+            uint64_t n = sizeof info;
+            if (!g->getinfo(g, file_info_guid, &n, info)) {
+                uint16_t *nm = (uint16_t *)(info + 80); const char *to = "\\moved out.txt"; int i = 0;
+                for (; to[i]; i++) nm[i] = (uint8_t)to[i];
+                nm[i] = 0; *(uint64_t *)info = 80 + (i + 1) * 2;
+                g->setinfo(g, file_info_guid, *(uint64_t *)info, info);
+            }
+            g->del(g);
+        }
+        uint64_t n = sizeof info;
+        if (!f->getinfo(f, file_info_guid, &n, info)) {
+            uint16_t *nm = (uint16_t *)(info + 80); const char *to = "Fuzz Renamed"; int i = 0;
+            for (; to[i]; i++) nm[i] = (uint8_t)to[i];
+            nm[i] = 0; *(uint64_t *)info = 80 + (i + 1) * 2;
+            f->setinfo(f, file_info_guid, *(uint64_t *)info, info);
+        }
+        f->del(f);
+    }
+    // Existing objects: the first file and directory the listing finds.
+    file *d; if (fz_open(root(), "\\", RD, 0, &d)) return;
+    char fname[300] = "", dname[300] = "";
+    for (int k = 0; k < 600 && (!fname[0] || !dname[0]); k++) {
+        uint64_t n = sizeof info;
+        if (d->read(d, &n, info) || !n) break;
+        char name[300]; uint16_t *u = (uint16_t *)(info + 80); int i = 0;
+        for (; i < 299 && u[i]; i++) name[i] = (char)u[i];
+        name[i] = 0;
+        if (!strcmp(name, ".") || !strcmp(name, "..") || !name[0] || strchr(name, '\\')) continue;
+        if (info_attr() & 0x10) { if (!dname[0]) strcpy(dname, name); }
+        else if (!fname[0]) strcpy(fname, name);
+    }
+    fz_close(d);
+    if (dname[0] && !fz_open(root(), dname, RD, 0, &d)) {
+        // Create and delete inside an existing (maybe corrupt) directory.
+        if (!fz_open(d, "NEWFILE.DAT", CR, 0, &f)) { uint64_t m = 700; f->write(f, &m, fz_buf); f->del(f); }
+        if (!fz_open(d, "new sub dir", CR, 0x10, &f)) f->del(f);
+        fz_close(d);
+    }
+    if (fname[0] && !fz_open(root(), fname, RW, 0, &f)) {
+        uint64_t n = sizeof info, size = 0;
+        if (!f->getinfo(f, file_info_guid, &n, info)) size = info_size();
+        f->setpos(f, ~0ull); uint64_t m = 777; f->write(f, &m, fz_buf);
+        f->setpos(f, 10); m = 5000; f->write(f, &m, fz_buf);
+        n = sizeof info;
+        if (!f->getinfo(f, file_info_guid, &n, info)) {
+            *(uint64_t *)(info + 8) = size; f->setinfo(f, file_info_guid, *(uint64_t *)info, info);
+            uint16_t *nm = (uint16_t *)(info + 80); const char *to = "renamed by fuzz.txt"; int i = 0;
+            for (; to[i]; i++) nm[i] = (uint8_t)to[i];
+            nm[i] = 0; *(uint64_t *)info = 80 + (i + 1) * 2;
+            f->setinfo(f, file_info_guid, *(uint64_t *)info, info);
+            if (dname[0]) {    // move it into the directory found above
+                char to2[320]; snprintf(to2, sizeof to2, "\\%s\\moved.txt", dname);
+                for (i = 0; to2[i]; i++) nm[i] = (uint8_t)to2[i];
+                nm[i] = 0; *(uint64_t *)info = 80 + (i + 1) * 2;
+                f->setinfo(f, file_info_guid, *(uint64_t *)info, info);
+            }
+        }
+        f->del(f);
+    }
+    if (dname[0] && !fz_open(root(), dname, RW, 0, &d)) {
+        uint64_t n = sizeof info;
+        if (!d->getinfo(d, file_info_guid, &n, info)) {    // move a directory below itself
+            char to[320]; snprintf(to, sizeof to, "\\%s\\inner", dname);
+            uint16_t *nm = (uint16_t *)(info + 80); int i = 0;
+            for (; to[i]; i++) nm[i] = (uint8_t)to[i];
+            nm[i] = 0; *(uint64_t *)info = 80 + (i + 1) * 2;
+            d->setinfo(d, file_info_guid, *(uint64_t *)info, info);
+        }
+        d->del(d);    // rmdir (refused when not empty)
+    }
+}
+static int fuzz_main(const char *image, int ro) {
+    int fd = open(image, O_RDONLY); struct stat st;
+    if (fd < 0 || fstat(fd, &st)) { perror(image); return 2; }
+    disk_bytes = st.st_size;
+    disk = guarded(disk_bytes);
+    if (!disk) { perror("mmap"); return 2; }
+    for (uint64_t got = 0; got < disk_bytes;) {
+        ssize_t r = read(fd, disk + got, disk_bytes - got);
+        if (r <= 0) { perror("read"); return 2; }
+        got += r;
+    }
+    close(fd);
+    media.last = disk_bytes / media.block ? disk_bytes / media.block - 1 : 0;
+    if (disk_bytes < media.block) disk_bytes = 0;    // nothing readable
+    services[152 / 8] = (void *)handle_protocol;
+    services[40 / 8] = (void *)allocate_pages;
+    services[136 / 8] = (void *)reinstall;
+    boot_services = services; image_handle = (void *)0x99;
+    fuzz_mode = 1;
+    status s = fat_mount();
+    if (s) { printf("fuzz: mount refused %llx\n", (unsigned long long)s); return 0; }
+    ro_armed = ro;
+    fz_walk(root(), "", 0);
+    uint64_t fsn = 200; root()->getinfo(root(), fs_info_guid, &fsn, info);
+    file *f;
+    if (!fz_open(root(), "\\NO\\SUCH\\PATH.TXT", RD, 0, &f)) fz_close(f);
+    if (!fz_open(root(), "\\..\\..\\.\\", RD, 0, &f)) fz_close(f);
+    if (!ro) fz_write_tests();
+    root()->flush(root());
+    ro_armed = 0;
+    fat_unmount();
+    printf("fuzz: ok (%d entries, %d dirs, %d files, %llu reads, %llu writes)\n", fz_entries, fz_dirs,
+           fz_files, (unsigned long long)reads, (unsigned long long)writes);
+    return 0;
+}
+
 int main(int argc, char **argv) {
+    if (argc == 4 && (!strcmp(argv[3], "fuzz") || !strcmp(argv[3], "fuzzro"))) {
+        media.block = atoi(argv[2]);
+        if (!media.block) return 2;
+        return fuzz_main(argv[1], !strcmp(argv[3], "fuzzro"));
+    }
     if (argc != 4) { fprintf(stderr, "usage: fat_host IMAGE SECTOR phase1|phase2|shortfat|badcluster\n"); return 2; }
     int fd = open(argv[1], O_RDWR); struct stat st; fstat(fd, &st);
     disk_bytes = st.st_size;
