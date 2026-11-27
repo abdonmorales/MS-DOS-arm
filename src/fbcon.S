@@ -4,7 +4,7 @@
 // character cells (fewer on a small screen), centred, in the CGA colours,
 // with an underline cursor and the ANSI subset that ANSI.SYS and the
 // firmware console path understand (ESC[2J, ESC[K, ESC[r;cH/f, ESC[A-D,
-// ESC[s/u, ESC[..m with bold and reverse).
+// ESC[s/u and ESC 7/8, ESC[..m with bold and reverse).
 //
 // Where the screen comes from:
 //  - UEFI GOP, captured by fbcon_capture before ExitBootServices: the first
@@ -164,8 +164,13 @@ fb_escape:
     b.eq fb_esc_start
     cmp x0, #1
     b.ne 1f
-    cmp w20, #'['               // ESC 7, ESC 8 and the like: dropped
-    b.ne fb_esc_end
+    str xzr, [x19, #FS_ESC]
+    cmp w20, #'7'               // ESC 7 / ESC 8 (DEC): save / restore the
+    b.eq fb_csi_save            // cursor; ANSI.SYS turns ESC[s/u into them
+    cmp w20, #'8'
+    b.eq fb_csi_restore
+    cmp w20, #'['               // other ESC x sequences: dropped
+    b.ne fb_return
     mov x0, #2
     str x0, [x19, #FS_ESC]
     str xzr, [x19, #FS_NPARAM]
