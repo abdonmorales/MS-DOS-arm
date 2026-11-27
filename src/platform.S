@@ -22,6 +22,9 @@ plat_putc:
     adrp x1, platform_native
     ldr x1, [x1, :lo12:platform_native]
     cbz x1, 2f
+    ldv x1, fbcon_active        // a screen mirrors the UART (src/fbcon.S)
+    cbnz x1, fbcon_mirror
+plat_putc_uart:
     ldv x1, plat_uart
     adrp x2, plat_uart_type
     ldr x2, [x2, :lo12:plat_uart_type]
@@ -517,6 +520,7 @@ plat_rom_native:
     bl plat_find_disk
     cbnz x0, plat_fail
 12:
+    bl fbcon_capture            // the GOP framebuffer, if any (src/fbcon.S)
     // ExitBootServices needs the current memory map key; retry once if the
     // map changed between the two calls.
     mov x19, #2
@@ -559,6 +563,7 @@ plat_rom_native:
     msr vbar_el2, x0
 4:
     isb
+    bl fbcon_start
     ldv x2, plat_disk_kind
     cbnz x2, 5f
     // The firmware's virtio driver reset the device on exit; start ours.
