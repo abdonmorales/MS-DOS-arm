@@ -119,3 +119,13 @@ $(BUILD)/msdos-arm64-pi3.img: $(BUILD)/BOOTAA64.EFI $(PAYLOADS) $(FIXTURES) tool
 
 clean:
 	rm -rf -- $(BUILD)
+
+# System fuzzing: malformed PE32+ images through the loader (Unicorn), ARM
+# BASIC programs and COMMAND lines (QEMU). FUZZ_SECONDS bounds the run and
+# FUZZ_SEED makes it reproducible; findings go to $(BUILD)/fuzz-crashes/.
+FUZZ_SECONDS ?= 60
+FUZZ_SEED ?=
+.PHONY: fuzz-sys
+fuzz-sys: $(BUILD)/kernel.elf $(BUILD)/kernel.bin image
+	FUZZ_SECONDS=$(FUZZ_SECONDS) FUZZ_SEED=$(FUZZ_SEED) $(PYTHON) tools/fuzz_sys.py \
+		--build $(BUILD) --nm $(NM) --firmware $(FIRMWARE)
