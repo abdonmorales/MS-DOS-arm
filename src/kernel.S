@@ -1216,12 +1216,13 @@ dos_string_message: .asciz "DOS string service OK\r\n$"
 
 .ifdef ROM_BUILD
 // The ROM disk (tools/romdisk.py): drive A:, a FAT12 image served from
-// memory by fat_mount_rom. The Makefile puts romdisk.img on the include path.
+// memory by fat_mount_rom. The Makefile puts armdos-romdisk.img on the
+// include path.
 .section .rodata
 .balign 4096
 .global rom_disk
 rom_disk:
-.incbin "romdisk.img"
+.incbin "armdos-romdisk.img"
 .balign 512
 .global rom_disk_end
 rom_disk_end:

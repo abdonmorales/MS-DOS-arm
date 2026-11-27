@@ -10,6 +10,8 @@
 3. U-Boot from NOR flash: the FIT image in QEMU's second flash bank, copied
    to RAM and started with bootm, as on a board with SPI flash. U-Boot gives
    no ACPI, so this is the device tree path again, under another firmware.
+3b. A test build with extra programs: a raw sector write (IOCTL) to A: is
+   refused and leaves no trace; an FCB open of a ROM file works.
 4. The Pi ROM build's ARMDOS.EFI (no NATIVE.ON) network-boots and stays in
    UEFI firmware mode, with the same ROM disk checks.
 5. The Pi 3 and Pi 4 images: the FAT LBA partition the Pi's boot ROM needs,
@@ -65,6 +67,8 @@ class Session:
 
     def command(self, line, expected=b'', prompt=None, timeout=None):
         text = self.send(line, prompt or self.prompt, timeout)
+        # Look for the answer after the echoed command line, not in the echo.
+        text = text.split(b'\n', 1)[1] if b'\n' in text else b''
         if expected not in text:
             raise RuntimeError(f'{line!r}: expected {expected!r} in {text!r}')
         return text
@@ -98,20 +102,21 @@ def boot_checks(s, platform):
     s.command('type README.TXT', b'Drive A: is built into ARMDOS.EFI')
     s.command('native', b'Native AArch64 program OK')
     s.command('find "FOR" PRIMES.BAS', b'FOR N = 2 TO 99')
-    # Every kind of write is refused, and A: stays as it was.
-    s.command('echo test>A:\\T.TXT')
-    s.command('md A:\\NEWDIR')
-    s.command('del A:\\README.TXT')
-    s.command('ren A:\\README.TXT X.TXT')
-    s.command('copy A:\\PRIMES.BAS A:\\P2.BAS')
-    s.command('attrib +r A:\\README.TXT')
+    # Every kind of write is refused with an error, and A: stays as it was.
+    for line, error in (('echo test>A:\\T.TXT', b'File/device error'),
+                        ('md A:\\NEWDIR', b'File/device error'),
+                        ('del A:\\README.TXT', b'File/device error'),
+                        ('ren A:\\README.TXT X.TXT', b'Duplicate file name or file not found'),
+                        ('copy A:\\PRIMES.BAS A:\\P2.BAS', b'File/device error'),
+                        ('attrib +r A:\\README.TXT', b'File/device error')):
+        s.command(line, error)
     after = s.command('dir A:\\')
     for name in (b'T        TXT', b'NEWDIR', b'X        TXT', b'P2       BAS'):
         if name in after:
             raise RuntimeError(f'{name!r} was written to the ROM disk')
     s.command('type A:\\README.TXT', b'Drive A: is built into ARMDOS.EFI')
-    s.command('attrib A:\\README.TXT', b'A:\\README.TXT')
-    if b' R ' in s.command('attrib A:\\README.TXT'):
+    attributes = s.command('attrib A:\\README.TXT', b'A:\\README.TXT')
+    if b' R ' in attributes or b'R  ' in attributes.split(b'A:\\README.TXT')[0]:
         raise RuntimeError('ATTRIB changed a file on the ROM disk')
     # The RAM disk takes the writes; ARM BASIC runs and saves there.
     s.command('echo rom-ok>B:\\L.TXT')
@@ -163,20 +168,27 @@ def pi_image_checks(build, pi_efi):
                                 check=True, capture_output=True).stdout
         if copied != efi:
             raise RuntimeError(f'{image}: BOOTAA64.EFI is not the Pi ROM build')
-        fsck = subprocess.run(['fsck.fat', '-n', disk.split('@@')[0]], capture_output=True)
-        del fsck                 # (the volume is at an offset; mtools read it above)
-    print('PASS: Pi 3 and Pi 4 ROM images: firmware, FAT LBA partition, ROM build only')
+        with tempfile.TemporaryDirectory(prefix='rom-test-fsck-') as name:
+            volume = Path(name) / 'volume.img'
+            volume.write_bytes(image.read_bytes()[start * 512:])
+            fsck = subprocess.run(['fsck.fat', '-n', str(volume)], capture_output=True,
+                                  text=True)
+            if fsck.returncode:
+                raise RuntimeError(f'{image}: fsck.fat:\n{fsck.stdout}{fsck.stderr}')
+    print('PASS: Pi 3 and Pi 4 ROM images: firmware, FAT LBA partition, fsck clean, '
+          'ROM build only')
 
 
-def reproducible(build):
+def reproducible(build, native):
     with tempfile.TemporaryDirectory(prefix='rom-test-') as name:
         again = Path(name) / 'romdisk.img'
         subprocess.run([sys.executable, str(Path(__file__).with_name('romdisk.py')),
                         str(build / 'msdos-arm64.img'), str(again), '--target', 'generic',
-                        '--native'], check=True, stdout=subprocess.DEVNULL)
-        built = build / 'rom-generic' / 'romdisk.img'
+                        *(['--native'] if native else [])],
+                       check=True, stdout=subprocess.DEVNULL)
+        built = build / 'rom-generic' / 'armdos-romdisk.img'
         if again.read_bytes() != built.read_bytes():
-            raise RuntimeError('the ROM disk is not reproducible (or GENERIC_NATIVE=0)')
+            raise RuntimeError('the ROM disk is not reproducible')
     print('PASS: the ROM disk rebuilds byte for byte')
 
 
@@ -187,10 +199,17 @@ def main():
     parser.add_argument('--uboot', required=True, type=Path, help='U-Boot qemu_arm64 u-boot.bin')
     parser.add_argument('--qemu', default='qemu-system-aarch64')
     parser.add_argument('--timeout', type=float, default=60)
+    parser.add_argument('--generic-firmware-mode', action='store_true',
+                        help='the generic build was made with GENERIC_NATIVE=0')
+    parser.add_argument('--pi-native', action='store_true',
+                        help='the Pi build was made with PI_NATIVE=1')
     args = parser.parse_args()
     generic = args.build / 'rom-generic'
     pi_efi = args.build / 'rom-pi' / 'ARMDOS.EFI'
     native = b'Platform: native AArch64 kernel (firmware exited; console UART at 0000000009000000, A: in ROM)'
+    firmware = b'Platform: UEFI firmware services (ROM build; native mode not enabled'
+    generic_mode = firmware if args.generic_firmware_mode else native
+    generic_kind = 'firmware mode' if args.generic_firmware_mode else 'native'
     with tempfile.TemporaryDirectory(prefix='rom-test-tftp-') as name:
         tftp = Path(name)
         shutil.copyfile(generic / 'ARMDOS.EFI', tftp / 'ARMDOS.EFI')
@@ -198,13 +217,25 @@ def main():
         edk2 = ['-bios', str(args.firmware), '-boot', 'menu=on,splash-time=0']
         net = lambda f: ['-netdev', f'user,id=n0,tftp={tftp},bootfile={f}',
                          '-device', 'virtio-net-pci,netdev=n0,romfile=']
-        run(args, 'network boot under EDK2: native through ACPI, ROM disk A:',
-            edk2 + net('ARMDOS.EFI'), native)
-        run(args, 'device tree under EDK2 (ACPI hidden): native through stdout-path',
-            ['-machine', 'acpi=off'] + edk2 + net('ARMDOS.EFI'), native)
-        run(args, 'Pi ROM build (no NATIVE.ON): UEFI firmware mode',
-            edk2 + net('ARMDOSPI.EFI'),
-            b'Platform: UEFI firmware services (ROM build; native mode not enabled')
+        run(args, f'network boot under EDK2 with ACPI: {generic_kind}, ROM disk A:',
+            edk2 + net('ARMDOS.EFI'), generic_mode)
+        run(args, f'device tree under EDK2 (ACPI hidden): {generic_kind}',
+            ['-machine', 'acpi=off'] + edk2 + net('ARMDOS.EFI'), generic_mode)
+        shutil.copyfile(args.build / 'rom-check' / 'ARMDOS.EFI', tftp / 'ROMCHECK.EFI')
+        s = Session(args, edk2 + net('ROMCHECK.EFI'))
+        try:
+            s.until(b'A:\\>', 120)
+            # Raw sector writes are refused and leave no trace in the cache.
+            s.command('rompoke', b'write refused')
+            listing = s.command('dir A:\\', b'ANSI     SYS')
+            if b'ZZSI' in listing:
+                raise RuntimeError('a refused sector write showed up on A:')
+            s.command('romfcb', b'FCB open OK')
+        finally:
+            s.close()
+        print('PASS: ROM disk: refused raw sector writes leave A: unchanged; FCB open works')
+        run(args, 'Pi ROM build: ' + ('native' if args.pi_native else 'UEFI firmware mode'),
+            edk2 + net('ARMDOSPI.EFI'), native if args.pi_native else firmware)
 
     def uboot(s):
         s.until(b'Hit any key to stop autoboot', 60)
@@ -214,12 +245,12 @@ def main():
         s.send('cp.b 0x04000000 ${kernel_addr_r} 0x200000; bootm ${kernel_addr_r}',
                b'Verifying Hash Integrity ... sha256+ OK')
     flash = generic / 'armdos-rom-flash.bin'
-    run(args, 'U-Boot from NOR flash (FIT, bootm): native through the device tree',
+    run(args, f'U-Boot from NOR flash (FIT, bootm): {generic_kind} (device tree)',
         ['-bios', str(args.uboot), '-net', 'none',
          '-drive', f'if=pflash,unit=1,format=raw,readonly=on,file={flash}'],
-        native, before=uboot)
+        generic_mode, before=uboot)
     pi_image_checks(args.build, pi_efi)
-    reproducible(args.build)
+    reproducible(args.build, not args.generic_firmware_mode)
 
 
 if __name__ == '__main__':

@@ -185,11 +185,11 @@ fat_mount_rom:
     stv x3, fat_total_sectors, x4
     mov x2, #512
     stv x2, fat_bps, x3
+    mov x2, #1                  // A: refuses writes: no write self-test,
+    adrp x3, boot_read_only     // even if the image is unusable
+    str x2, [x3, :lo12:boot_read_only]
     bl fat_mount_parse
     cbnz x0, fat_mount_fail
-    mov x2, #1                  // A: refuses writes: the ROM system message
-    adrp x3, boot_read_only
-    str x2, [x3, :lo12:boot_read_only]
     ldv x0, fat_root_obj
     address x1, root_directory
     str x0, [x1]
@@ -697,7 +697,16 @@ fat_cache_commit:
     add x1, x2, x3, lsl #FAT_SLOT_SHIFT
     address x4, fat_cache_lba
     ldr x0, [x4, x3, lsl #3]
+    str x3, [sp, #-16]!
     bl fat_write_blocks
+    ldr x3, [sp], #16
+    cbz x0, 1f
+    // The write failed (or the volume is the read-only ROM disk): forget
+    // the slot, so the next read sees the device, not the refused bytes.
+    address x4, fat_cache_lba
+    mov x5, #-1
+    str x5, [x4, x3, lsl #3]
+1:
     unframe
 
 // ---------------------------------------------------------------------------
@@ -803,7 +812,11 @@ fat_commit_fat:
     b 1b
 8:
     mov x0, #0
+    leave
 9:
+    address x2, fat_cache_lba   // as fat_cache_commit: drop the slot
+    mov x3, #-1
+    str x3, [x2, x20, lsl #3]
     leave
 
 // x0=cluster, x1=value (FAT_EOC for end of chain). Returns status.

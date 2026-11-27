@@ -87,8 +87,11 @@ fcb_open_common:
     mov x1, #2
     bl dos_open
     cbz x1, 2f
-    cmp x0, #5
+    cmp x0, #5                  // access denied or write-protected (a
+    b.eq 3f                     // read-only file, or the ROM disk):
+    cmp x0, #19                 // open it read-only instead
     b.ne fcb_open_failure
+3:
     address x0, fcb_path
     mov x1, #0
     bl dos_open

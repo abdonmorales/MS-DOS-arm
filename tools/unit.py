@@ -403,6 +403,26 @@ FDT_CASES = [
             aliases { serial1 = "/uart@1000"; };
             chosen { stdout-path = "serial0"; };
             uart@1000 { compatible = "arm,pl011"; reg = <0x1000 0x100>; }; };''', (0, 0)),
+    ('an unrelated subtree deeper than the recorded levels', '''
+        / { #address-cells = <1>; #size-cells = <1>;
+            a { b { c { d { e { f { g { h { i { j { }; }; }; }; }; }; }; }; }; };
+            chosen { stdout-path = "/uart@1000"; };
+            uart@1000 { compatible = "arm,pl011"; reg = <0x1000 0x100>; }; };''', (0x1000, 0)),
+    ('a 3-cell (PCI) bus is refused rather than misread', '''
+        / { #address-cells = <2>; #size-cells = <2>;
+            chosen { stdout-path = "/pci/uart@1000"; };
+            pci { #address-cells = <3>; #size-cells = <2>;
+                  ranges = <0x01000000 0 0 0x0 0x3eff0000 0 0x10000>,
+                           <0x02000000 0 0 0x0 0x10000000 0 0x10000000>;
+                  uart@1000 { compatible = "ns16550a"; reg = <0x02000000 0 0x1000 0 8>; }; }; };''', (0, 0)),
+    ('a disabled UART', '''
+        / { #address-cells = <1>; #size-cells = <1>;
+            chosen { stdout-path = "/uart@1000"; };
+            uart@1000 { compatible = "arm,pl011"; reg = <0x1000 0x100>; status = "disabled"; }; };''', (0, 0)),
+    ('a UART with status "okay"', '''
+        / { #address-cells = <1>; #size-cells = <1>;
+            chosen { stdout-path = "/uart@1000"; };
+            uart@1000 { compatible = "arm,pl011"; reg = <0x1000 0x100>; status = "okay"; }; };''', (0x1000, 0)),
 ]
 
 
@@ -423,6 +443,13 @@ def test_fdt_console(kernel):
         if result != expected:
             raise AssertionError(f'{name}: got ({result[0]:#x}, {result[1]}), expected '
                                  f'({expected[0]:#x}, {expected[1]})')
+    # A header whose strings block lies outside the blob is refused.
+    bad = bytearray(blob)
+    bad[12:16] = (0x7ff00000).to_bytes(4, 'big')
+    kernel.cpu.mem_write(SCRATCH, bytes(bad))
+    if tuple(kernel.call('plat_fdt_console', SCRATCH, results=2)) != (0, 0):
+        raise AssertionError('a header with off_dt_strings past the blob was accepted')
+    calls += 1
     kernel.cpu.mem_write(SCRATCH, b'\0' * 64)
     if tuple(kernel.call('plat_fdt_console', SCRATCH, results=2)) != (0, 0):
         raise AssertionError('a blob without the FDT magic was accepted')

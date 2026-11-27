@@ -3,12 +3,14 @@
 
 Writes:
 - a FIT image (armdos-rom.itb) holding ARMDOS.EFI as an "efi" kernel, which
-  U-Boot starts with `bootm <address>` wherever the image sits: RAM after
-  `sf read`/`load`, or memory-mapped NOR flash;
+  U-Boot starts with `bootm <address>` once the image is in RAM (after
+  `sf read`, `load`, or `cp.b` from memory-mapped NOR flash: U-Boot cannot
+  run it in place in flash);
 - a 64 MiB NOR flash image (armdos-rom-flash.bin) with the FIT at offset 0,
-  the size of QEMU virt's second flash bank (0x04000000), so
-  `-drive if=pflash,unit=1,format=raw,file=armdos-rom-flash.bin` and
-  `bootm 0x04000000` boot it with no disk at all.
+  the size of QEMU virt's second flash bank (0x04000000), so with
+  `-drive if=pflash,unit=1,format=raw,file=armdos-rom-flash.bin`,
+  `cp.b 0x04000000 ${kernel_addr_r} 0x100000; bootm ${kernel_addr_r}` boots
+  it with no disk at all.
 
 Boards that boot EFI applications directly (EDK2, or U-Boot's `bootefi`)
 can take ARMDOS.EFI itself.

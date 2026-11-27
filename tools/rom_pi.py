@@ -39,32 +39,49 @@ MODELS = {
         'url': 'https://github.com/pftf/RPi4/releases/download/v1.42/'
                'RPi4_UEFI_Firmware_v1.42.zip',
         'sha256': '3cf8d643dfe491c3ae65f697b444e1a44c4f2d05aab12cfd1dffac1175880cfc',
-        'license': 'https://raw.githubusercontent.com/pftf/RPi4/v1.42/License.txt',
+        # pftf's RPi4 License.txt is the same file as RPi3's (same hash).
+        'license': 'https://raw.githubusercontent.com/pftf/RPi3/'
+                   '671c48c7a99c3c5664b347c938e4190ad6aa255f/License.txt',
     },
 }
 BROADCOM_LICENSE = ('https://raw.githubusercontent.com/raspberrypi/firmware/'
                     'd91dd52c88a3918028a0ca6bbe6fe40e91bee951/boot/LICENCE.broadcom')
+LICENSE_SHA256 = {
+    'License.txt': 'f5c8f78f51f9ccf36e4e4cda4d9d70cb37b8161145eb0434e983ce91c3c17087',
+    'LICENCE.broadcom': 'c7283ff51f863d93a275c66e3b4cb08021a5dd4d8c1e7acc47d872fbe52d3d6b',
+}
 TOTAL_SECTORS = 131072          # 64 MiB
 START = 2048
 EPOCH = 1749168000              # 2025-06-06, as image.py
 
 
-def fetch(url, limit=16 << 20):
-    with urllib.request.urlopen(url, timeout=45) as response:
-        return response.read(limit)
+def cached(url, sha256, path, what):
+    """The file at url with this hash, kept at path; downloaded only once."""
+    if path.exists() and hashlib.sha256(path.read_bytes()).hexdigest() != sha256:
+        path.unlink()           # a damaged cache: fetch it again
+    if not path.exists():
+        try:
+            with urllib.request.urlopen(url, timeout=45) as response:
+                contents = response.read()
+        except OSError as error:
+            raise SystemExit(f'cannot download {what} ({url}): {error}; '
+                             f'place it at {path} to build offline')
+        if hashlib.sha256(contents).hexdigest() != sha256:
+            raise SystemExit(f'{what} checksum mismatch; no image generated')
+        temporary = path.with_suffix(path.suffix + '.tmp')
+        temporary.write_bytes(contents)
+        os.replace(temporary, path)
+    return path
 
 
 def firmware_zip(model, given, cache_dir):
     info = MODELS[model]
-    path = given or cache_dir / Path(info['url']).name
-    if not path.exists():
-        contents = fetch(info['url'])
-        if hashlib.sha256(contents).hexdigest() != info['sha256']:
+    if given:
+        if hashlib.sha256(given.read_bytes()).hexdigest() != info['sha256']:
             raise SystemExit(f'Pi {model} firmware checksum mismatch; no image generated')
-        path.write_bytes(contents)
-    if hashlib.sha256(path.read_bytes()).hexdigest() != info['sha256']:
-        raise SystemExit(f'Pi {model} firmware checksum mismatch; no image generated')
-    return path
+        return given
+    return cached(info['url'], info['sha256'], cache_dir / Path(info['url']).name,
+                  f'the Pi {model} UEFI firmware')
 
 
 def readme(model):
@@ -104,8 +121,13 @@ def main():
         shutil.copyfile(Path(__file__).parent.parent / 'LICENSE', source / 'DOS-MIT.TXT')
         (source / 'startup.nsh').write_text('fs0:\\EFI\\BOOT\\BOOTAA64.EFI\r\n')
         # Keep third-party license notices with redistributed firmware.
-        (source / 'LICENSE.TXT').write_bytes(fetch(info['license']))
-        (source / 'BROADCOM.TXT').write_bytes(fetch(BROADCOM_LICENSE))
+        cache = args.output.parent
+        shutil.copyfile(cached(info['license'], LICENSE_SHA256['License.txt'],
+                               cache / 'pftf-License.txt', 'the pftf firmware license'),
+                        source / 'LICENSE.TXT')
+        shutil.copyfile(cached(BROADCOM_LICENSE, LICENSE_SHA256['LICENCE.broadcom'],
+                               cache / 'LICENCE.broadcom', 'the Broadcom firmware licence'),
+                        source / 'BROADCOM.TXT')
         mbr = bytearray(512)
         # The Pi's boot ROM wants a FAT LBA partition (type 0Ch), not 0EFh.
         struct.pack_into('<B3sB3sII', mbr, 446,

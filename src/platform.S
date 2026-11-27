@@ -505,6 +505,9 @@ plat_rom_native:
     bl plat_alloc_pages
     cbz x0, plat_fail
     stv x0, plat_arena, x2
+    ldv x2, plat_disk_kind
+    cmp x2, #2                  // ROM disk: no disk driver pages
+    b.eq 12f
     mov x0, #1
     bl plat_alloc_pages
     cbz x0, plat_fail
@@ -1307,16 +1310,24 @@ plat_fdt_console:
     movk w3, #0xd00d, lsl #16
     cmp w2, w3
     b.ne 90f
-    ldr w2, [x19, #4]           // totalsize
-    rev w2, w2
-    add x2, x19, x2
+    ldr w20, [x19, #4]          // totalsize
+    rev w20, w20
+    add x2, x19, x20
     stv x2, fdt_end, x3
     ldr w2, [x19, #8]           // off_dt_struct
     rev w2, w2
+    cmp x2, x20
+    b.hs 90f
     add x2, x19, x2
     stv x2, fdt_struct, x3
     ldr w2, [x19, #12]          // off_dt_strings
     rev w2, w2
+    ldr w3, [x19, #32]          // size_dt_strings
+    rev w3, w3
+    add x4, x2, x3
+    cmp x4, x20
+    b.hi 90f
+    stv x3, fdt_strings_size, x4
     add x2, x19, x2
     stv x2, fdt_strings, x3
     // stdout-path: "/path[:options]", or an alias name from /aliases.
@@ -1366,6 +1377,19 @@ plat_fdt_console:
     ldv x23, fdt_matched
     subs x23, x23, #1           // its level (the root is 0)
     b.eq 90f
+    address x1, fdt_status_name // status: absent, "okay" or "ok"
+    mov x2, #6
+    bl fdt_get_prop
+    cbz x0, 21f
+    mov x21, x0
+    address x1, fdt_okay
+    bl fat_strcmp
+    cbz x0, 21f
+    mov x0, x21
+    address x1, fdt_ok
+    bl fat_strcmp
+    cbnz x0, 90f
+21:
     // compatible: the first string of the list that names a known UART.
     mov x0, x20
     address x1, fdt_compatible_name
@@ -1439,7 +1463,7 @@ plat_fdt_console:
     address x2, fdt_acells
     ldr x3, [x2, x22, lsl #3]
     cbz x3, 90f
-    cmp x3, #4
+    cmp x3, #2                  // 3-cell (PCI) addresses: not handled
     b.hi 90f
     cmp x1, x3, lsl #2
     b.lo 90f
@@ -1456,17 +1480,20 @@ plat_fdt_console:
     address x2, fdt_rptr
     ldr x24, [x2, x22, lsl #3]
     add x25, x24, x25           // end of the table
+    ldv x2, fdt_end
+    cmp x25, x2
+    b.hi 90f
     address x2, fdt_acells
     ldr x26, [x2, x22, lsl #3]  // child address cells
     sub x3, x22, #1
     ldr x27, [x2, x3, lsl #3]   // parent address cells
     address x2, fdt_scells
     ldr x28, [x2, x22, lsl #3]  // size cells
-    cmp x26, #4
+    cmp x26, #2                 // at most 64-bit addresses and sizes:
+    b.hi 90f                    // a 3-cell PCI range could match wrongly
+    cmp x27, #2
     b.hi 90f
-    cmp x27, #4
-    b.hi 90f
-    cmp x28, #4
+    cmp x28, #2
     b.hi 90f
 61:
     add x2, x26, x27
@@ -1534,14 +1561,15 @@ fdt_find_node:
     cmp w2, #1                  // FDT_BEGIN_NODE
     b.ne 9f
     mov x24, x21                // its name
+    ldv x3, fdt_end
 2:
+    cmp x21, x3
+    b.hs 9f
     ldrb w2, [x21], #1
     cbnz w2, 2b
     add x21, x21, #3
     and x21, x21, #~3
-    add x22, x22, #1
-    cmp x22, #FDT_LEVELS
-    b.hs 9f
+    add x22, x22, #1            // deep unrelated subtrees are only skipped
     cbnz x22, 3f
     mov x0, #0                  // the root
     bl fdt_level_init
@@ -1565,6 +1593,8 @@ fdt_find_node:
     sub x2, x25, x19
     bl fdt_name_eq
     cbz x0, 1b
+    cmp x22, #FDT_LEVELS        // levels on the path are recorded
+    b.hs 9f
     mov x0, x22
     bl fdt_level_init
     add x23, x23, #1
@@ -1583,11 +1613,17 @@ fdt_find_node:
     rev w26, w26
     add x24, x21, #8            // value
     add x21, x24, x25
+    ldv x2, fdt_end
+    cmp x21, x2
+    b.hi 9f                     // a value past the end of the blob
     add x21, x21, #3
     and x21, x21, #~3
     sub x2, x23, #1             // only the deepest matched node's own
     cmp x22, x2
     b.ne 1b
+    ldv x2, fdt_strings_size
+    cmp x26, x2
+    b.hs 9f
     ldv x27, fdt_strings
     add x27, x27, x26
     mov x0, x27
@@ -1709,8 +1745,14 @@ fdt_get_prop:
     rev w23, w23
     add x24, x19, #8
     add x19, x24, x22
+    ldv x2, fdt_end
+    cmp x19, x2
+    b.hi 9f                     // a value past the end of the blob
     add x19, x19, #3
     and x19, x19, #~3
+    ldv x2, fdt_strings_size
+    cmp x23, x2
+    b.hs 9f
     ldv x0, fdt_strings
     add x0, x0, x23
     mov x3, #0
@@ -1815,6 +1857,9 @@ fdt_stdout_name: .asciz "stdout-path"
 fdt_linux_stdout_name: .asciz "linux,stdout-path"
 fdt_compatible_name: .asciz "compatible"
 fdt_reg_name: .asciz "reg"
+fdt_status_name: .asciz "status"
+fdt_okay: .asciz "okay"
+fdt_ok: .asciz "ok"
 fdt_shift_name: .asciz "reg-shift"
 fdt_width_name: .asciz "reg-io-width"
 fdt_acells_name: .asciz "#address-cells"
@@ -1854,6 +1899,7 @@ plat_disk_kind: .skip 8           // 0 virtio-blk, 1 Pi SD card, 2 none (ROM dis
 fdt_end: .skip 8
 fdt_struct: .skip 8
 fdt_strings: .skip 8
+fdt_strings_size: .skip 8
 fdt_matched: .skip 8
 fdt_uart_type: .skip 8
 fdt_acells: .skip 8 * FDT_LEVELS
