@@ -66,12 +66,17 @@ path. `CROSS_COMPILE` can select another GNU AArch64 prefix, such as
 
 ```sh
 make -C arm64 image CROSS_COMPILE=aarch64-elf-
-python3 arm64/tools/run.py arm64/build/msdos-arm64.img --firmware /path/to/QEMU_EFI.fd
+python3 arm64/tools/run.py arm64/build/msdos-arm64.img
 ```
 
-The runner chooses QEMU's `hvf` accelerator and `host` CPU on Apple Silicon
+`run.py` finds ARM64 UEFI firmware where Homebrew, Debian/Ubuntu and Fedora
+install it; pass `--firmware /path/to/QEMU_EFI.fd` to use another file.
+`--iso` boots the live ISO from a read-only CD drive, `--disk` adds a writable
+disk (created blank at `--disk-size`, default 512M, if it does not exist), and
+`--print` shows the QEMU command instead of running it. Quit QEMU with
+Ctrl+A, then X. The runner chooses QEMU's `hvf` accelerator and `host` CPU on Apple Silicon
 macOS, or `tcg` and Cortex-A72 elsewhere. The cloud validation used TCG on x86_64;
-HVF was tested on an Apple M3 Pro (macOS 27.2, QEMU 11.1 from Homebrew, its `edk2-aarch64-code.fd`): `make smoke` passed all its checks in native and firmware mode, with the same output as TCG. UTM has not been tested. UTM can use an ARM64 VM with UEFI firmware
+HVF was tested on an Apple M3 Pro (macOS 27.2, QEMU 11.1 from Homebrew, its `edk2-aarch64-code.fd`): `make smoke` passed all its checks in native and firmware mode, with the same output as TCG, and the live ISO booted and `INSTALL` produced a disk that booted on its own. UTM has not been tested. UTM can use an ARM64 VM with UEFI firmware
 and the raw disk as a writable VirtIO drive. This image requires a writable FAT
 volume for its boot self-test.
 
@@ -280,20 +285,37 @@ asking, for scripts; `/Y` without a disk number is refused. INSTALL needs UEFI b
 runs from the live ISO (or any firmware-mode boot). Under the native kernel
 it finds no disks.
 
-To install in QEMU:
+To install in QEMU (on a Mac, `brew install qemu` provides QEMU and its
+firmware):
+
+```sh
+python3 arm64/tools/run.py --iso arm64/images/armdos.iso --disk armdos-disk.img
+```
+
+This creates a blank 512 MiB `armdos-disk.img` and boots the ISO with it
+attached. At the `A:\>` prompt run `INSTALL`. When it finishes, quit QEMU
+(Ctrl+A, then X) and boot the installed disk on its own; ARM DOS starts from
+it with A: writable:
+
+```sh
+python3 arm64/tools/run.py armdos-disk.img
+```
+
+Without the runner, the same live boot is:
 
 ```sh
 qemu-img create -f raw armdos-disk.img 512M
 qemu-system-aarch64 -machine virt -cpu cortex-a72 -m 256 -nographic \
   -bios /usr/share/qemu-efi-aarch64/QEMU_EFI.fd \
-  -device virtio-scsi-pci -drive file=arm64/build/armdos.iso,if=none,id=cd,media=cdrom,readonly=on \
-  -device scsi-cd,drive=cd \
+  -device virtio-scsi-pci -drive file=arm64/images/armdos.iso,if=none,id=cd,media=cdrom,readonly=on \
+  -device scsi-cd,drive=cd,bootindex=0 \
   -drive file=armdos-disk.img,if=none,id=hd,format=raw -device virtio-blk-pci,drive=hd
 ```
 
-At the `A:\>` prompt run `INSTALL`. When it finishes, quit QEMU and start
-it again with only the `armdos-disk.img` lines; ARM DOS boots from the disk
-with A: writable.
+On Apple Silicon, use `-accel hvf -cpu host` and Homebrew's
+`-bios /opt/homebrew/share/qemu/edk2-aarch64-code.fd`. The ISO only holds an
+ARM64 UEFI loader, so VirtualBox and other x86 virtual machines cannot boot
+it.
 
 To install in UTM (untested; the same steps work in QEMU): create a new
 virtual machine with **Virtualize** (on Apple Silicon) or **Emulate** with the
