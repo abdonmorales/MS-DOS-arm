@@ -47,6 +47,9 @@ efi_main:
     address x0, banner
     bl puts
     address x0, plat_firmware_message
+.ifdef ROM_BUILD
+    address x0, plat_rom_firmware_message
+.endif
     adrp x1, platform_native
     ldr x1, [x1, :lo12:platform_native]
     cbz x1, 1f
@@ -55,6 +58,14 @@ efi_main:
     ldr x1, [x1, :lo12:plat_disk_kind]
     cbz x1, 1f
     address x0, plat_pi_message
+    cmp x1, #2
+    b.ne 1f
+    address x0, plat_rom_native_message
+    bl puts
+    adrp x0, plat_uart
+    ldr x0, [x0, :lo12:plat_uart]
+    bl plat_print_hex
+    address x0, plat_rom_native_end
 1:
     bl puts
     bl fat_print_backend
@@ -62,6 +73,9 @@ efi_main:
     ldr x0, [x0, :lo12:boot_read_only]  // so the write self-test is skipped
     cbz x0, 2f
     address x0, live_message
+.ifdef ROM_BUILD
+    address x0, rom_message
+.endif
     bl puts
     b 3f
 2:
@@ -608,6 +622,10 @@ delete_return:
 filesystem_init:
     frame
     str x19, [sp, #-16]!
+.ifdef ROM_BUILD
+    bl fat_mount_rom            // A: is the ROM disk; no firmware fallback
+    b fs_return
+.endif
     bl fat_mount
     cbz x0, fs_return
     address x19, boot_services
@@ -1185,6 +1203,7 @@ ctrl_c_mark: .asciz "^C"
 unknown_message: .asciz "Bad command or file name\r\n"
 help_message: .asciz "HELP VER ECHO CLS DIR TYPE DEL ERASE CD MD RD COPY REN DATE TIME VOL\r\nSET PATH PROMPT FOR SHIFT REM CALL GOTO IF PAUSE VERIFY BREAK CTTY CHCP TRUENAME\r\nSELFTEST EXIT. Native ARM64 EXE and BAT files; quote paths containing spaces.\r\nRedirection: < input, > output, >> append, | pipe. A: is the boot volume.\r\n"
 live_message: .asciz "Live system: drive A: is read-only, and files on RAM disks last until\r\npower-off. Run INSTALL to put ARM DOS on a writable disk.\r\n"
+rom_message: .asciz "ROM system: drive A: is built in and read-only; B: is a RAM disk whose\r\nfiles last until power-off.\r\n"
 version_message: .asciz "ARM DOS Version 4.00 (AArch64), MS-DOS 4.00 API\r\n"
 passed_message: .asciz "SELFTEST PASS: file/FCB APIs, directories/search, memory, clock, native processes.\r\n"
 failed_message: .asciz "SELFTEST FAIL\r\n"
@@ -1194,6 +1213,20 @@ root_path: .asciz "\\"
 write_filename: .asciz "\\ARMCHK.TMP"
 test_contents: .ascii "ARM64 FAT read\r\n"
 dos_string_message: .asciz "DOS string service OK\r\n$"
+
+.ifdef ROM_BUILD
+// The ROM disk (tools/romdisk.py): drive A:, a FAT12 image served from
+// memory by fat_mount_rom. The Makefile puts armdos-romdisk.img on the
+// include path.
+.section .rodata
+.balign 4096
+.global rom_disk
+rom_disk:
+.incbin "armdos-romdisk.img"
+.balign 512
+.global rom_disk_end
+rom_disk_end:
+.endif
 
 .section .bss
 .balign 16

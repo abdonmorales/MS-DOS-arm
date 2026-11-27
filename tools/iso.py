@@ -21,23 +21,11 @@ import argparse
 import os
 from pathlib import Path
 import shutil
-import struct
 import subprocess
 import tempfile
+from release import mtools_env, release_tree
 
 FAT_KIB = 30720                 # 30 MiB: under El Torito's 32 MiB limit
-# Test fixtures of the disk image that a release does not carry. ARMTEST.TXT
-# and NATIVE.EXE stay: the boot self-test reads and runs them.
-TEST_ONLY = {'TESTDRV.SYS', 'DOSTEST.EXE', 'FC1.TXT', 'FC2.TXT',
-             'LINES.TXT', 'SORTIN.TXT', 'CHILD.BAT', 'SCRIPT.BAT', 'FEATURES.BAT'}
-CONFIG_SYS = (b'REM CONFIG.SYS for ARM DOS\r\n'
-              b'FILES=40\r\n'
-              b'BUFFERS=20\r\n'
-              b'COUNTRY=001\r\n'
-              b'LASTDRIVE=Z\r\n'
-              b'DEVICE=\\RAMDRIVE.SYS 1024 512 112\r\n'
-              b'DEVICE=\\ANSI.SYS\r\n')
-AUTOEXEC_BAT = b'@ECHO OFF\r\nPATH A:\\\r\n'
 README = (b'ARM DOS 4.0 live ISO\r\n\r\n'
           b'Boot this ISO on an ARM64 UEFI machine or VM (QEMU virt, UTM). It\r\n'
           b'starts the normal ARM DOS prompt with A: read-only; B: is a RAM\r\n'
@@ -51,31 +39,14 @@ def main():
     parser.add_argument('output', type=Path)
     parser.add_argument('--xorriso', default='xorriso')
     args = parser.parse_args()
-    env = dict(os.environ, MTOOLS_SKIP_CHECK='1')
-    env.setdefault('SOURCE_DATE_EPOCH', '1749168000')   # 2025-06-06, as image.py
-    with args.image.open('rb') as disk:
-        mbr = disk.read(512)
-    if mbr[510:512] != b'\x55\xaa':
-        raise SystemExit('image has no MBR')
-    start = struct.unpack_from('<I', mbr, 454)[0]
+    env = mtools_env()
     with tempfile.TemporaryDirectory(prefix='arm64-iso-') as name:
         work = Path(name)
         tree, root = work / 'tree', work / 'root'
         tree.mkdir()
         root.mkdir()
-        source = f'{args.image}@@{start * 512}'
-        subprocess.run(['mcopy', '-s', '-m', '-i', source, '::*', str(tree)],
-                       env=env, check=True)
-        for name in TEST_ONLY:
-            (tree / name).unlink(missing_ok=True)
-        (tree / 'CONFIG.SYS').write_bytes(CONFIG_SYS)
-        (tree / 'AUTOEXEC.BAT').write_bytes(AUTOEXEC_BAT)
-        # Files written here (and directories) get the fixed build date, so
-        # the FAT entries mcopy -m stores are the same on every build.
+        release_tree(args.image, tree, env)
         epoch = int(env['SOURCE_DATE_EPOCH'])
-        for path in [tree / 'CONFIG.SYS', tree / 'AUTOEXEC.BAT',
-                     *(p for p in tree.rglob('*') if p.is_dir())]:
-            os.utime(path, (epoch, epoch))
         efi = work / 'efiboot.img'
         subprocess.run(['mkfs.fat', '-C', '-F', '16', '-n', 'ARMDOS', '-i', '41524d44',
                         '--invariant', str(efi), str(FAT_KIB)],

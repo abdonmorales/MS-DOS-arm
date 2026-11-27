@@ -31,6 +31,10 @@ What to expect:
 - **A live ISO and an installer.** Boot `armdos.iso`, try it, then run
   `INSTALL` to put ARM DOS on a disk.
 - **ARM BASIC**, a BASIC interpreter written from scratch in AArch64 assembly.
+- **ROM builds for embedded boards and the Raspberry Pi.** One EFI file,
+  `ARMDOS.EFI`, carries a read-only drive A: and boots from an SD card, a USB
+  stick, the network or SPI/NOR flash through U-Boot, with no disk at all
+  (see [ROM builds](#rom-builds-raspberry-pi-and-embedded-boards)).
 - **A real Raspberry Pi 3 has not been booted yet.** Its native drivers pass
   their tests on QEMU's `raspi3b` model; only a physical board can confirm
   them (see [PORT_STATUS.md](PORT_STATUS.md), milestone 8).
@@ -120,6 +124,11 @@ sudo apt-get install binutils-aarch64-linux-gnu python3 make mtools dosfstools \
   xorriso qemu-system-arm qemu-efi-aarch64
 ```
 
+The ROM builds also need `u-boot-tools` (for `mkimage`; `brew install
+u-boot-tools` on a Mac), and `make rom-test` needs `u-boot-qemu`; `make unit`
+uses `device-tree-compiler` (`dtc`) when present. The Makefile needs GNU Make
+4.3 or later (`brew install make`, then `gmake` on a Mac).
+
 On a Mac, `brew install aarch64-elf-binutils mtools dosfstools xorriso qemu`
 provides the same tools. Pass `CROSS_COMPILE=aarch64-elf-` to `make`, and
 for the targets that boot QEMU (`smoke`, `iso-test`, `validate`, `snapshot`)
@@ -136,6 +145,8 @@ make smoke CROSS_COMPILE=aarch64-elf- FIRMWARE=$(brew --prefix)/share/qemu/edk2-
 | `make image` | `build/msdos-arm64.img`, a 64 MiB FAT16 test disk with the test fixtures |
 | `make iso` | `build/armdos.iso`, the live ISO with the release file set |
 | `make pi-image` | `build/msdos-arm64-pi3.img`, a 128 MiB Raspberry Pi 3 SD-card image (downloads the pinned [Pi 3 UEFI firmware](https://github.com/pftf/RPi3/releases/tag/v1.53.1)) |
+| `make rom-generic` | `build/rom-generic/`: `ARMDOS.EFI` (kernel with a built-in read-only A:), `armdos-rom.itb` (FIT image for U-Boot) and `armdos-rom-flash.bin` (64 MiB NOR flash image); needs `mkimage` from u-boot-tools |
+| `make rom-pi` | `build/rom-pi/`: `armdos-rom-pi3.img` and `armdos-rom-pi4.img`, 64 MiB Pi 3 and Pi 4 boot images with the ROM build (downloads the pinned Pi 3 and [Pi 4 UEFI firmware](https://github.com/pftf/RPi4/releases/tag/v1.42)) |
 | `make clean` | Removes `build/` |
 
 `CROSS_COMPILE` selects the binutils prefix (default `aarch64-linux-gnu-`).
@@ -167,13 +178,14 @@ state and verified package hashes, and `source tools/env.sh` puts them on
 
 | Command | Checks |
 | --- | --- |
-| `make unit` | Host-side unit tests in about 6 seconds: kernel routines run in the Unicorn emulator (`pip install unicorn`) against Python references |
+| `make unit` | Host-side unit tests in about 6 seconds: kernel routines run in the Unicorn emulator (`pip install unicorn`) against Python references, and the device tree parser against trees built by `dtc` (device-tree-compiler; skipped without it) |
 | `make smoke` | Boots the test image in QEMU and checks about 330 console commands in native mode, then `fsck.fat` on the disk |
 | `make smoke-firmware` | The same checks with ACPI hidden, so the kernel stays in firmware mode |
 | `make fat-test` | Stress-tests `src/fat.S` on FAT12/16/32 images under `qemu-aarch64` (needs `gcc-aarch64-linux-gnu`, `libc6-dev-arm64-cross`, `qemu-user`) |
 | `make pi-test` | The Pi 3 SD-card and UART drivers, bare metal on QEMU `raspi3b` |
 | `make iso-test` | Live boot as CD and USB stick, `INSTALL` to blank disks, a boot of the installed disk, and a reproducible ISO |
 | `make validate` | Both disk images: FAT checks, payload comparison and a QEMU boot; writes `build/validation.json` |
+| `make rom-test` | Boots the ROM builds in QEMU `virt`: network boot under EDK2 (ACPI and device tree), U-Boot from NOR flash, the Pi build in firmware mode; checks that A: refuses every write, and the Pi images' contents (needs `u-boot-qemu`, `u-boot-tools`) |
 | `make check` | `unit`, `pi-test`, then `smoke` |
 | `make snapshot` | `validate` and `iso-test`, then publishes the validated images into `images/` |
 
@@ -205,7 +217,7 @@ it with `FORMAT d: /SELECT /V:ARMDOS` and copies every file from A: with
   firmware-mode boot). Under the native kernel it finds no disks.
 
 The ISO boots on any ARM64 UEFI machine or VM, from a virtual CD or written
-to a USB stick. A Raspberry Pi 3 does not boot it; use the SD-card image
+to a USB stick. A Raspberry Pi does not boot it; use the SD-card image or a ROM build
 there.
 
 ## ARM BASIC
@@ -287,6 +299,86 @@ boot; without it the shell asks for the date and time, as COMMAND did.
 Commands are limited to 255 bytes and `CALL` nesting to 16 scripts; a batch
 file started from another without `CALL` replaces it. The [ABI](ABI.md) has
 the full detail.
+
+## ROM builds (Raspberry Pi and embedded boards)
+
+A ROM build turns ARM DOS into a 1980s-style ROM machine: the kernel and a
+read-only drive A: (every program, driver, ARM BASIC and `PRIMES.BAS`) are
+one EFI application, `ARMDOS.EFI`, about 600 KiB. The kernel serves A:
+straight from its own memory, so it needs no disk and never writes one, and
+B: is a 4 MiB RAM disk for scratch files that is empty again after a
+restart. Every write to A: is refused (`File/device error.`) and leaves it
+unchanged.
+
+```
+Platform: native AArch64 kernel (firmware exited; console UART at 0000000009000000, A: in ROM)
+Storage: native FAT12 driver over the built-in ROM disk (read-only)
+ROM system: drive A: is built in and read-only; B: is a RAM disk whose
+files last until power-off.
+```
+
+Because it is a single file, the same `ARMDOS.EFI` boots every way the
+firmware can load an EFI application:
+
+- **From an SD card or USB stick:** as `\EFI\BOOT\BOOTAA64.EFI` on any FAT
+  volume.
+- **Over the network:** offered as the boot file by a PXE or HTTP boot server
+  (`make rom-test` boots it this way through QEMU's TFTP server).
+- **From SPI/NOR flash through U-Boot:** `armdos-rom.itb` is a FIT image with
+  `ARMDOS.EFI` as an `efi` kernel. Write it to the board's flash, then:
+
+  ```
+  sf probe; sf read ${kernel_addr_r} <flash offset> 0x100000; bootm ${kernel_addr_r}
+  ```
+
+  (on memory-mapped NOR, `cp.b <flash address> ${kernel_addr_r} 0x100000`
+  instead of `sf read`; 0x100000 bytes covers the FIT image, which is about
+  610 KiB). Set that line as `bootcmd` to boot ARM DOS at power
+  on. `bootefi` can also start `ARMDOS.EFI` directly. In QEMU:
+
+  ```sh
+  qemu-system-aarch64 -machine virt -cpu cortex-a72 -m 256 -nographic \
+    -bios /usr/lib/u-boot/qemu_arm64/u-boot.bin \
+    -drive if=pflash,unit=1,format=raw,readonly=on,file=build/rom-generic/armdos-rom-flash.bin
+  # at the U-Boot prompt:
+  => cp.b 0x04000000 ${kernel_addr_r} 0x100000; bootm ${kernel_addr_r}
+  ```
+
+**Native mode on any board.** With A: in memory, leaving the firmware needs
+only a console UART, so a ROM build can run natively on boards ARM DOS has
+no disk driver for. It finds the UART through ACPI SPCR or, on device-tree
+firmware such as U-Boot, through `/chosen` `stdout-path` (PL011, SBSA UART,
+16550/8250 including DesignWare, and the BCM2835 mini UART; bus `ranges` are
+followed). Native mode is opt-in: it is used only when the ROM disk holds
+`\NATIVE.ON`, and then the console is the serial UART only (HDMI and USB
+keyboards stop once the firmware is left). Without it, or with a UART the
+kernel does not know, the build stays in UEFI firmware mode and uses the
+firmware's screen and keyboard. `make rom-generic` puts `NATIVE.ON` on its
+ROM disk by default and `make rom-pi` does not:
+
+| Target | Boards | `NATIVE.ON` by default |
+| --- | --- | --- |
+| `make rom-generic` | Any ARM64 board with UEFI firmware: EDK2, or U-Boot with its UEFI support (on by default for ARM64 boards) | Yes (`GENERIC_NATIVE=0` to turn off): embedded boards usually have a serial console |
+| `make rom-pi` | Raspberry Pi 3B/3B+ and Pi 4B/400/CM4, with the pinned [pftf](https://github.com/pftf) UEFI firmware | No (`PI_NATIVE=1` to turn on): the Pi is usually used with HDMI and a USB keyboard |
+
+Write `armdos-rom-pi3.img` or `armdos-rom-pi4.img` to an SD card or USB stick
+(at least 64 MiB) with Raspberry Pi Imager's custom-image option. (A Pi 3B,
+unlike the 3B+ and the Pi 4, boots from USB only after its USB boot bit has
+been set once from Raspberry Pi OS.) The Pi's
+real boot ROM is inside the chip and cannot be replaced, and on the Pi 4 the
+EEPROM holds only the Pi's own bootloader, so a card that DOS never writes
+is the closest the Pi comes to a ROM OS. The Pi 5 has no supported UEFI
+firmware yet. Microcontrollers (Cortex-M) cannot run ARM DOS, which needs a
+64-bit Cortex-A core.
+
+The ROM disk's files are the release file set of the live ISO
+(`tools/release.py`), with a `CONFIG.SYS` that makes B: 4 MiB and an
+`AUTOEXEC.BAT` that runs `VER`; `tools/romdisk.py` builds it. To ship your
+own programs, add them to the disk image (or edit `tools/romdisk.py`) and
+rebuild. Pipes (`a | b`) keep their temporary files in the current drive's
+root, as COMMAND did, so they need a writable drive: switch to B: first
+(`B:`), as on the live ISO. **The ROM builds have been tested in QEMU (EDK2 and U-Boot) only,
+not yet on a physical board.**
 
 ## How it works
 

@@ -17,6 +17,7 @@ import functools
 import itertools
 import os
 import re
+import shutil
 import subprocess
 import sys
 import threading
@@ -333,8 +334,130 @@ def test_dispatcher(kernel):
     return len(values)
 
 
+FDT_CASES = [
+    # (description, device tree source, expected (base, plat_uart_type))
+    ('QEMU virt: PL011 by path', '''
+        / { #address-cells = <2>; #size-cells = <2>;
+            chosen { stdout = "/x"; stdout-path = "/pl011@9000000"; };
+            pl011@9000000 { compatible = "arm,pl011", "arm,primecell";
+                            reg = <0x0 0x9000000 0x0 0x1000>; }; };''', (0x9000000, 0)),
+    ('Pi 4: alias with options, mini UART behind a translating ranges', '''
+        / { #address-cells = <2>; #size-cells = <1>;
+            aliases { serial1 = "/soc/serial@7e201000"; serial0 = "/soc/serial@7e215040"; };
+            chosen { stdout-path = "serial0:115200n8"; };
+            soc { #address-cells = <1>; #size-cells = <1>;
+                  ranges = <0x7c000000 0x0 0xfc000000 0x2000000>,
+                           <0x7e000000 0x0 0xfe000000 0x1800000>;
+                  serial@7e201000 { compatible = "arm,pl011"; reg = <0x7e201000 0x200>; };
+                  serial@7e215040 { compatible = "brcm,bcm2835-aux-uart";
+                                    reg = <0x7e215040 0x40>; }; }; };''', (0xfe215040, 1)),
+    ('DesignWare 16550, 32-bit registers, empty ranges', '''
+        / { #address-cells = <2>; #size-cells = <2>;
+            chosen { stdout-path = "/soc/serial@ff1a0000:1500000n8"; };
+            soc { #address-cells = <2>; #size-cells = <2>; ranges;
+                  serial@ff1a0000 { compatible = "rockchip,rk3399-uart", "snps,dw-apb-uart";
+                                    reg = <0x0 0xff1a0000 0x0 0x100>;
+                                    reg-shift = <2>; reg-io-width = <4>; }; }; };''', (0xff1a0000, 1)),
+    ('16550 with byte registers (defaults)', '''
+        / { #address-cells = <1>; #size-cells = <1>;
+            chosen { stdout-path = "/uart@1c28000"; };
+            uart@1c28000 { compatible = "ns16550a"; reg = <0x1c28000 0x400>; }; };''', (0x1c28000, 2)),
+    ('16550 with byte registers 4 apart', '''
+        / { #address-cells = <1>; #size-cells = <1>;
+            chosen { stdout-path = "/uart@1c28000"; };
+            uart@1c28000 { compatible = "ns16550a"; reg = <0x1c28000 0x400>;
+                           reg-shift = <2>; }; };''', (0x1c28000, 3)),
+    ('16550 with an unsupported register layout', '''
+        / { #address-cells = <1>; #size-cells = <1>;
+            chosen { stdout-path = "/uart@1000"; };
+            uart@1000 { compatible = "ns16550a"; reg = <0x1000 0x100>;
+                        reg-shift = <1>; }; };''', (0, 0)),
+    ('linux,stdout-path and a node named without its unit address', '''
+        / { #address-cells = <2>; #size-cells = <2>;
+            chosen { linux,stdout-path = "/uart"; };
+            uart@9000000 { compatible = "arm,sbsa-uart";
+                           reg = <0x0 0x9000000 0x0 0x1000>; }; };''', (0x9000000, 0)),
+    ('a UART kind ARM DOS does not drive', '''
+        / { #address-cells = <1>; #size-cells = <1>;
+            chosen { stdout-path = "/serial@30860000"; };
+            serial@30860000 { compatible = "fsl,imx8mq-uart"; reg = <0x30860000 0x10000>; }; };''', (0, 0)),
+    ('a bus without ranges is not memory-mapped', '''
+        / { #address-cells = <1>; #size-cells = <1>;
+            chosen { stdout-path = "/bus/uart@10"; };
+            bus { #address-cells = <1>; #size-cells = <1>;
+                  uart@10 { compatible = "arm,pl011"; reg = <0x10 0x100>; }; }; };''', (0, 0)),
+    ('an address outside every range', '''
+        / { #address-cells = <1>; #size-cells = <1>;
+            chosen { stdout-path = "/soc/uart@9000"; };
+            soc { #address-cells = <1>; #size-cells = <1>; ranges = <0x0 0x10000000 0x1000>;
+                  uart@9000 { compatible = "arm,pl011"; reg = <0x9000 0x100>; }; }; };''', (0, 0)),
+    ('a path that names no node', '''
+        / { #address-cells = <1>; #size-cells = <1>;
+            chosen { stdout-path = "/uart@2000"; };
+            uart@1000 { compatible = "arm,pl011"; reg = <0x1000 0x100>; }; };''', (0, 0)),
+    ('no stdout-path', '''
+        / { #address-cells = <1>; #size-cells = <1>; chosen { };
+            uart@1000 { compatible = "arm,pl011"; reg = <0x1000 0x100>; }; };''', (0, 0)),
+    ('an alias that does not exist', '''
+        / { #address-cells = <1>; #size-cells = <1>;
+            aliases { serial1 = "/uart@1000"; };
+            chosen { stdout-path = "serial0"; };
+            uart@1000 { compatible = "arm,pl011"; reg = <0x1000 0x100>; }; };''', (0, 0)),
+    ('an unrelated subtree deeper than the recorded levels', '''
+        / { #address-cells = <1>; #size-cells = <1>;
+            a { b { c { d { e { f { g { h { i { j { }; }; }; }; }; }; }; }; }; };
+            chosen { stdout-path = "/uart@1000"; };
+            uart@1000 { compatible = "arm,pl011"; reg = <0x1000 0x100>; }; };''', (0x1000, 0)),
+    ('a 3-cell (PCI) bus is refused rather than misread', '''
+        / { #address-cells = <2>; #size-cells = <2>;
+            chosen { stdout-path = "/pci/uart@1000"; };
+            pci { #address-cells = <3>; #size-cells = <2>;
+                  ranges = <0x01000000 0 0 0x0 0x3eff0000 0 0x10000>,
+                           <0x02000000 0 0 0x0 0x10000000 0 0x10000000>;
+                  uart@1000 { compatible = "ns16550a"; reg = <0x02000000 0 0x1000 0 8>; }; }; };''', (0, 0)),
+    ('a disabled UART', '''
+        / { #address-cells = <1>; #size-cells = <1>;
+            chosen { stdout-path = "/uart@1000"; };
+            uart@1000 { compatible = "arm,pl011"; reg = <0x1000 0x100>; status = "disabled"; }; };''', (0, 0)),
+    ('a UART with status "okay"', '''
+        / { #address-cells = <1>; #size-cells = <1>;
+            chosen { stdout-path = "/uart@1000"; };
+            uart@1000 { compatible = "arm,pl011"; reg = <0x1000 0x100>; status = "okay"; }; };''', (0x1000, 0)),
+]
+
+
+def test_fdt_console(kernel):
+    """plat_fdt_console: the console UART from /chosen stdout-path in device
+    trees built by dtc (paths, aliases, ranges, UART kinds, failures)."""
+    if shutil.which('dtc') is None:
+        print('skip test_fdt_console: needs dtc (device-tree-compiler)', file=sys.stderr)
+        return 0
+    calls = 0
+    for name, source, expected in FDT_CASES:
+        blob = subprocess.run(['dtc', '-q', '-I', 'dts', '-O', 'dtb', '-'],
+                              input=('/dts-v1/;\n' + source).encode(),
+                              capture_output=True, check=True).stdout
+        kernel.cpu.mem_write(SCRATCH, blob)
+        result = tuple(kernel.call('plat_fdt_console', SCRATCH, results=2))
+        calls += 1
+        if result != expected:
+            raise AssertionError(f'{name}: got ({result[0]:#x}, {result[1]}), expected '
+                                 f'({expected[0]:#x}, {expected[1]})')
+    # A header whose strings block lies outside the blob is refused.
+    bad = bytearray(blob)
+    bad[12:16] = (0x7ff00000).to_bytes(4, 'big')
+    kernel.cpu.mem_write(SCRATCH, bytes(bad))
+    if tuple(kernel.call('plat_fdt_console', SCRATCH, results=2)) != (0, 0):
+        raise AssertionError('a header with off_dt_strings past the blob was accepted')
+    calls += 1
+    kernel.cpu.mem_write(SCRATCH, b'\0' * 64)
+    if tuple(kernel.call('plat_fdt_console', SCRATCH, results=2)) != (0, 0):
+        raise AssertionError('a blob without the FDT magic was accepted')
+    return calls + 1
+
+
 TESTS = [test_wildcard_strings, test_dates, test_pack_efi_time, test_wildcard_bytes,
-         test_dispatcher]
+         test_dispatcher, test_fdt_console]
 
 
 def run_test(build, nm, test):

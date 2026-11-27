@@ -33,10 +33,23 @@ plat_putc:
     str w0, [x1]
     ret
 4:
-    ldr w2, [x1, #0x14]         // mini UART LSR: transmitter empty
-    tbz w2, #5, 4b
+    cmp x2, #1
+    b.ne 8f
+41:
+    ldr w2, [x1, #0x14]         // 16550 / mini UART LSR: transmitter empty
+    tbz w2, #5, 41b
     and w0, w0, #0xff
     str w0, [x1]
+    ret
+8:
+    cmp x2, #2                  // byte registers: LSR at 5 or 5 * 4
+    mov x3, #5
+    mov x4, #0x14
+    csel x3, x3, x4, eq
+81:
+    ldrb w2, [x1, x3]
+    tbz w2, #5, 81b
+    strb w0, [x1]
     ret
 2:
     // The UEFI console shows ESC as '?', so ANSI sequences (from ANSI.SYS)
@@ -187,15 +200,27 @@ plat_poll_key:
     adrp x2, plat_uart_type
     ldr x2, [x2, :lo12:plat_uart_type]
     cbz x2, 5f
-    ldr w2, [x1, #0x14]         // mini UART LSR: data ready
+    cmp x2, #1
+    b.ne 7f
+    ldr w2, [x1, #0x14]         // 16550 / mini UART LSR: data ready
     tbz w2, #0, 1f
     b 6f
+7:
+    cmp x2, #2                  // byte registers: LSR at 5 or 5 * 4
+    mov x3, #5
+    mov x4, #0x14
+    csel x3, x3, x4, eq
+    ldrb w2, [x1, x3]
+    tbz w2, #0, 1f
+    ldrb w0, [x1]
+    b 66f
 5:
     ldr w2, [x1, #0x18]
     tbnz w2, #4, 1f             // RXFE
 6:
     ldr w0, [x1]
     and w0, w0, #0xff
+66:
     cmp w0, #0x7f               // terminals send DEL for backspace
     b.ne 3f
     mov w0, #8
@@ -431,6 +456,9 @@ plat_sync_code:
 // Returns x0 = 0 when the runtime now owns the machine.
 platform_go_native:
     enter
+.ifdef ROM_BUILD
+    b plat_rom_native
+.endif
     ldv x2, fat_mounted         // the native disk path needs the FAT driver
     cbz x2, plat_fail
     ldv x2, fat_bps
@@ -446,12 +474,40 @@ platform_go_native:
     cbnz x0, plat_fail
     mov x2, #1
     stv x2, plat_disk_kind, x3
+    b 11f
+.ifdef ROM_BUILD
+// ROM builds: A: is in memory, so leaving firmware takes only a console
+// UART (ACPI SPCR, else the device tree's /chosen stdout-path) and memory,
+// on any board. It is opt-in: the ROM disk must hold \NATIVE.ON
+// (tools/romdisk.py --native); otherwise the firmware keeps the console.
+plat_rom_native:
+    address x0, plat_pi_marker  // "A:\NATIVE.ON"
+    mov x1, #0
+    bl dos_open
+    cbnz x1, plat_fail
+    bl dos_close
+    bl plat_find_acpi           // no ACPI is fine: try the device tree
+    ldv x2, plat_uart
+    cbnz x2, 10f
+    bl plat_find_fdt
+    cbz x0, plat_fail
+    bl plat_fdt_console
+    cbz x0, plat_fail
+    stv x0, plat_uart, x2
+    stv x1, plat_uart_type, x2
+10:
+    mov x2, #2                  // no disk driver: A: is the ROM disk
+    stv x2, plat_disk_kind, x3
+.endif
 11:
     // Memory the runtime keeps after firmware is gone.
     mov x0, #(PLAT_ARENA_BYTES >> 12)
     bl plat_alloc_pages
     cbz x0, plat_fail
     stv x0, plat_arena, x2
+    ldv x2, plat_disk_kind
+    cmp x2, #2                  // ROM disk: no disk driver pages
+    b.eq 12f
     mov x0, #1
     bl plat_alloc_pages
     cbz x0, plat_fail
@@ -511,6 +567,11 @@ platform_go_native:
     mov x0, #0
     leave
 5:
+    cmp x2, #2                  // ROM disk: nothing to restart
+    b.ne 51f
+    mov x0, #0
+    leave
+51:
     // Raspberry Pi 3: the SD card on the Arasan controller, from scratch.
     movz x0, #(PI_EMMC & 0xffff)
     movk x0, #(PI_EMMC >> 16), lsl #16
@@ -562,6 +623,30 @@ plat_ld64:
     b.lo 1b
     mov x0, x2
     ret
+
+// Returns x0 = the flattened device tree from the UEFI configuration table,
+// or 0.
+plat_find_fdt:
+    enter
+    address x19, system_table
+    ldr x19, [x19]
+    ldr x20, [x19, #104]        // NumberOfTableEntries
+    ldr x21, [x19, #112]        // ConfigurationTable
+1:
+    cbz x20, 2f
+    mov x0, x21
+    address x1, fdt_guid
+    bl fat_guid_eq
+    cbnz x0, 3f
+    add x21, x21, #24
+    sub x20, x20, #1
+    b 1b
+2:
+    mov x0, #0
+    leave
+3:
+    ldr x0, [x21, #16]
+    leave
 
 // Find SPCR (console UART) and MCFG (PCI ECAM) through the ACPI 2.0 tables.
 plat_find_acpi:
@@ -1204,6 +1289,546 @@ plat_print_hex:
     ldp x19, x20, [sp], #16
     unframe
 
+// ---------------------------------------------------------------------------
+// Device tree (ROM builds on boards without ACPI, e.g. under U-Boot's UEFI):
+// the console UART named by /chosen stdout-path. Parsing needs no firmware
+// services, so tools/unit.py checks it against trees built by dtc.
+
+.equ FDT_LEVELS, 8
+
+// x0 = flattened device tree. Returns x0 = console UART base address (0
+// when none is usable) and x1 = plat_uart_type: 0 PL011, 1 16550 with
+// 32-bit registers 4 bytes apart (as the BCM2835 mini UART), 2 16550 with
+// byte registers 1 byte apart, 3 16550 with byte registers 4 bytes apart.
+.global plat_fdt_console
+plat_fdt_console:
+    enter
+    mov x19, x0
+    ldr w2, [x19]
+    rev w2, w2
+    mov w3, #0xfeed
+    movk w3, #0xd00d, lsl #16
+    cmp w2, w3
+    b.ne 90f
+    ldr w20, [x19, #4]          // totalsize
+    rev w20, w20
+    add x2, x19, x20
+    stv x2, fdt_end, x3
+    ldr w2, [x19, #8]           // off_dt_struct
+    rev w2, w2
+    cmp x2, x20
+    b.hs 90f
+    add x2, x19, x2
+    stv x2, fdt_struct, x3
+    ldr w2, [x19, #12]          // off_dt_strings
+    rev w2, w2
+    ldr w3, [x19, #32]          // size_dt_strings
+    rev w3, w3
+    add x4, x2, x3
+    cmp x4, x20
+    b.hi 90f
+    stv x3, fdt_strings_size, x4
+    add x2, x19, x2
+    stv x2, fdt_strings, x3
+    // stdout-path: "/path[:options]", or an alias name from /aliases.
+    address x0, fdt_chosen_path
+    mov x1, #7
+    bl fdt_find_node
+    cbz x0, 90f
+    mov x20, x0
+    address x1, fdt_stdout_name
+    mov x2, #11
+    bl fdt_get_prop
+    cbnz x0, 1f
+    mov x0, x20
+    address x1, fdt_linux_stdout_name
+    mov x2, #17
+    bl fdt_get_prop
+    cbz x0, 90f
+1:
+    bl fdt_path_length
+    mov x21, x0
+    mov x22, x1
+    cbz x22, 90f
+    ldrb w2, [x21]
+    cmp w2, #'/'
+    b.eq 2f
+    address x0, fdt_aliases_path
+    mov x1, #8
+    bl fdt_find_node
+    cbz x0, 90f
+    mov x1, x21
+    mov x2, x22
+    bl fdt_get_prop
+    cbz x0, 90f
+    bl fdt_path_length
+    mov x21, x0
+    mov x22, x1
+    cbz x22, 90f
+    ldrb w2, [x21]
+    cmp w2, #'/'
+    b.ne 90f
+2:
+    mov x0, x21
+    mov x1, x22
+    bl fdt_find_node
+    cbz x0, 90f
+    mov x20, x0                 // the UART node's properties
+    ldv x23, fdt_matched
+    subs x23, x23, #1           // its level (the root is 0)
+    b.eq 90f
+    address x1, fdt_status_name // status: absent, "okay" or "ok"
+    mov x2, #6
+    bl fdt_get_prop
+    cbz x0, 21f
+    mov x21, x0
+    address x1, fdt_okay
+    bl fat_strcmp
+    cbz x0, 21f
+    mov x0, x21
+    address x1, fdt_ok
+    bl fat_strcmp
+    cbnz x0, 90f
+21:
+    // compatible: the first string of the list that names a known UART.
+    mov x0, x20
+    address x1, fdt_compatible_name
+    mov x2, #10
+    bl fdt_get_prop
+    cbz x0, 90f
+    mov x24, x0
+    add x25, x0, x1             // end of the list
+3:
+    cmp x24, x25
+    b.hs 90f
+    address x27, fdt_uart_table
+31:
+    ldrb w26, [x27]             // kind: 1 PL011, 2 16550 family, 3 mini UART
+    cbz w26, 34f
+    mov x0, x24
+    add x1, x27, #1
+    bl fat_strcmp
+    cbz x0, 4f
+    add x27, x27, #1
+32:
+    ldrb w2, [x27], #1
+    cbnz w2, 32b
+    b 31b
+34:
+    ldrb w2, [x24], #1          // the next string of the list
+    cbnz w2, 34b
+    b 3b
+4:
+    mov x2, #0                  // PL011
+    cmp x26, #1
+    b.eq 5f
+    mov x2, #1                  // mini UART: 32-bit registers 4 bytes apart
+    cmp x26, #3
+    b.eq 5f
+    // 16550: reg-shift (default 0) and reg-io-width (default 1).
+    mov x0, x20
+    address x1, fdt_shift_name
+    mov x2, #9
+    mov x3, #0
+    bl fdt_get_u32
+    mov x26, x0
+    mov x0, x20
+    address x1, fdt_width_name
+    mov x2, #12
+    mov x3, #1
+    bl fdt_get_u32
+    mov x2, #2
+    cbnz x26, 41f
+    cmp x0, #1                  // shift 0: byte registers only
+    b.eq 5f
+    b 90f
+41:
+    cmp x26, #2
+    b.ne 90f
+    mov x2, #1
+    cmp x0, #4
+    b.eq 5f
+    mov x2, #3
+    cmp x0, #1
+    b.ne 90f
+5:
+    stv x2, fdt_uart_type, x3
+    // reg, in the parent's #address-cells, then up through each ranges.
+    mov x0, x20
+    address x1, fdt_reg_name
+    mov x2, #3
+    bl fdt_get_prop
+    cbz x0, 90f
+    sub x22, x23, #1            // the bus whose children use this address
+    address x2, fdt_acells
+    ldr x3, [x2, x22, lsl #3]
+    cbz x3, 90f
+    cmp x3, #2                  // 3-cell (PCI) addresses: not handled
+    b.hi 90f
+    cmp x1, x3, lsl #2
+    b.lo 90f
+    mov x1, x3
+    bl fdt_cells
+    mov x21, x0
+6:
+    cbz x22, 8f                 // the root: a CPU physical address
+    address x2, fdt_rlen
+    ldr x25, [x2, x22, lsl #3]
+    cmn x25, #1
+    b.eq 90f                    // no ranges: not memory-mapped
+    cbz x25, 7f                 // empty ranges: the same addresses
+    address x2, fdt_rptr
+    ldr x24, [x2, x22, lsl #3]
+    add x25, x24, x25           // end of the table
+    ldv x2, fdt_end
+    cmp x25, x2
+    b.hi 90f
+    address x2, fdt_acells
+    ldr x26, [x2, x22, lsl #3]  // child address cells
+    sub x3, x22, #1
+    ldr x27, [x2, x3, lsl #3]   // parent address cells
+    address x2, fdt_scells
+    ldr x28, [x2, x22, lsl #3]  // size cells
+    cmp x26, #2                 // at most 64-bit addresses and sizes:
+    b.hi 90f                    // a 3-cell PCI range could match wrongly
+    cmp x27, #2
+    b.hi 90f
+    cmp x28, #2
+    b.hi 90f
+61:
+    add x2, x26, x27
+    add x2, x2, x28
+    cbz x2, 90f
+    add x2, x24, x2, lsl #2
+    cmp x2, x25
+    b.hi 90f                    // the address is in no range
+    mov x0, x24
+    mov x1, x26
+    bl fdt_cells
+    mov x9, x0                  // child base
+    mov x0, x1
+    mov x1, x27
+    bl fdt_cells
+    mov x10, x0                 // parent base
+    mov x0, x1
+    mov x1, x28
+    bl fdt_cells                // x0 = size
+    mov x24, x1
+    cmp x21, x9
+    b.lo 61b
+    sub x3, x21, x9
+    cmp x3, x0
+    b.hs 61b
+    add x21, x10, x3
+7:
+    sub x22, x22, #1
+    b 6b
+8:
+    cbz x21, 90f
+    mov x0, x21
+    ldv x1, fdt_uart_type
+    leave
+90:
+    mov x0, #0
+    mov x1, #0
+    leave
+
+// x0 = path, x1 = its length. Walks the tree to that node; returns x0 =
+// the start of its properties (0 if absent) and sets fdt_matched to its
+// level + 1. Each node on the way records #address-cells, #size-cells and
+// ranges for its children in fdt_acells/fdt_scells/fdt_rptr/fdt_rlen.
+fdt_find_node:
+    enter
+    mov x19, x0
+    add x20, x0, x1             // end of the path
+    ldv x21, fdt_struct
+    mov x22, #-1                // depth of the open node
+    mov x23, #0                 // nodes matched (the root is the first)
+    bl fdt_skip_slashes
+1:
+    ldv x2, fdt_end
+    add x3, x21, #4
+    cmp x3, x2
+    b.hi 9f
+    ldr w2, [x21], #4
+    rev w2, w2
+    cmp w2, #4                  // FDT_NOP
+    b.eq 1b
+    cmp w2, #3                  // FDT_PROP
+    b.eq 5f
+    cmp w2, #2                  // FDT_END_NODE
+    b.eq 6f
+    cmp w2, #1                  // FDT_BEGIN_NODE
+    b.ne 9f
+    mov x24, x21                // its name
+    ldv x3, fdt_end
+2:
+    cmp x21, x3
+    b.hs 9f
+    ldrb w2, [x21], #1
+    cbnz w2, 2b
+    add x21, x21, #3
+    and x21, x21, #~3
+    add x22, x22, #1            // deep unrelated subtrees are only skipped
+    cbnz x22, 3f
+    mov x0, #0                  // the root
+    bl fdt_level_init
+    mov x23, #1
+    b 4f
+3:
+    cmp x22, x23                // a child of the deepest matched node?
+    b.ne 1b
+    mov x25, x19                // this path component: [x19, x25)
+31:
+    cmp x25, x20
+    b.hs 32f
+    ldrb w2, [x25]
+    cmp w2, #'/'
+    b.eq 32f
+    add x25, x25, #1
+    b 31b
+32:
+    mov x0, x24
+    mov x1, x19
+    sub x2, x25, x19
+    bl fdt_name_eq
+    cbz x0, 1b
+    cmp x22, #FDT_LEVELS        // levels on the path are recorded
+    b.hs 9f
+    mov x0, x22
+    bl fdt_level_init
+    add x23, x23, #1
+    mov x19, x25
+    bl fdt_skip_slashes
+4:
+    cmp x19, x20
+    b.lo 1b
+    stv x23, fdt_matched, x2    // the whole path matched
+    mov x0, x21
+    leave
+5:
+    ldv x2, fdt_end             // the length and name offset
+    add x3, x21, #8
+    cmp x3, x2
+    b.hi 9f
+    ldr w25, [x21]              // property length
+    rev w25, w25
+    ldr w26, [x21, #4]          // name offset
+    rev w26, w26
+    add x24, x21, #8            // value
+    add x21, x24, x25
+    ldv x2, fdt_end
+    cmp x21, x2
+    b.hi 9f                     // a value past the end of the blob
+    add x21, x21, #3
+    and x21, x21, #~3
+    sub x2, x23, #1             // only the deepest matched node's own
+    cmp x22, x2
+    b.ne 1b
+    ldv x2, fdt_strings_size
+    cmp x26, x2
+    b.hs 9f
+    ldv x27, fdt_strings
+    add x27, x27, x26
+    mov x0, x27
+    address x1, fdt_acells_name
+    bl fat_strcmp
+    cbnz x0, 51f
+    address x3, fdt_acells
+    b 52f
+51:
+    mov x0, x27
+    address x1, fdt_scells_name
+    bl fat_strcmp
+    cbnz x0, 53f
+    address x3, fdt_scells
+52:
+    cmp x25, #4
+    b.lo 1b
+    ldr w2, [x24]
+    rev w2, w2
+    str x2, [x3, x22, lsl #3]
+    b 1b
+53:
+    mov x0, x27
+    address x1, fdt_ranges_name
+    bl fat_strcmp
+    cbnz x0, 1b
+    address x3, fdt_rptr
+    str x24, [x3, x22, lsl #3]
+    address x3, fdt_rlen
+    str x25, [x3, x22, lsl #3]
+    b 1b
+6:
+    sub x2, x23, #1             // the deepest matched node ended: absent
+    cmp x22, x2
+    b.eq 9f
+    sub x22, x22, #1
+    b 1b
+9:
+    mov x0, #0
+    leave
+
+// Advances x19 past '/' characters, up to x20. Leaf.
+fdt_skip_slashes:
+    cmp x19, x20
+    b.hs 1f
+    ldrb w2, [x19]
+    cmp w2, #'/'
+    b.ne 1f
+    add x19, x19, #1
+    b fdt_skip_slashes
+1:
+    ret
+
+// x0 = level: the device tree defaults for its children. Leaf.
+fdt_level_init:
+    address x2, fdt_acells
+    mov x3, #2
+    str x3, [x2, x0, lsl #3]
+    address x2, fdt_scells
+    mov x3, #1
+    str x3, [x2, x0, lsl #3]
+    address x2, fdt_rlen
+    mov x3, #-1
+    str x3, [x2, x0, lsl #3]
+    ret
+
+// x0 = node name ("name@unit", NUL-terminated), x1 = path component, x2 =
+// its length. Returns x0 = 1 when they name the same node: the whole name,
+// or the name without its unit address when the component has none. Leaf.
+fdt_name_eq:
+    mov x3, #0
+    mov x6, #0                  // the component has a unit address
+1:
+    cmp x3, x2
+    b.hs 2f
+    ldrb w4, [x1, x3]
+    ldrb w5, [x0, x3]
+    cmp w4, w5
+    b.ne 8f
+    cmp w4, #'@'
+    cset x7, eq
+    orr x6, x6, x7
+    add x3, x3, #1
+    b 1b
+2:
+    ldrb w5, [x0, x3]
+    cbz w5, 9f
+    cmp w5, #'@'
+    b.ne 8f
+    cbnz x6, 8f
+9:
+    mov x0, #1
+    ret
+8:
+    mov x0, #0
+    ret
+
+// x0 = start of a node's properties, x1 = name, x2 = name length. Returns
+// x0 = the value (0 if absent) and x1 = its length.
+fdt_get_prop:
+    enter
+    mov x19, x0
+    mov x20, x1
+    mov x21, x2
+1:
+    ldv x2, fdt_end
+    add x3, x19, #12
+    cmp x3, x2
+    b.hi 9f
+    ldr w2, [x19], #4
+    rev w2, w2
+    cmp w2, #4                  // FDT_NOP
+    b.eq 1b
+    cmp w2, #3                  // properties end at the first child or END
+    b.ne 9f
+    ldr w22, [x19]
+    rev w22, w22
+    ldr w23, [x19, #4]
+    rev w23, w23
+    add x24, x19, #8
+    add x19, x24, x22
+    ldv x2, fdt_end
+    cmp x19, x2
+    b.hi 9f                     // a value past the end of the blob
+    add x19, x19, #3
+    and x19, x19, #~3
+    ldv x2, fdt_strings_size
+    cmp x23, x2
+    b.hs 9f
+    ldv x0, fdt_strings
+    add x0, x0, x23
+    mov x3, #0
+2:
+    cmp x3, x21                 // the name, exactly
+    b.hs 3f
+    ldrb w4, [x0, x3]
+    ldrb w5, [x20, x3]
+    cmp w4, w5
+    b.ne 1b
+    add x3, x3, #1
+    b 2b
+3:
+    ldrb w4, [x0, x3]
+    cbnz w4, 1b
+    mov x0, x24
+    mov x1, x22
+    leave
+9:
+    mov x0, #0
+    mov x1, #0
+    leave
+
+// x0 = node properties, x1 = name, x2 = name length, x3 = default.
+// Returns x0 = the property as a u32 cell, or the default.
+fdt_get_u32:
+    frame
+    str x3, [sp, #-16]!
+    bl fdt_get_prop
+    ldr x3, [sp], #16
+    cbz x0, 1f
+    cmp x1, #4
+    b.lo 1f
+    ldr w3, [x0]
+    rev w3, w3
+1:
+    mov x0, x3
+    unframe
+
+// x0 = cells, x1 = count. Returns x0 = their value (the low 64 bits) and
+// x1 = the next cell. Leaf: x0-x4 only.
+fdt_cells:
+    mov x2, #0
+1:
+    cbz x1, 2f
+    ldr w3, [x0], #4
+    rev w3, w3
+    orr x2, x3, x2, lsl #32
+    sub x1, x1, #1
+    b 1b
+2:
+    mov x1, x0
+    mov x0, x2
+    ret
+
+// x0 = string property, x1 = its length. Returns x0 unchanged and x1 =
+// the length of the path in it: up to a NUL, a ':' (options) or the end.
+fdt_path_length:
+    mov x2, #0
+1:
+    cmp x2, x1
+    b.hs 2f
+    ldrb w3, [x0, x2]
+    cbz w3, 2f
+    cmp w3, #':'
+    b.eq 2f
+    add x2, x2, #1
+    b 1b
+2:
+    mov x1, x2
+    ret
+
 .section .rodata
 fw_ansi_colour: .byte 0, 4, 2, 6, 1, 5, 3, 7   // ANSI colour -> EFI colour
 .balign 8
@@ -1223,6 +1848,45 @@ plat_disk_lost: .asciz "\r\nBoot disk did not restart after leaving firmware.\r\
 plat_native_message: .asciz "Platform: native AArch64 kernel (firmware exited; PL011 console, virtio-blk disk)\r\n"
 plat_pi_message: .asciz "Platform: native AArch64 kernel (firmware exited; Raspberry Pi 3 UART console, SD card)\r\n"
 plat_pi_marker: .asciz "A:\\NATIVE.ON"
+plat_rom_native_message: .asciz "Platform: native AArch64 kernel (firmware exited; console UART at "
+plat_rom_native_end: .asciz ", A: in ROM)\r\n"
+plat_rom_firmware_message: .asciz "Platform: UEFI firmware services (ROM build; native mode not enabled or no known UART)\r\n"
+fdt_guid:
+    .long 0xb1b621d5
+    .short 0xf19c, 0x41a5
+    .byte 0x83,0x0b,0xd9,0x15,0x2c,0x69,0xaa,0xe0
+fdt_chosen_path: .asciz "/chosen"
+fdt_aliases_path: .asciz "/aliases"
+fdt_stdout_name: .asciz "stdout-path"
+fdt_linux_stdout_name: .asciz "linux,stdout-path"
+fdt_compatible_name: .asciz "compatible"
+fdt_reg_name: .asciz "reg"
+fdt_status_name: .asciz "status"
+fdt_okay: .asciz "okay"
+fdt_ok: .asciz "ok"
+fdt_shift_name: .asciz "reg-shift"
+fdt_width_name: .asciz "reg-io-width"
+fdt_acells_name: .asciz "#address-cells"
+fdt_scells_name: .asciz "#size-cells"
+fdt_ranges_name: .asciz "ranges"
+// compatible strings: a kind byte (1 PL011, 2 16550 family, 3 BCM2835 mini
+// UART) then the NUL-terminated name; a 0 kind ends the table.
+fdt_uart_table:
+    .byte 1
+    .asciz "arm,pl011"
+    .byte 1
+    .asciz "arm,sbsa-uart"
+    .byte 3
+    .asciz "brcm,bcm2835-aux-uart"
+    .byte 2
+    .asciz "ns16550a"
+    .byte 2
+    .asciz "ns16550"
+    .byte 2
+    .asciz "ns16450"
+    .byte 2
+    .asciz "snps,dw-apb-uart"
+    .byte 0
 plat_firmware_message: .asciz "Platform: UEFI firmware services (no native drivers for this board)\r\n"
 
 .section .data
@@ -1234,8 +1898,18 @@ fw_esc_state: .skip 48          // state, parameter count, 4 parameters
 .balign 16
 platform_native: .skip 8
 plat_uart: .skip 8
-plat_uart_type: .skip 8           // 0 PL011, 1 BCM2835 mini UART
-plat_disk_kind: .skip 8           // 0 virtio-blk, 1 Pi SD card
+plat_uart_type: .skip 8           // 0 PL011, 1 16550/mini UART (32-bit, stride 4), 2 16550 (8-bit, stride 1), 3 16550 (8-bit, stride 4)
+plat_disk_kind: .skip 8           // 0 virtio-blk, 1 Pi SD card, 2 none (ROM disk)
+fdt_end: .skip 8
+fdt_struct: .skip 8
+fdt_strings: .skip 8
+fdt_strings_size: .skip 8
+fdt_matched: .skip 8
+fdt_uart_type: .skip 8
+fdt_acells: .skip 8 * FDT_LEVELS
+fdt_scells: .skip 8 * FDT_LEVELS
+fdt_rptr: .skip 8 * FDT_LEVELS
+fdt_rlen: .skip 8 * FDT_LEVELS
 plat_ecam: .skip 8
 plat_bus_start: .skip 8
 plat_bus_end: .skip 8
