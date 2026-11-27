@@ -1,5 +1,11 @@
 #!/usr/bin/env python3
-"""Package only images whose exact bytes/source passed recorded validation."""
+"""Package only images whose exact bytes/source passed recorded validation.
+
+The result (by default build/release/, `make snapshot SNAPSHOT_DIR=...`) is
+the asset set of a GitHub Release: the compressed disk images, the plain
+live ISO, their manifests, validation.json and SHA256SUMS over all of them.
+Images are no longer committed to the repository.
+"""
 import argparse
 import json
 import lzma
@@ -11,7 +17,7 @@ from validate import digest, source_digest
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--build', type=Path, default=Path('build'))
-    parser.add_argument('--output', type=Path, default=Path('images'))
+    parser.add_argument('--output', type=Path, default=Path('build/release'))
     args = parser.parse_args()
     report = json.loads((args.build / 'validation.json').read_text())
     source = Path(__file__).resolve().parent.parent
@@ -20,6 +26,7 @@ def main():
     if report['complete_msdos_port'] is not False:
         raise SystemExit('Invalid completion claim in validation report')
     args.output.mkdir(exist_ok=True, parents=True)
+    written = []
     for name in ['msdos-arm64', 'msdos-arm64-pi3']:
         path = args.build / (name + '.img')
         evidence = report['images'][name]
@@ -37,8 +44,7 @@ def main():
         (args.output / (name + '.json')).write_text(json.dumps(manifest, indent=2) + '\n')
         (args.output / (name + '.img.sha256')).write_text(
             f"{evidence['sha256']}  {name}.img\n")
-        (args.output / (name + '.img.xz.sha256')).write_text(
-            f"{manifest['compressed_sha256']}  {output.name}\n")
+        written += [output.name, name + '.json', name + '.img.sha256']
         print(f'{output}: {output.stat().st_size} compressed bytes')
     # The live ISO, packaged only when make iso-test passed on these bytes.
     iso = args.build / 'armdos.iso'
@@ -47,19 +53,26 @@ def main():
             record['source_files_sha256'] != report['source_files_sha256']):
         raise SystemExit('ISO bytes or test mismatch: run make iso-test')
     # Published uncompressed so it can be downloaded and booted (or attached
-    # to a VM) as-is. It is ~31 MiB, well under GitHub's 100 MiB file limit.
-    if iso.stat().st_size >= 100 * 1024 * 1024:
-        raise SystemExit('ISO is over GitHub\'s 100 MiB file limit')
+    # to a VM) as-is.
     output = args.output / 'armdos.iso'
     shutil.copyfile(iso, output)
     if digest(output) != record['sha256']:
         raise SystemExit('Copied ISO does not match the tested bytes')
-    (args.output / 'armdos.iso.sha256').write_text(f"{record['sha256']}  armdos.iso\n")
-    # Drop the old compressed form so a stale .iso.xz is never left beside it.
-    for stale in ('armdos.iso.xz', 'armdos.iso.xz.sha256'):
-        (args.output / stale).unlink(missing_ok=True)
     print(f'{output}: {output.stat().st_size} bytes')
     shutil.copyfile(args.build / 'validation.json', args.output / 'validation.json')
+    written += ['armdos.iso', 'validation.json']
+    # Sidecars of the old committed layout; SHA256SUMS replaces them.
+    for stale in ('armdos.iso.xz', 'armdos.iso.xz.sha256', 'armdos.iso.sha256',
+                  'msdos-arm64.img.xz.sha256', 'msdos-arm64-pi3.img.xz.sha256'):
+        (args.output / stale).unlink(missing_ok=True)
+    write_sums(args.output, written)
+    print(f"{args.output / 'SHA256SUMS'}: {len(written)} files")
+
+
+def write_sums(directory, names):
+    """SHA256SUMS in `sha256sum -c` format (also read by fetch_release.py)."""
+    lines = ''.join(f'{digest(directory / name)}  {name}\n' for name in sorted(names))
+    (directory / 'SHA256SUMS').write_text(lines)
 
 
 if __name__ == '__main__':

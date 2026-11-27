@@ -3,3 +3,7 @@ __pycache__/
 *.pyc
 /*.img
 .venv/
+# Release assets are published on GitHub Releases, never committed;
+# tools/fetch_release.py downloads them here.
+/images/*
+!/images/README.md

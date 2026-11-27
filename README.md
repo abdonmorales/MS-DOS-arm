@@ -48,10 +48,15 @@ You need an Apple Silicon Mac (or any ARM64 or x86_64 host; see
 brew install qemu
 git clone https://github.com/abdonmorales/MS-DOS-arm.git
 cd MS-DOS-arm
+python3 tools/fetch_release.py armdos.iso
 python3 tools/run.py --iso images/armdos.iso --disk armdos-disk.img
 ```
 
-This boots the published live ISO, [images/armdos.iso](images/README.md), with
+`fetch_release.py` downloads the live ISO of the
+[latest release](https://github.com/abdonmorales/MS-DOS-arm/releases/latest)
+into `images/` and checks it against the release's `SHA256SUMS` (see
+[images/README.md](images/README.md); `run.py --iso latest` does both steps
+at once). `run.py` then boots it with
 a blank 512 MiB disk `armdos-disk.img` attached (created if it does not exist).
 At the `A:\>` prompt, look around (`DIR`, `MEM`, `BASIC`), then type
 `INSTALL` to install ARM DOS onto that disk. Quit QEMU with **Ctrl-A, then
@@ -72,7 +77,7 @@ speed. This was tested on an Apple M3 Pro (macOS 27.2, Homebrew QEMU 11.1).
 | Option | Meaning |
 | --- | --- |
 | `image` | Raw disk image to boot (writable VirtIO disk) |
-| `--iso FILE` | Live ISO on a read-only CD drive; it boots first even with other disks attached |
+| `--iso FILE` | Live ISO on a read-only CD drive; it boots first even with other disks attached. `--iso latest` downloads and verifies the latest release ISO into `images/` first |
 | `--disk FILE` | Extra writable disk, such as an `INSTALL` target; created blank and sparse if missing (repeatable) |
 | `--disk-size N` | Size of a created `--disk` (default `512M`, minimum `64M`) |
 | `--firmware FILE` | ARM64 UEFI firmware; by default it is looked up where Homebrew, Debian/Ubuntu and Fedora install it |
@@ -86,6 +91,7 @@ Some examples:
 ```sh
 python3 tools/run.py build/msdos-arm64.img                  # the test disk image you built
 python3 tools/run.py --iso build/armdos.iso --disk d.img    # your own ISO build
+python3 tools/run.py --iso latest --disk d.img              # fetch the latest release ISO and boot it
 python3 tools/run.py --print --iso images/armdos.iso        # show the raw QEMU command
 ```
 
@@ -170,7 +176,8 @@ state and verified package hashes, and `source tools/env.sh` puts them on
 | `fixtures/` | Files copied onto the test disk image (batch files, `CONFIG.SYS`, `PRIMES.BAS`, ...) |
 | `tools/` | Image, ISO and PE32+ packagers, the QEMU launcher and the test drivers |
 | `tests/` | Host-side FAT tests and the bare-metal Pi 3 driver test |
-| `images/` | Published, validated snapshots: the live ISO and the disk images |
+| `images/` | Where `tools/fetch_release.py` puts release downloads (not committed; images are on the [Releases page](https://github.com/abdonmorales/MS-DOS-arm/releases/latest)) |
+| `.github/workflows/` | CI on every push and pull request, a nightly fuzz/validate run, and the tag-triggered Release build |
 | [ABI.md](ABI.md) | The native program ABI: every DOS function from 00h to 6Ch |
 | [PORT_STATUS.md](PORT_STATUS.md) | Definition of done and milestone status |
 
@@ -187,7 +194,7 @@ state and verified package hashes, and `source tools/env.sh` puts them on
 | `make validate` | Both disk images: FAT checks, payload comparison and a QEMU boot; writes `build/validation.json` |
 | `make rom-test` | Boots the ROM builds in QEMU `virt`: network boot under EDK2 (ACPI and device tree), U-Boot from NOR flash, the Pi build in firmware mode; checks that A: refuses every write, and the Pi images' contents (needs `u-boot-qemu`, `u-boot-tools`) |
 | `make check` | `unit`, `pi-test`, then `smoke` |
-| `make snapshot` | `validate` and `iso-test`, then publishes the validated images into `images/` |
+| `make snapshot` | `validate` and `iso-test`, then packages the validated images, ISO and `SHA256SUMS` into `build/release/` (`SNAPSHOT_DIR=`), the asset set of a GitHub Release |
 
 Each boot also runs a self-test of the DOS API against real files on disk;
 a `SELFTEST PASS` line at boot means it passed.
