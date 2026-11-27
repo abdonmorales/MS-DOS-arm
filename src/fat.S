@@ -32,6 +32,7 @@
 .equ OF_GONE, 16             // entry deleted through another handle
 .equ NO_INDEX, 0xffffffff
 .equ FAT_EOC, 0x0fffffff
+.equ FAT_BACKEND_ROM, 2         // fat_backend: read-only memory image (ROM builds)
 .equ FAT_VOLS, 16               // mounted volumes (A: plus block devices)
 .equ VOL_LIVE, (21 * 8)         // fat_mounted .. fat_root_obj
 .equ VOL_SIZE, 272              // live block plus the boot record copy
@@ -81,26 +82,10 @@
 .global fat_mount
 fat_mount:
     enter
+    bl fat_cache_init
+    cbnz x0, fat_mount_fail
     address x19, boot_services
     ldr x19, [x19]
-    // Sector cache buffers come from firmware pages (4 KiB aligned for DMA).
-    mov x0, #0                  // AllocateAnyPages
-    mov x1, #2                  // EfiLoaderData
-    mov x2, #FAT_SLOTS
-    address x3, fat_cache_buffers
-    ldr x4, [x19, #40]          // AllocatePages
-    blr x4
-    cbnz x0, fat_mount_fail
-    address x2, fat_cache_lba
-    address x3, fat_cache_stamp
-    mov x4, #0
-    mov x5, #-1
-1:
-    str x5, [x2, x4, lsl #3]
-    str xzr, [x3, x4, lsl #3]
-    add x4, x4, #1
-    cmp x4, #FAT_SLOTS
-    b.lo 1b
     address x0, image_handle
     ldr x0, [x0]
     address x1, loaded_image_guid
@@ -152,6 +137,65 @@ fat_mount:
 fat_mount_fail:
     efierr x0, 3
     leave
+
+// Sector cache buffers come from firmware pages (4 KiB aligned for DMA).
+// Returns x0 = EFI status.
+fat_cache_init:
+    frame
+    address x4, boot_services
+    ldr x4, [x4]
+    mov x0, #0                  // AllocateAnyPages
+    mov x1, #2                  // EfiLoaderData
+    mov x2, #FAT_SLOTS
+    address x3, fat_cache_buffers
+    ldr x4, [x4, #40]           // AllocatePages
+    blr x4
+    cbnz x0, 2f
+    address x2, fat_cache_lba
+    address x3, fat_cache_stamp
+    mov x4, #0
+    mov x5, #-1
+1:
+    str x5, [x2, x4, lsl #3]
+    str xzr, [x3, x4, lsl #3]
+    add x4, x4, #1
+    cmp x4, #FAT_SLOTS
+    b.lo 1b
+2:
+    unframe
+
+// ---------------------------------------------------------------------------
+// ROM builds: drive A: is a FAT image linked into the kernel (rom_disk ..
+// rom_disk_end, see kernel.S) and served from memory, read-only. It needs no
+// disk, so the same EFI file boots from SD, USB, the network or flash.
+// Returns x0 = 0 when A: is mounted.
+.ifdef ROM_BUILD
+.global fat_mount_rom
+fat_mount_rom:
+    enter
+    bl fat_cache_init
+    cbnz x0, fat_mount_fail
+    mov x2, #FAT_BACKEND_ROM
+    stv x2, fat_backend, x3
+    address x2, rom_disk
+    stv x2, fat_drv_rw, x3      // the backend's data: the image itself
+    address x3, rom_disk_end
+    sub x3, x3, x2
+    lsr x3, x3, #9
+    stv x3, fat_total_sectors, x4
+    mov x2, #512
+    stv x2, fat_bps, x3
+    bl fat_mount_parse
+    cbnz x0, fat_mount_fail
+    mov x2, #1                  // A: refuses writes: the ROM system message
+    adrp x3, boot_read_only
+    str x2, [x3, :lo12:boot_read_only]
+    ldv x0, fat_root_obj
+    address x1, root_directory
+    str x0, [x1]
+    mov x0, #0
+    leave
+.endif
 
 // Reads the boot record of the live volume (fat_bps already set) and
 // fills in its geometry; creates its root object (fat_root_obj).
@@ -326,6 +370,8 @@ fat_unmount:
     bl fat_flush_device
     ldv x2, platform_native     // no firmware left to hand the disk back to
     cbnz x2, 1f
+    ldv x2, fat_backend         // a ROM disk has no Block I/O to hand back
+    cbnz x2, 1f
     address x19, boot_services
     ldr x19, [x19]
     ldv x0, fat_device
@@ -356,6 +402,10 @@ fat_print_backend:
     bl puts
     ldv x2, fat_mounted
     cbz x2, 2f
+    ldv x2, fat_backend
+    address x0, fat_backend_rom
+    cmp x2, #FAT_BACKEND_ROM
+    b.eq 3f
     address x0, fat_backend_blockio
     ldv x2, platform_native
     cbz x2, 3f
@@ -404,6 +454,8 @@ fat_block_io:
 // A block device driver: rw(x0 = sector, x1 = buffer, x2 = count,
 // x3 = 1 to write) returns x0 = 0, or nonzero on a device error.
 fat_driver_io:
+    cmp x2, #FAT_BACKEND_ROM
+    b.eq fat_rom_io
     frame
     cmp x9, #32
     cset x3, eq
@@ -414,6 +466,31 @@ fat_driver_io:
     efierr x0, 7                // EFI_DEVICE_ERROR
 1:
     unframe
+
+// The ROM disk: x0 = LBA, x1 = buffer, x9 = 24 read / 32 write. One
+// sector (512 bytes) from the image; writes are refused as write-protected.
+fat_rom_io:
+    cmp x9, #32
+    b.eq 8f
+    ldv x2, fat_total_sectors
+    cmp x0, x2
+    b.hs 9f
+    ldv x2, fat_drv_rw
+    add x2, x2, x0, lsl #9
+    mov x3, #32
+1:
+    ldp x4, x5, [x2], #16
+    stp x4, x5, [x1], #16
+    subs x3, x3, #1
+    b.ne 1b
+    mov x0, #0
+    ret
+8:
+    efierr x0, 8                // EFI_WRITE_PROTECTED
+    ret
+9:
+    efierr x0, 7                // EFI_DEVICE_ERROR: past the end
+    ret
 
 // x0 = volume slot: makes it the live volume. The live geometry is saved
 // to its slot and the next one loaded; the write-through sector cache is
@@ -2356,6 +2433,14 @@ fat_efi_open:
     cmp x22, x2
     b.ne fat_open_invalid
 1:
+    cmp x22, #1                 // read-only opens only on the ROM disk
+    b.eq 2f
+    ldv x2, fat_backend
+    cmp x2, #FAT_BACKEND_ROM
+    b.ne 2f
+    efierr x0, 8                // EFI_WRITE_PROTECTED
+    b fat_open_return
+2:
     mov x0, x21
     address x1, fat_open_path
     bl fat_utf16_to_ascii
@@ -2616,6 +2701,9 @@ fat_efi_close:
 fat_efi_delete:
     enter
     mov x19, x0
+    ldv x2, fat_backend
+    cmp x2, #FAT_BACKEND_ROM
+    b.eq 8f
     ldrb w2, [x19, #OBJ_FLAGS]
     tbnz w2, #2, 8f
     mov x0, x19
@@ -2961,6 +3049,12 @@ fat_efi_setinfo:
     mov x19, x0
     mov x20, x3
     mov x21, x2
+    ldv x2, fat_backend
+    cmp x2, #FAT_BACKEND_ROM
+    b.ne 1f
+    efierr x0, 8                // EFI_WRITE_PROTECTED
+    leave
+1:
     mov x0, x1
     address x1, file_info_guid
     bl fat_guid_eq
@@ -3451,6 +3545,7 @@ fat_backend_fat32: .asciz "Storage: native FAT32 driver"
 fat_backend_blockio: .asciz " over UEFI Block I/O\r\n"
 fat_backend_virtio: .asciz " over the native virtio-blk driver\r\n"
 fat_backend_sd: .asciz " over the native SD card driver\r\n"
+fat_backend_rom: .asciz " over the built-in ROM disk (read-only)\r\n"
 fat_backend_firmware: .asciz "Storage: UEFI firmware file system (native FAT driver unavailable)\r\n"
 
 .section .bss
