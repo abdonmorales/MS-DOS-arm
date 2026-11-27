@@ -1,51 +1,380 @@
-<img width="150" height="150" align="left" style="float: left; margin: 0 10px 0 0;" alt="MS-DOS logo" src="https://github.com/Microsoft/MS-DOS/blob/main/.readmes/msdos-logo.png">   
-
-# MS-DOS v1.25, v2.0, v4.0 Source Code
-
-This repo contains the original source-code and compiled binaries for MS-DOS v1.25 and MS-DOS v2.0, plus the source-code for MS-DOS v4.00 jointly developed by IBM and
-Microsoft.
-
-The MS-DOS v1.25 and v2.0 files [were originally shared at the Computer History Museum on March 25th, 2014]( http://www.computerhistory.org/atchm/microsoft-ms-dos-early-source-code/) and are being (re)published in this repo to make them easier to find, reference-to in external writing and works, and to allow exploration and experimentation for those interested in early PC Operating Systems.  
-
 # ARM DOS
 
-This fork adds **ARM DOS**: MS-DOS 4.0 ported natively to 64-bit ARM
-(AArch64), in ARM64 assembly, under [`arm64/`](arm64/README.md). It boots from
-UEFI on QEMU's `virt` machine (including Apple Silicon Macs under QEMU) and
-then drives the hardware itself. It runs native ARM64 programs and batch
-files; original x86 `.COM`/`.EXE` programs do not run. A Raspberry Pi 3 image
-is built too, but has not yet been booted on a physical board. Status and the
-definition of done are in [arm64/PORT_STATUS.md](arm64/PORT_STATUS.md). The
-historical sources below are unchanged.
+**ARM DOS** is MS-DOS 4.0 ported natively to 64-bit ARM (AArch64), written
+entirely in ARM64 assembly. The kernel, COMMAND, `CONFIG.SYS`, the DOS
+function set, the DOS 4.0 utilities and drivers are re-implemented with the
+same commands, behaviour and on-disk formats. It boots from UEFI, then leaves
+the firmware and drives the hardware itself.
 
-# License
+```
+ARM DOS 4.0 for AArch64 (MS-DOS 4.0 compatible)
+Native ARM64 assembly. x86 programs do not run.
+Platform: native AArch64 kernel (firmware exited; PL011 console, virtio-blk disk)
+...
+A:\>ver
+ARM DOS Version 4.00 (AArch64), MS-DOS 4.00 API
+A:\>basic primes
+ARM BASIC 1.0 for ARM DOS (native AArch64)
+64-bit integers and strings. SYSTEM returns to DOS.
+Primes below 100:
+ 2  3  5  7  11  13  17  19  23  29  31  37  41  43  47  53  59  61  67  71  73  79  83  89  97
+```
 
-All files within this repo are released under the [MIT License]( https://en.wikipedia.org/wiki/MIT_License) as per the [LICENSE file](https://github.com/Microsoft/MS-DOS/blob/main/LICENSE) stored in the root of this repo.
+What to expect:
 
-# For historical reference
+- **Native ARM64 only.** ARM DOS runs native AArch64 programs (PE32+ `.EXE`
+  files built against [ABI.md](ABI.md)) and batch files. Original x86
+  `.COM`/`.EXE` programs do not run, and there is no x86 emulator, by design.
+- **QEMU `virt` is fully supported and tested**, including Apple Silicon Macs
+  under QEMU with the HVF accelerator, both natively (the kernel calls
+  `ExitBootServices` and owns the machine) and in firmware mode.
+- **A live ISO and an installer.** Boot `armdos.iso`, try it, then run
+  `INSTALL` to put ARM DOS on a disk.
+- **ARM BASIC**, a BASIC interpreter written from scratch in AArch64 assembly.
+- **A real Raspberry Pi 3 has not been booted yet.** Its native drivers pass
+  their tests on QEMU's `raspi3b` model; only a physical board can confirm
+  them (see [PORT_STATUS.md](PORT_STATUS.md), milestone 8).
 
-The source files in this repo are for historical reference and will be kept static, so please **don’t send** Pull Requests suggesting any modifications to the source files, but feel free to fork this repo and experiment 😊.  
+## Quick start on a Mac
 
-This project has adopted the [Microsoft Open Source Code of Conduct](https://opensource.microsoft.com/codeofconduct/).  For more information see the [Code of Conduct FAQ](https://opensource.microsoft.com/codeofconduct/faq/) or contact [opencode@microsoft.com](mailto:opencode@microsoft.com) with any additional questions or comments.
+You need an Apple Silicon Mac (or any ARM64 or x86_64 host; see
+[Building](#building)) and QEMU:
 
-# Trademarks
+```sh
+brew install qemu
+git clone https://github.com/abdonmorales/MS-DOS-arm.git
+cd MS-DOS-arm
+python3 tools/run.py --iso images/armdos.iso --disk armdos-disk.img
+```
 
-This project may contain trademarks or logos for projects, products, or services. Authorized use of Microsoft
-trademarks or logos is subject to and must follow
-[Microsoft's Trademark & Brand Guidelines](https://www.microsoft.com/legal/intellectualproperty/trademarks/usage/general).
-Use of Microsoft trademarks or logos in modified versions of this project must not cause confusion or imply Microsoft sponsorship.
-Any use of third-party trademarks or logos are subject to those third-party's policies.
+This boots the published live ISO, [images/armdos.iso](images/README.md), with
+a blank 512 MiB disk `armdos-disk.img` attached (created if it does not exist).
+At the `A:\>` prompt, look around (`DIR`, `MEM`, `BASIC`), then type
+`INSTALL` to install ARM DOS onto that disk. Quit QEMU with **Ctrl-A, then
+X**, and boot the installed disk on its own:
 
-# AArch64 port
+```sh
+python3 tools/run.py armdos-disk.img
+```
 
-[arm64](arm64/README.md) holds a partial native ARM64 port of the MS-DOS 4.0
-services as a UEFI application, with disk image tooling. None of the original
-sources above are modified. The complete MS-DOS 4.0 port and
-all-model native Apple Silicon support remain unfinished; see that document for
-implemented services, tested boot paths, Raspberry Pi packaging, and limitations.
+`run.py` finds Homebrew's ARM64 UEFI firmware (`edk2-aarch64-code.fd`) and
+uses the `hvf` accelerator with the `host` CPU, so ARM DOS runs at native
+speed. This was tested on an Apple M3 Pro (macOS 27.2, Homebrew QEMU 11.1).
 
-Development images (compressed disk images and the bootable live ISO,
-`armdos.iso`) are in [arm64/images](arm64/images/README.md).
-Raspberry Pi images include third-party firmware under its own upstream licenses;
-those notices are preserved inside the disk image and apply to the bundled
-firmware. The new DOS assembly remains MIT licensed.
+## Running in QEMU
+
+`tools/run.py` is the launcher for every host:
+
+| Option | Meaning |
+| --- | --- |
+| `image` | Raw disk image to boot (writable VirtIO disk) |
+| `--iso FILE` | Live ISO on a read-only CD drive; it boots first even with other disks attached |
+| `--disk FILE` | Extra writable disk, such as an `INSTALL` target; created blank and sparse if missing (repeatable) |
+| `--disk-size N` | Size of a created `--disk` (default `512M`, minimum `64M`) |
+| `--firmware FILE` | ARM64 UEFI firmware; by default it is looked up where Homebrew, Debian/Ubuntu and Fedora install it |
+| `--accel auto\|tcg\|hvf\|kvm` | `auto` (the default) picks `hvf` with the host CPU on Apple Silicon macOS, `kvm` on ARM64 Linux with `/dev/kvm`, else `tcg` with a Cortex-A72 |
+| `--memory MiB` | Guest RAM (default 256) |
+| `--qemu PATH` | The `qemu-system-aarch64` to run |
+| `--print` | Print the QEMU command instead of running it |
+
+Some examples:
+
+```sh
+python3 tools/run.py build/msdos-arm64.img                  # the test disk image you built
+python3 tools/run.py --iso build/armdos.iso --disk d.img    # your own ISO build
+python3 tools/run.py --print --iso images/armdos.iso        # show the raw QEMU command
+```
+
+Without the runner, an equivalent live boot on Linux is:
+
+```sh
+qemu-img create -f raw armdos-disk.img 512M
+qemu-system-aarch64 -machine virt -cpu cortex-a72 -m 256 -nographic \
+  -net none -boot menu=on,splash-time=0 \
+  -bios /usr/share/qemu-efi-aarch64/QEMU_EFI.fd \
+  -device virtio-scsi-pci -drive file=images/armdos.iso,if=none,id=cd,media=cdrom,readonly=on \
+  -device scsi-cd,drive=cd,bootindex=0 \
+  -drive file=armdos-disk.img,if=none,id=hd,format=raw -device virtio-blk-pci,drive=hd
+```
+
+On Apple Silicon, replace `-cpu cortex-a72` with `-accel hvf -cpu host` and
+the `-bios` path with `/opt/homebrew/share/qemu/edk2-aarch64-code.fd`. To
+boot the installed disk, drop the `virtio-scsi-pci`, CD `-drive` and
+`scsi-cd` lines.
+
+The ISO holds only an ARM64 UEFI loader, so x86 PCs and x86 virtual machines
+(VirtualBox, VMware or Hyper-V on Intel/AMD) cannot boot it. UTM should work
+with an ARM64 UEFI VM (**Virtualize** on Apple Silicon, or **Emulate** with
+ARM64, type **Other**, the ISO as boot image and a VirtIO disk of at least
+64 MB) but has not been tested.
+
+## Building
+
+The build needs GNU AArch64 binutils, Python 3 and Make. The disk images
+need mtools and dosfstools, the ISO needs xorriso, and running or testing
+needs QEMU's ARM system emulator and ARM64 UEFI firmware. On Debian or
+Ubuntu:
+
+```sh
+sudo apt-get install binutils-aarch64-linux-gnu python3 make mtools dosfstools \
+  xorriso qemu-system-arm qemu-efi-aarch64
+```
+
+On a Mac, `brew install aarch64-elf-binutils mtools dosfstools xorriso qemu`
+provides the same tools. Pass `CROSS_COMPILE=aarch64-elf-` to `make`, and
+for the targets that boot QEMU (`smoke`, `iso-test`, `validate`, `snapshot`)
+also `FIRMWARE=$(brew --prefix)/share/qemu/edk2-aarch64-code.fd`:
+
+```sh
+make iso CROSS_COMPILE=aarch64-elf-
+make smoke CROSS_COMPILE=aarch64-elf- FIRMWARE=$(brew --prefix)/share/qemu/edk2-aarch64-code.fd
+```
+
+| Command | Builds |
+| --- | --- |
+| `make` | `build/BOOTAA64.EFI` (the kernel and COMMAND) and every program and driver |
+| `make image` | `build/msdos-arm64.img`, a 64 MiB FAT16 test disk with the test fixtures |
+| `make iso` | `build/armdos.iso`, the live ISO with the release file set |
+| `make pi-image` | `build/msdos-arm64-pi3.img`, a 128 MiB Raspberry Pi 3 SD-card image (downloads the pinned [Pi 3 UEFI firmware](https://github.com/pftf/RPi3/releases/tag/v1.53.1)) |
+| `make clean` | Removes `build/` |
+
+`CROSS_COMPILE` selects the binutils prefix (default `aarch64-linux-gnu-`).
+`FIRMWARE=/path/to/QEMU_EFI.fd` points the test targets at the UEFI firmware
+(default `/usr/share/qemu-efi-aarch64/QEMU_EFI.fd`).
+
+Without root on a Debian 13 x86_64 machine, `bash tools/setup-cloud.sh`
+installs binutils, QEMU, the UEFI firmware, mtools, dosfstools and xorriso into `/workspace/arm-toolchain`, with isolated APT
+state and verified package hashes, and `source tools/env.sh` puts them on
+`PATH`; then pass
+`FIRMWARE=/workspace/arm-toolchain/runtime/usr/share/qemu-efi-aarch64/QEMU_EFI.fd`.
+
+### Repository layout
+
+| Path | Contents |
+| --- | --- |
+| `src/` | The kernel: boot, platform drivers (PL011, virtio-blk, SDHCI), FAT12/16/32, DOS functions, COMMAND, `CONFIG.SYS` |
+| `programs/` | The utilities and ARM BASIC, one `NAME.S` per `NAME.EXE` |
+| `drivers/` | Installable drivers (`ANSI.SYS`, `RAMDRIVE.SYS`, `VDISK.SYS`, `PRINTER.SYS`, `TESTDRV.SYS`) |
+| `data/country/` | The MS-DOS 4.0 country tables (`MKCNTRY.ASM` data segment) that `COUNTRY.SYS` is built from |
+| `fixtures/` | Files copied onto the test disk image (batch files, `CONFIG.SYS`, `PRIMES.BAS`, ...) |
+| `tools/` | Image, ISO and PE32+ packagers, the QEMU launcher and the test drivers |
+| `tests/` | Host-side FAT tests and the bare-metal Pi 3 driver test |
+| `images/` | Published, validated snapshots: the live ISO and the disk images |
+| [ABI.md](ABI.md) | The native program ABI: every DOS function from 00h to 6Ch |
+| [PORT_STATUS.md](PORT_STATUS.md) | Definition of done and milestone status |
+
+## Testing
+
+| Command | Checks |
+| --- | --- |
+| `make unit` | Host-side unit tests in about 6 seconds: kernel routines run in the Unicorn emulator (`pip install unicorn`) against Python references |
+| `make smoke` | Boots the test image in QEMU and checks about 330 console commands in native mode, then `fsck.fat` on the disk |
+| `make smoke-firmware` | The same checks with ACPI hidden, so the kernel stays in firmware mode |
+| `make fat-test` | Stress-tests `src/fat.S` on FAT12/16/32 images under `qemu-aarch64` (needs `gcc-aarch64-linux-gnu`, `libc6-dev-arm64-cross`, `qemu-user`) |
+| `make pi-test` | The Pi 3 SD-card and UART drivers, bare metal on QEMU `raspi3b` |
+| `make iso-test` | Live boot as CD and USB stick, `INSTALL` to blank disks, a boot of the installed disk, and a reproducible ISO |
+| `make validate` | Both disk images: FAT checks, payload comparison and a QEMU boot; writes `build/validation.json` |
+| `make check` | `unit`, `pi-test`, then `smoke` |
+| `make snapshot` | `validate` and `iso-test`, then publishes the validated images into `images/` |
+
+Each boot also runs a self-test of the DOS API against real files on disk;
+a `SELFTEST PASS` line at boot means it passed.
+
+## Live ISO and INSTALL
+
+The live ISO starts the normal ARM DOS prompt without installing anything:
+
+- Drive A: is the ISO itself and is **read-only**.
+- `CONFIG.SYS` on the ISO loads one 1 MiB RAM disk, B:, for scratch files.
+  It is empty again after a restart.
+- The ISO carries the release file set; the test fixtures of the disk image
+  are left out.
+
+`INSTALL` (`INSTALL.EXE`) copies ARM DOS to a writable disk, as SELECT did
+for DOS 4. It lists the disks the firmware offers, apart from the one ARM DOS
+started from, and asks which one to use and for confirmation. Then it writes
+an MBR with one partition of type EFh (from 1 MiB, at most 2000 MB), formats
+it with `FORMAT d: /SELECT /V:ARMDOS` and copies every file from A: with
+`XCOPY`, the boot loader `\EFI\BOOT\BOOTAA64.EFI` included.
+
+- **Everything on the chosen disk is erased.** ENTER at the disk question,
+  or N at the confirmation, leaves the disks untouched.
+- `INSTALL n /Y` picks disk n without asking, for scripts; `/Y` without a
+  disk number is refused.
+- INSTALL needs UEFI boot services, so it runs from the live ISO (or any
+  firmware-mode boot). Under the native kernel it finds no disks.
+
+The ISO boots on any ARM64 UEFI machine or VM, from a virtual CD or written
+to a USB stick. A Raspberry Pi 3 does not boot it; use the SD-card image
+there.
+
+## ARM BASIC
+
+`BASIC` (`BASIC.EXE`, from `programs/basic.S`) is ARM BASIC, an interpreter
+in the style of the Microsoft BASICs that came with MS-DOS, written from
+scratch in AArch64 assembly. Type numbered lines to build a program and
+statements without a number to run them at once; `Ok` is the prompt.
+`BASIC PRIMES` loads `PRIMES.BAS` and runs it.
+
+```
+A:\>basic
+ARM BASIC 1.0 for ARM DOS (native AArch64)
+64-bit integers and strings. SYSTEM returns to DOS.
+Ok
+10 FOR I = 1 TO 3: PRINT "ARM"; I: NEXT
+RUN
+ARM 1
+ARM 2
+ARM 3
+Ok
+SAVE "COUNT"
+Ok
+SYSTEM
+```
+
+- Statements: `PRINT` (`?`), `LET`, `INPUT`, `IF ... THEN ... ELSE`, `GOTO`,
+  `GOSUB`, `RETURN`, `ON ... GOTO/GOSUB`, `FOR ... TO ... STEP`, `NEXT`,
+  `WHILE`, `WEND`, `END`, `STOP`, `REM` (`'`), `DIM`, `DATA`, `READ`,
+  `RESTORE`, `RANDOMIZE`, `CLS` and `CLEAR`.
+- Commands: `RUN`, `LIST [m][-n]`, `NEW`, `LOAD "f"`, `SAVE "f"` (plain text,
+  `.BAS` added) and `SYSTEM` (back to DOS).
+- Functions: `ABS`, `SGN`, `INT`, `SQR`, `RND`, `LEN`, `ASC`, `VAL`, `CHR$`,
+  `STR$`, `LEFT$`, `RIGHT$`, `MID$`, `INSTR` and `SPACE$`; `PRINT` also takes
+  `TAB(` and `SPC(`.
+- Operators, tightest first as in GW-BASIC: `^` (left to right, so `2^3^2`
+  is 64), unary `-`, `*` and `/`, `\`, `MOD`, `+` and `-`, comparisons
+  `= <> < > <= >=`, then `NOT`, `AND` and `OR` (bitwise, true is -1).
+
+Numbers are 64-bit integers: there is no floating point, `/` and `\` both
+divide to an integer, a typed fraction is dropped (`1.5` is 1), and a result
+outside the 64-bit range is an `Overflow` error (a literal is at most
+9223372036854775807, so the most negative number is written
+`-9223372036854775807-1` or `&H8000000000000000`). `RND(n)` returns 1 to n,
+`INSTR` takes two arguments and `VAL` reads decimal only (`&H` works in
+program text). Strings and program lines hold up to 255 bytes. Variable
+names are significant to 14 characters, and arrays (`DIM A(100)`, `A$(n)`)
+have one dimension. Ctrl-C stops a running program (`Break in 30`); at an
+`INPUT` prompt it takes effect when ENTER is pressed. Errors use the
+GW-BASIC messages (`Syntax error in 20`).
+
+## Using ARM DOS
+
+**COMMAND internal commands:** `HELP`, `VER`, `ECHO`, `CLS`, `DIR`, `TYPE`,
+`DEL`/`ERASE`, `CD`/`CHDIR`, `MD`/`MKDIR`, `RD`/`RMDIR`, `COPY`,
+`REN`/`RENAME`, `DATE`, `TIME`, `VOL`, `SET`, `PATH`, `PROMPT`, `FOR`,
+`SHIFT`, `REM`, `CALL`, `GOTO`, `IF`, `PAUSE`, `VERIFY`, `BREAK`, `CTTY`,
+`CHCP`, `TRUENAME`, `SELFTEST` and `EXIT`. `EXIT` powers the machine off in
+native mode and returns to UEFI in firmware mode.
+
+**Utilities** (each a native `NAME.EXE`): `APPEND`, `ASSIGN`, `ATTRIB`,
+`BACKUP`, `CHKDSK`, `COMP`, `DISKCOMP`, `DISKCOPY`, `EDLIN`, `FC`, `FIND`,
+`FORMAT`, `JOIN`, `LABEL`, `MEM`, `MORE`, `RECOVER`, `REPLACE`, `RESTORE`,
+`SORT`, `SUBST`, `SYS`, `TREE` and `XCOPY`, plus `INSTALL` and `BASIC`.
+
+**Drivers and `CONFIG.SYS`:** `BREAK`, `BUFFERS`, `COUNTRY`, `DEVICE`,
+`FCBS`, `FILES`, `INSTALL`, `LASTDRIVE`, `REM`, `SHELL` and `STACKS`.
+`DEVICE=` loads native drivers: `ANSI.SYS` (escape sequences and key
+reassignment over the serial terminal), `RAMDRIVE.SYS` and `VDISK.SYS` (RAM
+disks) and `PRINTER.SYS` (PRN to the serial line). `COUNTRY.SYS` gives
+`COUNTRY=` and `CHCP` the DOS 4.0 countries and code pages.
+
+**Shell features:** quoted paths, drive letters and DOS device names (`CON`,
+`AUX`, `PRN`, `NUL`, `CLOCK$`); `DIR` in the DOS 4.0 layout with `/W` and
+`/P`; wildcard `COPY`, `DEL` and `REN` with rename templates; VFAT long
+names; `<`, `>`, `>>` and pipes; and batch files with `%0`-`%9`, `%NAME%`,
+`FOR`, `IF`, `GOTO`, `CALL`, `SHIFT` and `ECHO`. `\AUTOEXEC.BAT` runs at
+boot; without it the shell asks for the date and time, as COMMAND did.
+Commands are limited to 255 bytes and `CALL` nesting to 16 scripts; a batch
+file started from another without `CALL` replaces it. The [ABI](ABI.md) has
+the full detail.
+
+## How it works
+
+UEFI is only the boot loader. At startup the kernel finds its console UART
+(ACPI SPCR) and its boot disk (ACPI MCFG, PCI ECAM, virtio-blk), reserves its
+memory, calls `ExitBootServices` and owns the machine from then on: its own
+exception vectors, polled PL011 console, virtio-blk driver, FAT12/16/32
+filesystem (`src/fat.S`), memory arena and PE32+ program loader
+(`src/platform.S`, `src/process.S`). On boards it has no drivers for, it
+stays in firmware mode and uses UEFI for the console, memory and sectors; the
+banner's `Platform:` line says which mode is active. In native mode no UEFI
+boot service is used after startup; UEFI runtime services are used only for
+power-off.
+
+Programs call DOS through a function pointer handed to each process, using
+AAPCS64; the [ABI](ABI.md) documents every function from 00h to 6Ch
+(console and device I/O, handle and FCB files, SHARE locking, IOCTL, exec,
+memory allocation, country information and more). FCB records keep their
+standard 37-byte layout. These adapt the public contracts of the MS-DOS 4.0
+kernel sources (`CPMIO.ASM`, `HANDLE.ASM`, `FILE.ASM`, `PATH.ASM`,
+`FCBIO.ASM`, `ALLOC.ASM`, `PROC.ASM`, `LOCK.ASM`, `IOCTL.ASM`, `DOSMES.ASM`
+and others) and COMMAND; their internal algorithms were not translated line
+for line.
+
+`src/fat.S` implements FAT12, FAT16 and FAT32: cluster chains, FAT
+mirroring, directory growth, VFAT long names with `~N` short aliases, and a
+small write-through sector cache, so every update is on disk before a call
+returns. It runs over the kernel's virtio-blk or SDHCI driver in native mode
+and over UEFI Block I/O in firmware mode. If the boot volume is read-only or
+not FAT, the firmware's file system is used instead.
+
+## Raspberry Pi 3
+
+`make pi-image` builds a 128 MiB SD-card image for the Pi 3B/3B+ (not
+Pi 4/5) with the pinned, hash-checked [Pi 3 UEFI
+firmware](https://github.com/pftf/RPi3). Write it with Raspberry Pi
+Imager's custom-image option to a card of at least 128 MiB. By default the
+Pi stays in firmware mode. To try the native drivers (PL011 or mini UART
+console, SD card on the Arasan SDHCI), create an empty `NATIVE.ON` in the
+card's root; the banner then reads `Raspberry Pi 3 UART console, SD card`.
+In that mode the console is the serial UART on GPIO 14/15 only: HDMI and
+USB keyboards stop working once the firmware is left, so attach a serial
+adapter. If the card cannot be restarted after leaving the firmware, the
+kernel prints `Boot disk did not restart after leaving firmware` and halts;
+delete `NATIVE.ON` to go back to firmware mode. **This has not been tested
+on a physical board.**
+
+## Native Apple Silicon boot
+
+Running under QEMU on a Mac is supported. Booting ARM DOS directly on Mac
+hardware is not: a raw image lacks Apple's boot authorization, m1n1, device
+trees and U-Boot, and this repository does not touch the Mac boot chain. On
+a model that already has a working Asahi m1n1/U-Boot installation, the
+generic EFI image is a candidate external boot payload through U-Boot's USB
+boot flow (see the [Asahi U-Boot guide](https://asahilinux.org/docs/sw/u-boot/));
+this is untested.
+
+## Status
+
+Milestones 1-7 of [PORT_STATUS.md](PORT_STATUS.md) (kernel, DOS functions,
+COMMAND, `CONFIG.SYS`, every utility, drivers, NLS) are done, and QEMU
+`virt` runs fully native. What remains is milestone 8: booting the Pi 3
+image and its native drivers on a real board. Until then the image manifests
+keep `complete_msdos_port` false.
+
+## Origin and license
+
+ARM DOS is a fork of Microsoft's [MS-DOS source
+release](https://github.com/microsoft/MS-DOS), which published the MS-DOS
+1.25, 2.0 and 4.0 sources. The original x86 sources were the reference for
+this port and are no longer kept in this repository; read them in the
+upstream repository. The only files carried over are the MS-DOS 4.0 country
+tables in `data/country/`, which `COUNTRY.SYS` is built from.
+
+All files are released under the MIT License; see [LICENSE](LICENSE)
+(Copyright (c) Microsoft Corporation); the ARM DOS code is released under
+the same license (the assembly sources carry `SPDX-License-Identifier: MIT`). The ISO
+and disk images carry it as `LICENSE.TXT` (`DOS-MIT.TXT` on the Pi image). The Pi image also bundles the
+upstream Raspberry Pi UEFI firmware under its own licenses, included in the
+image; see [images/README.md](images/README.md).
+
+### Trademarks
+
+This project may contain trademarks or logos for projects, products, or
+services. Authorized use of Microsoft trademarks or logos is subject to and
+must follow [Microsoft's Trademark & Brand
+Guidelines](https://www.microsoft.com/legal/intellectualproperty/trademarks/usage/general).
+Use of Microsoft trademarks or logos in modified versions of this project
+must not cause confusion or imply Microsoft sponsorship. Any use of
+third-party trademarks or logos are subject to those third-party's policies.
+ARM DOS is not affiliated with or endorsed by Microsoft or Arm.
