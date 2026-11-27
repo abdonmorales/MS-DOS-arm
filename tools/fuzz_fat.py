@@ -669,6 +669,7 @@ def regress(args):
             patch(data, g)
             img = Path(tmp) / f'{name}.img'
             img.write_bytes(data)
+            before = failures
             for m in sorted({mode, 'fuzzro', 'fuzz'}):
                 kind, out = execute(host, qemu, img, g.bps, m)
                 if kind and kind != 'error':
@@ -677,7 +678,8 @@ def regress(args):
                 elif kind == 'error':
                     failures += 1
                     print(f'FAIL: {name} ({m}): harness error\n{out[-2000:]}')
-            print(f'PASS: {name}' if not failures else f'...: {name}', flush=True)
+            if failures == before:
+                print(f'PASS: {name}', flush=True)
     if failures:
         print(f'fuzz-fat-regress: {failures} failures')
         return 1

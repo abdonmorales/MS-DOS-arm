@@ -159,6 +159,7 @@ fat_mount_fail:
 fat_mount_parse:
     enter
     stv xzr, fat_mounted, x2
+    stv xzr, fat_dew_dir, x2
     stv xzr, fat_next_free, x2
     ldv x24, fat_bps
     mov x0, #0
@@ -427,6 +428,8 @@ fat_vol_select:
     ret
 1:
     str x0, [x9, :lo12:fat_cur_vol]
+    adrp x11, fat_dew_dir       // the directory walk cache is per volume
+    str xzr, [x11, :lo12:fat_dew_dir]
     address x11, fat_vols
     mov x12, #VOL_SIZE
     madd x13, x10, x12, x11     // old slot
@@ -734,6 +737,7 @@ fat_set:
     enter
     mov x19, x0
     mov x20, x1
+    stv xzr, fat_dew_dir, x2    // chains may change: drop the walk cache
     bl fat_check_cluster        // never write outside this volume's FAT
     cbnz x0, 9f
     ldv x21, fat_type
@@ -962,6 +966,20 @@ fat_dir_entry:
     lsr x2, x2, #5
     udiv x22, x20, x2
     msub x23, x22, x2, x20
+    // Resume from the last walk of this directory when it stopped at or
+    // before the wanted cluster: a scan is then linear, not quadratic in the
+    // chain length (a looping chain made each scan take minutes).
+    mov x26, x19
+    mov x27, x22
+    ldv x3, fat_dew_dir
+    cmp x3, x19
+    b.ne 21f
+    ldv x4, fat_dew_ord
+    cmp x4, x22
+    b.hi 21f
+    ldv x19, fat_dew_clu
+    sub x22, x22, x4
+21:
     ldv x24, fat_clusters
 3:
     cbz x22, 5f
@@ -981,6 +999,9 @@ fat_dir_entry:
     efierr x0, 10
     b 9f
 5:
+    stv x26, fat_dew_dir, x2
+    stv x27, fat_dew_ord, x2
+    stv x19, fat_dew_clu, x2
     mov x0, x19
     bl fat_cluster_lba
     mov x25, x0
@@ -3484,6 +3505,9 @@ fat_cache_clock: .skip 8
 fat_cache_lba: .skip 8 * FAT_SLOTS
 fat_cache_stamp: .skip 8 * FAT_SLOTS
 fat_de_index: .skip 8
+fat_dew_dir: .skip 8            // last fat_dir_entry walk: directory cluster,
+fat_dew_ord: .skip 8            // cluster ordinal reached in its chain
+fat_dew_clu: .skip 8            // and that cluster (fat_dew_dir 0: none)
 fat_de_first: .skip 8
 fat_de_next: .skip 8
 fat_de_entry: .skip 32
