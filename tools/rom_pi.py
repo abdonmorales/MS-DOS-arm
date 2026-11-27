@@ -68,7 +68,7 @@ def cached(url, sha256, path, what):
                              f'place it at {path} to build offline')
         if hashlib.sha256(contents).hexdigest() != sha256:
             raise SystemExit(f'{what} checksum mismatch; no image generated')
-        temporary = path.with_suffix(path.suffix + '.tmp')
+        temporary = path.with_suffix(f'{path.suffix}.{os.getpid()}.tmp')
         temporary.write_bytes(contents)
         os.replace(temporary, path)
     return path

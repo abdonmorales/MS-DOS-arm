@@ -1607,6 +1607,10 @@ fdt_find_node:
     mov x0, x21
     leave
 5:
+    ldv x2, fdt_end             // the length and name offset
+    add x3, x21, #8
+    cmp x3, x2
+    b.hi 9f
     ldr w25, [x21]              // property length
     rev w25, w25
     ldr w26, [x21, #4]          // name offset
