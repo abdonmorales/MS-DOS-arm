@@ -64,12 +64,36 @@ def parse_size(text):
     return size
 
 
+def positive_mib(text):
+    value = int(text)
+    if value < 64:
+        raise argparse.ArgumentTypeError('give at least 64 MiB of RAM')
+    return value
+
+
+def qemu_file(path):
+    """A path for a QEMU `file=` option, where a comma must be doubled."""
+    return str(path.resolve()).replace(',', ',,')
+
+
+def file_id(path):
+    """Identity of an existing file: catches symlinks, hard links and case aliases."""
+    info = os.stat(path)
+    return (info.st_dev, info.st_ino)
+
+
+def auto_accel():
+    arm_host = platform.machine() in ['arm64', 'aarch64']
+    if arm_host and platform.system() == 'Darwin':
+        return 'hvf'
+    if arm_host and platform.system() == 'Linux' and os.access('/dev/kvm', os.R_OK | os.W_OK):
+        return 'kvm'
+    return 'tcg'
+
+
 def build_command(args, firmware):
-    accel = args.accel
-    if accel == 'auto':
-        accel = ('hvf' if platform.system() == 'Darwin' and
-                 platform.machine() in ['arm64', 'aarch64'] else 'tcg')
-    cpu = 'host' if accel == 'hvf' else 'cortex-a72'
+    accel = auto_accel() if args.accel == 'auto' else args.accel
+    cpu = 'cortex-a72' if accel == 'tcg' else 'host'
     cmd = [args.qemu, '-machine', 'virt', '-accel', accel, '-cpu', cpu,
            '-m', str(args.memory), '-bios', str(firmware.absolute()),
            '-nographic', '-net', 'none', '-no-reboot',
@@ -78,13 +102,13 @@ def build_command(args, firmware):
     boot = 0
     if args.iso:
         cmd += ['-device', 'virtio-scsi-pci',
-                '-drive', f'file={args.iso.resolve()},if=none,id=cd,'
+                '-drive', f'file={qemu_file(args.iso)},if=none,id=cd,'
                           'media=cdrom,readonly=on',
                 '-device', f'scsi-cd,drive=cd,bootindex={boot}']
         boot += 1
     disks = ([args.image] if args.image else []) + args.disk
     for number, disk in enumerate(disks):
-        cmd += ['-drive', f'file={disk.resolve()},format=raw,if=none,id=hd{number}',
+        cmd += ['-drive', f'file={qemu_file(disk)},format=raw,if=none,id=hd{number}',
                 '-device', f'virtio-blk-pci,drive=hd{number},bootindex={boot}']
         boot += 1
     return cmd
@@ -92,7 +116,7 @@ def build_command(args, firmware):
 
 def main():
     parser = argparse.ArgumentParser(
-        description='Run ARM DOS in QEMU. Quit with Ctrl+A, then X.')
+        description='Run ARM DOS in QEMU. Quit with Ctrl-A, then X.')
     parser.add_argument('image', type=Path, nargs='?',
                         help='raw disk image to boot (writable)')
     parser.add_argument('--iso', type=Path,
@@ -105,8 +129,8 @@ def main():
     parser.add_argument('--firmware', type=Path,
                         help='ARM64 UEFI firmware (default: search known locations)')
     parser.add_argument('--qemu', default='qemu-system-aarch64')
-    parser.add_argument('--accel', choices=['auto', 'tcg', 'hvf'], default='auto')
-    parser.add_argument('--memory', type=int, default=256, help='RAM in MiB')
+    parser.add_argument('--accel', choices=['auto', 'tcg', 'hvf', 'kvm'], default='auto')
+    parser.add_argument('--memory', type=positive_mib, default=256, help='RAM in MiB')
     parser.add_argument('--print', action='store_true', dest='print_only',
                         help='print the QEMU command instead of running it')
     args = parser.parse_args()
@@ -114,13 +138,26 @@ def main():
     if not args.image and not args.iso:
         parser.error('give a disk image, --iso, or both')
     if args.image and not args.image.is_file():
-        parser.error(f'{args.image}: no such disk image')
+        parser.error(f'{args.image}: not an existing disk image file')
     if args.iso and not args.iso.is_file():
-        parser.error(f'{args.iso}: no such ISO')
-    paths = [p.resolve() for p in ([args.image] if args.image else []) + args.disk]
-    if len(set(paths)) != len(paths):
+        parser.error(f'{args.iso}: not an existing ISO file')
+    # Check every disk before creating any, so an error leaves nothing behind.
+    new_disks = []
+    for disk in args.disk:
+        if os.path.lexists(disk):
+            if not disk.is_file():
+                parser.error(f'{disk}: not a regular file')
+        elif not disk.absolute().parent.is_dir():
+            parser.error(f'{disk}: its folder does not exist')
+        else:
+            new_disks.append(disk)
+    existing = ([args.image] if args.image else []) + \
+        [d for d in args.disk if d not in new_disks]
+    ids = [file_id(d) for d in existing]
+    names = [d.resolve() for d in new_disks]
+    if len(set(ids)) != len(ids) or len(set(names)) != len(names):
         parser.error('the same disk image is given more than once')
-    if args.iso and args.iso.resolve() in paths:
+    if args.iso and file_id(args.iso) in ids:
         parser.error('the ISO cannot also be a writable disk')
     firmware = args.firmware or find_firmware(args.qemu)
     if firmware is None:
@@ -135,17 +172,21 @@ def main():
 
     cmd = build_command(args, firmware)
     if args.print_only:
+        for disk in new_disks:
+            print(f'# {disk} does not exist yet; create it first with: '
+                  f'qemu-img create -f raw {shlex.quote(str(disk))} '
+                  f'{args.disk_size >> 20}M')
         print(shlex.join(cmd))
         return
-    for disk in args.disk:
-        if not disk.exists():
+    for disk in new_disks:
+        try:
             # Exclusive create: never truncates a file that appeared meanwhile.
             with open(disk, 'xb') as blank:
                 blank.truncate(args.disk_size)
-            print(f'Created blank {args.disk_size >> 20} MiB disk {disk}')
-        elif not disk.is_file():
-            parser.error(f'{disk}: not a regular file')
-    print('Starting QEMU. Quit with Ctrl+A, then X.', flush=True)
+        except OSError as error:
+            parser.error(f'cannot create {disk}: {error}')
+        print(f'Created blank {args.disk_size >> 20} MiB disk {disk}')
+    print('Starting QEMU. Quit with Ctrl-A, then X.', flush=True)
     try:
         os.execvp(cmd[0], cmd)
     except OSError as error:

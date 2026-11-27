@@ -60,8 +60,8 @@ hashes, extracts tools only into that directory, and runs the image smoke test. 
 separate from the repository. It does not configure Apple or Raspberry Pi
 hardware, install system packages, or change credentials.
 
-With system-installed tools, omit `source` and supply the installed firmware
-path. `CROSS_COMPILE` can select another GNU AArch64 prefix, such as
+With system-installed tools, omit `source` and pass the installed firmware
+path to `make` (`FIRMWARE=...`); `run.py` finds it itself. `CROSS_COMPILE` can select another GNU AArch64 prefix, such as
 `aarch64-elf-`; the application uses ARMv8-A instructions and AAPCS64 throughout.
 
 ```sh
@@ -74,9 +74,13 @@ install it; pass `--firmware /path/to/QEMU_EFI.fd` to use another file.
 `--iso` boots the live ISO from a read-only CD drive, `--disk` adds a writable
 disk (created blank at `--disk-size`, default 512M, if it does not exist), and
 `--print` shows the QEMU command instead of running it. Quit QEMU with
-Ctrl+A, then X. The runner chooses QEMU's `hvf` accelerator and `host` CPU on Apple Silicon
-macOS, or `tcg` and Cortex-A72 elsewhere. The cloud validation used TCG on x86_64;
-HVF was tested on an Apple M3 Pro (macOS 27.2, QEMU 11.1 from Homebrew, its `edk2-aarch64-code.fd`): `make smoke` passed all its checks in native and firmware mode, with the same output as TCG, and the live ISO booted and `INSTALL` produced a disk that booted on its own. UTM has not been tested. UTM can use an ARM64 VM with UEFI firmware
+Ctrl-A, then X. The runner chooses QEMU's `hvf` accelerator and `host` CPU on
+Apple Silicon macOS, `kvm` on ARM64 Linux with `/dev/kvm`, or `tcg` and
+Cortex-A72 elsewhere (`--accel` and `--memory` override them). The cloud
+validation used TCG on x86_64; HVF was tested on an Apple M3 Pro (macOS 27.2, QEMU 11.1 from Homebrew, its
+`edk2-aarch64-code.fd`): `make smoke` passed all its checks in native and
+firmware mode, with the same output as TCG, and the live ISO booted and
+`INSTALL` produced a disk that booted on its own. UTM has not been tested. UTM can use an ARM64 VM with UEFI firmware
 and the raw disk as a writable VirtIO drive. This image requires a writable FAT
 volume for its boot self-test.
 
@@ -286,36 +290,44 @@ runs from the live ISO (or any firmware-mode boot). Under the native kernel
 it finds no disks.
 
 To install in QEMU (on a Mac, `brew install qemu` provides QEMU and its
-firmware):
+firmware), use the published snapshot `arm64/images/armdos.iso`, or
+`arm64/build/armdos.iso` after `make -C arm64 iso`:
 
 ```sh
 python3 arm64/tools/run.py --iso arm64/images/armdos.iso --disk armdos-disk.img
 ```
 
-This creates a blank 512 MiB `armdos-disk.img` and boots the ISO with it
+This creates a blank 512 MiB `armdos-disk.img` (if it does not exist yet) and boots the ISO with it
 attached. At the `A:\>` prompt run `INSTALL`. When it finishes, quit QEMU
-(Ctrl+A, then X) and boot the installed disk on its own; ARM DOS starts from
+(Ctrl-A, then X) and boot the installed disk on its own; ARM DOS starts from
 it with A: writable:
 
 ```sh
 python3 arm64/tools/run.py armdos-disk.img
 ```
 
-Without the runner, the same live boot is:
+Without the runner, an equivalent live boot is (`--print` shows the exact
+command the runner uses):
 
 ```sh
 qemu-img create -f raw armdos-disk.img 512M
 qemu-system-aarch64 -machine virt -cpu cortex-a72 -m 256 -nographic \
+  -net none -boot menu=on,splash-time=0 \
   -bios /usr/share/qemu-efi-aarch64/QEMU_EFI.fd \
   -device virtio-scsi-pci -drive file=arm64/images/armdos.iso,if=none,id=cd,media=cdrom,readonly=on \
   -device scsi-cd,drive=cd,bootindex=0 \
   -drive file=armdos-disk.img,if=none,id=hd,format=raw -device virtio-blk-pci,drive=hd
 ```
 
-On Apple Silicon, use `-accel hvf -cpu host` and Homebrew's
-`-bios /opt/homebrew/share/qemu/edk2-aarch64-code.fd`. The ISO only holds an
-ARM64 UEFI loader, so VirtualBox and other x86 virtual machines cannot boot
-it.
+After `INSTALL`, run the same command without the `-device virtio-scsi-pci`,
+CD `-drive` and `scsi-cd` lines to boot the installed disk. On Apple Silicon,
+replace `-cpu cortex-a72` with `-accel hvf -cpu host` and the `-bios` path with
+Homebrew's `/opt/homebrew/share/qemu/edk2-aarch64-code.fd`.
+
+The ISO holds only an ARM64 UEFI loader (no BIOS boot code or `BOOTX64.EFI`),
+so x86 PCs and x86 virtual machines, such as VirtualBox, VMware or Hyper-V on
+an Intel/AMD host or an x86 guest type, cannot boot it. VirtualBox's ARM64
+VMs on Apple Silicon have not been tested.
 
 To install in UTM (untested; the same steps work in QEMU): create a new
 virtual machine with **Virtualize** (on Apple Silicon) or **Emulate** with the
