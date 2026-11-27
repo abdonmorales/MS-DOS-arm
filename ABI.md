@@ -134,7 +134,7 @@ binary's table matches this list.
 | `68h`, `6Ah` | `x0` handle | Flush/commit (no-op success on a read-only handle) |
 | `69h` | `x0` 0 get / 1 set, `x1` drive, `x2` 25-byte buffer | Media ID: u16 level 0, u32 serial, 11-byte label, 8-byte file system type (from the boot record) |
 | `6Ch` | `x0` path, `x1` open mode, `x2` attributes, `x3` action | Extended open/create; `x2` 1 opened, 2 created, 3 replaced |
-| `E0h` | `x0` subfunction 0–5 | ARM DOS extension: raw disk services for INSTALL (below) |
+| `E0h` | `x0` subfunction 0–6 | ARM DOS extension: raw disk services for INSTALL (below) |
 
 ### Disk services (E0h, ARM DOS extension)
 

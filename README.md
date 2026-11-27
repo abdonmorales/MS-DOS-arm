@@ -72,8 +72,9 @@ speed. This was tested on an Apple M3 Pro (macOS 27.2, Homebrew QEMU 11.1).
 | `--disk FILE` | Extra writable disk, such as an `INSTALL` target; created blank and sparse if missing (repeatable) |
 | `--disk-size N` | Size of a created `--disk` (default `512M`, minimum `64M`) |
 | `--firmware FILE` | ARM64 UEFI firmware; by default it is looked up where Homebrew, Debian/Ubuntu and Fedora install it |
-| `--accel` | `hvf` on Apple Silicon macOS, `kvm` on ARM64 Linux with `/dev/kvm`, else `tcg` with a Cortex-A72 (the default `auto` picks) |
-| `--memory MiB` | Guest RAM |
+| `--accel auto\|tcg\|hvf\|kvm` | `auto` (the default) picks `hvf` with the host CPU on Apple Silicon macOS, `kvm` on ARM64 Linux with `/dev/kvm`, else `tcg` with a Cortex-A72 |
+| `--memory MiB` | Guest RAM (default 256) |
+| `--qemu PATH` | The `qemu-system-aarch64` to run |
 | `--print` | Print the QEMU command instead of running it |
 
 Some examples:
@@ -120,7 +121,14 @@ sudo apt-get install binutils-aarch64-linux-gnu python3 make mtools dosfstools \
 ```
 
 On a Mac, `brew install aarch64-elf-binutils mtools dosfstools xorriso qemu`
-provides the same tools; pass `CROSS_COMPILE=aarch64-elf-` to `make`.
+provides the same tools. Pass `CROSS_COMPILE=aarch64-elf-` to `make`, and
+for the targets that boot QEMU (`smoke`, `iso-test`, `validate`, `snapshot`)
+also `FIRMWARE=$(brew --prefix)/share/qemu/edk2-aarch64-code.fd`:
+
+```sh
+make iso CROSS_COMPILE=aarch64-elf-
+make smoke CROSS_COMPILE=aarch64-elf- FIRMWARE=$(brew --prefix)/share/qemu/edk2-aarch64-code.fd
+```
 
 | Command | Builds |
 | --- | --- |
@@ -135,7 +143,7 @@ provides the same tools; pass `CROSS_COMPILE=aarch64-elf-` to `make`.
 (default `/usr/share/qemu-efi-aarch64/QEMU_EFI.fd`).
 
 Without root on a Debian 13 x86_64 machine, `bash tools/setup-cloud.sh`
-installs the same tools into `/workspace/arm-toolchain`, with isolated APT
+installs binutils, QEMU, the UEFI firmware, mtools, dosfstools and xorriso into `/workspace/arm-toolchain`, with isolated APT
 state and verified package hashes, and `source tools/env.sh` puts them on
 `PATH`; then pass
 `FIRMWARE=/workspace/arm-toolchain/runtime/usr/share/qemu-efi-aarch64/QEMU_EFI.fd`.
@@ -275,7 +283,10 @@ disks) and `PRINTER.SYS` (PRN to the serial line). `COUNTRY.SYS` gives
 `/P`; wildcard `COPY`, `DEL` and `REN` with rename templates; VFAT long
 names; `<`, `>`, `>>` and pipes; and batch files with `%0`-`%9`, `%NAME%`,
 `FOR`, `IF`, `GOTO`, `CALL`, `SHIFT` and `ECHO`. `\AUTOEXEC.BAT` runs at
-boot. The [ABI](ABI.md) has the full detail.
+boot; without it the shell asks for the date and time, as COMMAND did.
+Commands are limited to 255 bytes and `CALL` nesting to 16 scripts; a batch
+file started from another without `CALL` replaces it. The [ABI](ABI.md) has
+the full detail.
 
 ## How it works
 
@@ -294,7 +305,19 @@ Programs call DOS through a function pointer handed to each process, using
 AAPCS64; the [ABI](ABI.md) documents every function from 00h to 6Ch
 (console and device I/O, handle and FCB files, SHARE locking, IOCTL, exec,
 memory allocation, country information and more). FCB records keep their
-standard 37-byte layout.
+standard 37-byte layout. These adapt the public contracts of the MS-DOS 4.0
+kernel sources (`CPMIO.ASM`, `HANDLE.ASM`, `FILE.ASM`, `PATH.ASM`,
+`FCBIO.ASM`, `ALLOC.ASM`, `PROC.ASM`, `LOCK.ASM`, `IOCTL.ASM`, `DOSMES.ASM`
+and others) and COMMAND; their internal algorithms were not translated line
+for line.
+
+`src/fat.S` implements FAT12, FAT16 and FAT32: cluster chains, FAT
+mirroring, directory growth, VFAT long names with `~N` short aliases, and a
+small write-through sector cache, so every update is on disk before a call
+returns. It runs over the kernel's virtio-blk or SDHCI driver in native mode
+and over UEFI Block I/O in firmware mode. If the boot volume is read-only or
+not FAT, the firmware's file system is used
+instead.
 
 ## Raspberry Pi 3
 
@@ -304,8 +327,13 @@ firmware](https://github.com/pftf/RPi3). Write it with Raspberry Pi
 Imager's custom-image option to a card of at least 128 MiB. By default the
 Pi stays in firmware mode. To try the native drivers (PL011 or mini UART
 console, SD card on the Arasan SDHCI), create an empty `NATIVE.ON` in the
-card's root; the console is then the serial UART on GPIO 14/15 only.
-**This has not been tested on a physical board.**
+card's root; the banner then reads `Raspberry Pi 3 UART console, SD card`.
+In that mode the console is the serial UART on GPIO 14/15 only: HDMI and
+USB keyboards stop working once the firmware is left, so attach a serial
+adapter. If the card cannot be restarted after leaving the firmware, the
+kernel prints `Boot disk did not restart after leaving firmware` and halts;
+delete `NATIVE.ON` to go back to firmware mode. **This has not been tested
+on a physical board.**
 
 ## Native Apple Silicon boot
 
@@ -335,8 +363,9 @@ upstream repository. The only files carried over are the MS-DOS 4.0 country
 tables in `data/country/`, which `COUNTRY.SYS` is built from.
 
 All files are released under the MIT License; see [LICENSE](LICENSE)
-(Copyright (c) Microsoft Corporation). The disk images carry it as
-`LICENSE.TXT` (`DOS-MIT.TXT` on the Pi image). The Pi image also bundles the
+(Copyright (c) Microsoft Corporation); the ARM DOS code is released under
+the same license (the assembly sources carry `SPDX-License-Identifier: MIT`). The ISO
+and disk images carry it as `LICENSE.TXT` (`DOS-MIT.TXT` on the Pi image). The Pi image also bundles the
 upstream Raspberry Pi UEFI firmware under its own licenses, included in the
 image; see [images/README.md](images/README.md).
 

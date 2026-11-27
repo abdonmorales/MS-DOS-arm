@@ -17,9 +17,25 @@ def digest(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def tracked_files(source):
+    """Files Git tracks under source, or None outside a Git checkout."""
+    try:
+        listed = subprocess.run(['git', '-C', str(source), 'ls-files', '-z'],
+                                capture_output=True, check=True).stdout
+    except (OSError, subprocess.CalledProcessError):
+        return None
+    return [source / name for name in listed.decode().split('\0') if name]
+
+
 def source_digest(source):
-    files = sorted(p for p in source.rglob('*') if p.is_file() and
+    # Tracked files only, so untracked venvs, editor files or scratch scripts
+    # in the checkout do not count as source changes.
+    candidates = tracked_files(source)
+    if candidates is None:
+        candidates = source.rglob('*')
+    files = sorted(p for p in candidates if p.is_file() and
                    (p.suffix in {'.S', '.inc', '.py', '.ld'} or p.name == 'Makefile'
+                    or p.name == 'LICENSE'
                     or p.relative_to(source).parts[0] in ('fixtures', 'data'))
                    and not {'build', '__pycache__', '.git'} & set(p.relative_to(source).parts))
     sources = hashlib.sha256()

@@ -37,7 +37,7 @@ import re
 import subprocess
 root = Path('/workspace/arm-toolchain')
 targets = ['binutils-aarch64-linux-gnu', 'qemu-system-arm',
-           'qemu-efi-aarch64', 'mtools', 'dosfstools']
+           'qemu-efi-aarch64', 'mtools', 'dosfstools', 'xorriso']
 simulation = subprocess.check_output(
     ['apt-get', '-s', 'install', '--no-install-recommends', *targets], text=True)
 dependencies = re.findall(r'^Inst (\S+) ', simulation, re.M)

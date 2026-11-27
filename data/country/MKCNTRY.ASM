@@ -2317,24 +2317,5 @@ page
 include copyrigh.inc
 
 cdiend		label	word
-;
-cdifname equ	$
-	db	'COUNTRY.SYS',0
-;
-crmsg	equ	$
-	db	'Create failed',13,10
-crmlen	equ	$-crmsg
-;
-succmsg equ	$
-	db	'COUNTRY.SYS created',13,10
-smlen	equ	$-succmsg
-;
-iomsg	equ	$
-	db	'I/O error writing COUNTRY.SYS',13,10
-iomlen	equ	$-iomsg
 dseg	ends
-;
-sseg	segment stack
-	db	128 dup(0)
-sseg	ends
-	end	mkcdif
+	end

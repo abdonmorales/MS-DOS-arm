@@ -3,8 +3,8 @@
 
 MKCNTRY.ASM was an x86 program in MS-DOS 4.0 whose data segment is the
 COUNTRY.SYS file; running it wrote that segment out. Only the data segment
-is kept in this repository (with MKCNTRY.INC and COPYRIGH.INC beside it). This tool assembles just the data
-segment (labels, DB/DW/DD, EQU and the CTRYSTR/CTRYDAT/CTABLE/CINFO
+is kept here, with MKCNTRY.INC and COPYRIGH.INC beside it. This tool
+assembles it (labels, DB/DW/DD, EQU and the CTRYSTR/CTRYDAT/CTABLE/CINFO
 structures of MKCNTRY.INC) so the image carries the same file, byte for byte
 in layout, without an x86 toolchain.
 """
