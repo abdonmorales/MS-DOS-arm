@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-// MEM [/PROGRAM | /DEBUG] (v4.0/src/CMD/MEM): memory totals, and with
+// MEM [/PROGRAM | /DEBUG] (MS-DOS 4.0 src/CMD/MEM): memory totals, and with
 // /PROGRAM or /DEBUG the allocated blocks and their owners, from the list
 // of lists (52h).
 .include "lib.inc"

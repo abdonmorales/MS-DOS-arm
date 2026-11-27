@@ -337,7 +337,7 @@ def main():
             command('echo hello driver>UPPER$')
             command('type UPPER$', b'HELLO DRIVER')
             command('set', b'COMSPEC=\\EFI\\BOOT\\BOOTAA64.EFI')
-            # Milestone 6: utilities from v4.0/src/CMD.
+            # Milestone 6: utilities from MS-DOS 4.0 src/CMD.
             def keys(data, wait):
                 process.stdin.write(data)
                 process.stdin.flush()

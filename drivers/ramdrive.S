@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 // RAMDRIVE.SYS [DiskSize SectorSize [NumEntries]] [/E | /A]
-// (v4.0/src/DEV/RAMDRIVE): a virtual disk in memory. Defaults: 64 KB,
+// (MS-DOS 4.0 src/DEV/RAMDRIVE): a virtual disk in memory. Defaults: 64 KB,
 // 512-byte sectors, 64 directory entries.
 .equ RD_DEFAULT_KB, 64
 .equ RD_DEFAULT_BPS, 512

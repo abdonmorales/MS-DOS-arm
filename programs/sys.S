@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-// SYS d: (v4.0/src/CMD/SYS): transfers the system to a formatted drive,
+// SYS d: (MS-DOS 4.0 src/CMD/SYS): transfers the system to a formatted drive,
 // making it bootable. Here that is the UEFI image \EFI\BOOT\BOOTAA64.EFI
 // (see sysxfer.inc), taken from the boot drive.
 .include "lib.inc"

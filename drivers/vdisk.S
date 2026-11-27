@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-// VDISK.SYS [bbb] [sss] [ddd] [/E[:m]] [/X[:m]] (v4.0/src/DEV/VDISK): the
+// VDISK.SYS [bbb] [sss] [ddd] [/E[:m]] [/X[:m]] (MS-DOS 4.0 src/DEV/VDISK): the
 // IBM virtual disk. Defaults: 64 KB, 128-byte sectors (512 here: the FAT
 // driver needs at least 512), 64 directory entries.
 .equ RD_DEFAULT_KB, 64

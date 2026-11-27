@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-// RECOVER [d:][path]filename | RECOVER d: (v4.0/src/CMD/RECOVER).
+// RECOVER [d:][path]filename | RECOVER d: (MS-DOS 4.0 src/CMD/RECOVER).
 // For a file: reads every allocation unit; unreadable ones are marked bad
 // and dropped from the chain, and the size is adjusted ("n of m bytes
 // recovered"). For a drive: every root directory entry becomes FILEnnnn.REC.

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 // ATTRIB [+R|-R] [+A|-A] [+S|-S] [+H|-H] [d:][path]filename [/S]
-// (v4.0/src/CMD/ATTRIB): shows or changes file attributes; wildcards are
+// (MS-DOS 4.0 src/CMD/ATTRIB): shows or changes file attributes; wildcards are
 // allowed and /S also processes the matching files in subdirectories.
 // Without a file name, every file in the current directory is shown.
 .include "lib.inc"

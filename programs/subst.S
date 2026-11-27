@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-// SUBST [d: [d:]path] | SUBST d: /D (v4.0/src/CMD/SUBST): makes drive d:
+// SUBST [d: [d:]path] | SUBST d: /D (MS-DOS 4.0 src/CMD/SUBST): makes drive d:
 // name a directory; /D removes it; no parameters lists the substitutions.
 .include "lib.inc"
 .include "cds.inc"

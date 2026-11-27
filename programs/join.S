@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-// JOIN [d: [d:]path] | JOIN d: /D (v4.0/src/CMD/JOIN): makes drive d:
+// JOIN [d: [d:]path] | JOIN d: /D (MS-DOS 4.0 src/CMD/JOIN): makes drive d:
 // appear as an empty directory of another drive; /D undoes it; with no
 // parameters the joins are listed. A joined drive cannot be named itself.
 .include "lib.inc"

@@ -116,7 +116,7 @@ def main():
     fixtures = Path(__file__).parent.parent / 'fixtures'
     payloads = payload_paths(args.efi.parent)
     for name, data in [
-        (b'LICENSE TXT', (Path(__file__).parent.parent.parent / 'LICENSE').read_bytes()),
+        (b'LICENSE TXT', (Path(__file__).parent.parent / 'LICENSE').read_bytes()),
         *[(short(p), p.read_bytes()) for p in payloads],
         *[(short(p), p.read_bytes()) for p in sorted(fixtures.iterdir())],
         (b'ARMTEST TXT', b'ARM64 FAT read\r\n'),

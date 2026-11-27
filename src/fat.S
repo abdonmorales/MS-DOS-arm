@@ -8,7 +8,7 @@
 // in this file. UEFI only moves raw sectors. Replacing fat_block_io with a
 // native disk driver is what remains before the runtime can leave firmware.
 //
-// Adapted ideas: FAT chain and directory handling follow v4.0/src/DOS
+// Adapted ideas: FAT chain and directory handling follow MS-DOS 4.0 src/DOS
 // (FAT.ASM, DIR.ASM, DIR2.ASM, CREATE.ASM); long names follow the VFAT
 // on-disk format. The calling conventions are AAPCS64 throughout.
 

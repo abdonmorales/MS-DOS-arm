@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-// TREE [d:][path] [/F] [/A] (v4.0/src/CMD/TREE): the directory structure,
+// TREE [d:][path] [/F] [/A] (MS-DOS 4.0 src/CMD/TREE): the directory structure,
 // drawn with code page 437 line characters (or ASCII with /A); /F also
 // lists the files in each directory.
 .include "lib.inc"

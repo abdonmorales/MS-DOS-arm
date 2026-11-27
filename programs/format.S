@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-// FORMAT d: [/S] [/V[:label]] (v4.0/src/CMD/FORMAT): writes a new FAT12 or
+// FORMAT d: [/S] [/V[:label]] (MS-DOS 4.0 src/CMD/FORMAT): writes a new FAT12 or
 // FAT16 file system over the whole device (its size from IOCTL 0860h),
 // asks for a volume label, and with /S transfers the system. The drive's
 // boot record is re-read with IOCTL 0840h when the layout is written.

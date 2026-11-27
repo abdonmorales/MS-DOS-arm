@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-// CHKDSK [d:][path][filename] [/F] [/V] (v4.0/src/CMD/CHKDSK): walks every
+// CHKDSK [d:][path][filename] [/F] [/V] (MS-DOS 4.0 src/CMD/CHKDSK): walks every
 // directory and FAT chain, reports cross-links, allocation errors and lost
 // chains (converted to FILEnnnn.CHK or freed with /F), the disk and memory
 // summary, and for a file specification whether the files are contiguous.

@@ -54,45 +54,8 @@
 ;
 	include mkcntry.inc
 ;
-cseg	segment para public 'code'
-	assume	cs:cseg,ds:dseg
-mkcdif	proc	far
-	mov	ax,dseg 		; establish addressability
-	mov	ds,ax			;  for ds
-	mov	es,ax			;  and es
-	lea	dx,cdifname		; address of file name to create
-	xor	cx,cx			; attrib = normal file
-	mov	ah,3ch			; create function
-	int	21h			; create file
-	jnc	create_ok		; jump if create successful
-	lea	dx,crmsg
-	mov	cx,crmlen
-	jmp	wrt_msg
-create_ok:
-	mov	bx,ax			; save handle
-	mov	ah,40h			; write function
-	mov	cx,cdiend-cdinfo	; length of cdi
-	lea	dx,cdinfo		; address of cdi
-	int	21h			; write cdi file
-	cmp	ax,cx			; compare bytes written
-	jz	write_ok		; jump if write was successful
-	lea	dx,iomsg
-	mov	cx,iomlen
-	jmp	wrt_msg
-write_ok:
-	mov	ah,3eh			; close function
-	int	21h			; close cdi file
-	lea	dx,succmsg
-	mov	cx,smlen
-wrt_msg:
-	mov	bx,1
-	mov	ah,40h
-	int	21h
-	xor	al,al
-	mov	ah,4ch			; exit function
-	int	21h			; return to exec'ing program
-mkcdif	endp
-cseg	ends
+;	The x86 code segment that wrote COUNTRY.SYS out is not kept: ARM DOS
+;	builds the file from the data segment below with tools/mkcntry.py.
 ;
 	page
 ; -----------------------------------------------------------

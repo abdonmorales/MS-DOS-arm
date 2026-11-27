@@ -47,9 +47,9 @@ to the bundled third-party files; they are not relicensed by this repository.
 To regenerate, activate/install the cross tools and run:
 
 ```sh
-make -C arm64 snapshot FIRMWARE=/path/to/QEMU_EFI.fd
+make snapshot FIRMWARE=/path/to/QEMU_EFI.fd
 ```
 
 The snapshot tool refuses stale validation when source or image bytes change.
-Raw build products stay under ignored `arm64/build`; these snapshots
-are committed on the `arm` branch for download.
+Raw build products stay under the ignored `build/` directory; these
+snapshots are committed to the repository for download.

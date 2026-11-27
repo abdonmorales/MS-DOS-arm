@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 // XCOPY source [destination] [/A] [/D:date] [/E] [/M] [/P] [/S] [/V] [/W]
-// (v4.0/src/CMD/XCOPY): copies files and, with /S, directory trees.
+// (MS-DOS 4.0 src/CMD/XCOPY): copies files and, with /S, directory trees.
 // /A only archive files, /M the same and then clears their archive bit,
 // /D:mm-dd-yy files dated on or after, /E also empty directories, /P asks
 // for each file, /W waits for a key first. /V is accepted (writes are

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-// LABEL [d:][label] (v4.0/src/CMD/LABEL): shows, sets or deletes the volume
+// LABEL [d:][label] (MS-DOS 4.0 src/CMD/LABEL): shows, sets or deletes the volume
 // label, both the root directory's volume entry and the boot record copy.
 .include "lib.inc"
 .include "fatlib.inc"

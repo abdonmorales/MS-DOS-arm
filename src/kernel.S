@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-// Native AArch64 port foundation for v4.0/src/DOS and COMMAND.
+// Native AArch64 port foundation for MS-DOS 4.0 src/DOS and COMMAND.
 // UEFI supplies the platform console and storage; this is an application
 // runtime, not yet the complete DOS kernel or an x86 binary emulator.
 

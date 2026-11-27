@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-// DISKCOMP [d1: [d2:]] [/1] [/8] (v4.0/src/CMD/DISKCOMP): compares two
+// DISKCOMP [d1: [d2:]] [/1] [/8] (MS-DOS 4.0 src/CMD/DISKCOMP): compares two
 // disks track by track. The boot record's volume serial number is ignored,
 // since DISKCOPY gives each copy its own. Drives: see diskdrv.inc.
 .include "lib.inc"

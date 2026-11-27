@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-// ASSIGN [x[:]=y[:] [...]] | ASSIGN /STATUS (v4.0/src/CMD/ASSIGN): sends
+// ASSIGN [x[:]=y[:] [...]] | ASSIGN /STATUS (MS-DOS 4.0 src/CMD/ASSIGN): sends
 // requests for drive x to drive y. With no parameters every assignment is
 // removed; /STATUS lists them.
 .include "lib.inc"

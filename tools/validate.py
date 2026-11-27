@@ -20,14 +20,11 @@ def digest(path):
 def source_digest(source):
     files = sorted(p for p in source.rglob('*') if p.is_file() and
                    (p.suffix in {'.S', '.inc', '.py', '.ld'} or p.name == 'Makefile'
-                    or 'fixtures' in p.parts)
-                   and 'build' not in p.parts and '__pycache__' not in p.parts)
-    # COUNTRY.SYS is assembled from the DOS 4.0 sources.
-    country = source.parent / 'v4.0/src/DEV/COUNTRY'
-    files += [country / 'MKCNTRY.ASM', country / 'MKCNTRY.INC']
+                    or p.relative_to(source).parts[0] in ('fixtures', 'data'))
+                   and not {'build', '__pycache__', '.git'} & set(p.relative_to(source).parts))
     sources = hashlib.sha256()
     for path in files:
-        sources.update(str(path.relative_to(source.parent)).encode() + b'\0' +
+        sources.update(str(path.relative_to(source)).encode() + b'\0' +
                        path.read_bytes())
     return sources.hexdigest()
 

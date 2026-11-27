@@ -64,7 +64,7 @@ def main():
         shutil.copyfile(args.efi, boot_dir / 'BOOTAA64.EFI')
         for payload in payload_paths(args.efi.parent):
             shutil.copyfile(payload, source / payload.name)
-        shutil.copyfile(Path(__file__).parent.parent.parent / 'LICENSE', source / 'DOS-MIT.TXT')
+        shutil.copyfile(Path(__file__).parent.parent / 'LICENSE', source / 'DOS-MIT.TXT')
         for fixture in sorted((Path(__file__).parent.parent / 'fixtures').iterdir()):
             shutil.copyfile(fixture, source / fixture.name)
         (source / 'ARMTEST.TXT').write_bytes(b'ARM64 FAT read\r\n')

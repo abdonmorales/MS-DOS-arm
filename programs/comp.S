@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-// COMP [file1] [file2] (v4.0/src/CMD/COMP): byte-by-byte comparison.
+// COMP [file1] [file2] (MS-DOS 4.0 src/CMD/COMP): byte-by-byte comparison.
 // file1 may hold wildcards; file2 may be a directory or a template. Shows
 // up to 10 mismatches, then asks "Compare more files (Y/N) ?".
 .include "lib.inc"

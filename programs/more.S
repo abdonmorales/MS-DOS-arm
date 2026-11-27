@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 // MORE < file, or command | MORE: shows standard input a screen at a time
-// (v4.0/src/CMD/MORE). After 24 lines it prints "-- More --" and waits for a
+// (MS-DOS 4.0 src/CMD/MORE). After 24 lines it prints "-- More --" and waits for a
 // key from the console (handle 2, switched to raw mode), as DOS did.
 .include "lib.inc"
 .equ SCREEN_LINES, 24

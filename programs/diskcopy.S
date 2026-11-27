@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-// DISKCOPY [d1: [d2:]] [/1] (v4.0/src/CMD/DISKCOPY): copies a whole disk,
+// DISKCOPY [d1: [d2:]] [/1] (MS-DOS 4.0 src/CMD/DISKCOPY): copies a whole disk,
 // sector for sector, to another of the same size, then gives the copy its
 // own volume serial number. The disks are block device drives (RAMDRIVE,
 // VDISK); see diskdrv.inc.

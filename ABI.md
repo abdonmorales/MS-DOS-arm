@@ -249,7 +249,7 @@ separator, ten reserved bytes. Built in (code page 437): 1, 3, 31, 32, 33,
 34, 39, 41, 44, 46, 49, 61 and 358.
 
 `\COUNTRY.SYS` is the DOS 4.0 file, assembled at build time from
-`v4.0/src/DEV/COUNTRY/MKCNTRY.ASM` by `tools/mkcntry.py`: 46 country and code
+`data/country/MKCNTRY.ASM` (the data segment of the MS-DOS 4.0 source) by `tools/mkcntry.py`: 46 country and code
 page pairs (437, 850, 860, 862-865 and the DBCS pages 932-938) with their
 country information, case maps, file-name characters, collating sequences
 and DBCS tables. `COUNTRY=nnn[,cp][,file]` loads from it (default

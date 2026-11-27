@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 // FIND [/V] [/C] [/N] [/I] "string" [[d:][path]filename ...]
-// Native port of v4.0/src/CMD/FIND: prints the lines of each file (or of
+// Native port of MS-DOS 4.0 src/CMD/FIND: prints the lines of each file (or of
 // standard input) that contain the string. /V lines without it, /C only a
 // count, /N line numbers, /I ignore case.
 .include "lib.inc"

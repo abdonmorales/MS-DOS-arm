@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-// ANSI.SYS (v4.0/src/DEV/ANSI): the extended console driver. It takes over
+// ANSI.SYS (MS-DOS 4.0 src/DEV/ANSI): the extended console driver. It takes over
 // CON and sees every byte written to the console and every key read from
 // it. The terminal on the serial line already draws VT100 sequences, so
 // ANSI.SYS passes them through while keeping DOS's meanings:

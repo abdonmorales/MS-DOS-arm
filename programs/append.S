@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 // APPEND [d:]path[;[d:]path...] | APPEND ; | APPEND [/X[:ON|:OFF]]
-// [/PATH:ON|/PATH:OFF] [/E] (v4.0/src/CMD/APPEND): the directories searched
+// [/PATH:ON|/PATH:OFF] [/E] (MS-DOS 4.0 src/CMD/APPEND): the directories searched
 // for data files that are not found. /X:ON extends it to search-first and
 // exec, /PATH:OFF limits it to names without a drive or directory, /E keeps
 // the list in the APPEND environment variable. The state lives in the

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 // BACKUP source d: [/S] [/M] [/A] [/D:date [/T:time]] [/F] [/L[:log]]
-// (v4.0/src/CMD/BACKUP): copies files into a backup set (backup.inc) on
+// (MS-DOS 4.0 src/CMD/BACKUP): copies files into a backup set (backup.inc) on
 // drive d:. /S includes subdirectories, /M only files changed since the last
 // backup, /A adds to the set already there, /D and /T only files changed on
 // or after that date and time, /L logs to \BACKUP.LOG (or the file given)

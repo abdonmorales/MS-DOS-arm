@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-// SORT [/R] [/+n] < input > output (v4.0/src/CMD/SORT): sorts the lines of
+// SORT [/R] [/+n] < input > output (MS-DOS 4.0 src/CMD/SORT): sorts the lines of
 // standard input, ignoring case as the DOS collating table does, starting
 // at column n; /R reverses the order. Holds up to 63 KiB, as DOS did.
 .include "lib.inc"

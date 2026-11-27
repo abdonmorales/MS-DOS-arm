@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-// CONFIG.SYS processing (SYSINIT1.ASM/SYSCONF.ASM in v4.0/src/BIOS):
+// CONFIG.SYS processing (SYSINIT1.ASM/SYSCONF.ASM in MS-DOS 4.0 src/BIOS):
 // BREAK, BUFFERS, COUNTRY, DEVICE, FCBS, FILES, INSTALL, LASTDRIVE, REM,
 // SHELL and STACKS. Lines are processed in order, except that INSTALL
 // programs run after every DEVICE driver has loaded, as in DOS 4.0.

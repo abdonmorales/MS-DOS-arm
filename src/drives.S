@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-// Drive letters: the current directory structure (CDS) of v4.0/src/DOS.
+// Drive letters: the current directory structure (CDS) of MS-DOS 4.0 src/DOS.
 // Each letter has flags, its root object and FAT volume, its own current
 // directory, and the SUBST / JOIN / ASSIGN mappings. canonicalize_path
 // resolves a DOS path to (canonical_drive, "\PATH") on a physical drive:

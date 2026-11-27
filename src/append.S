@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-// APPEND support (v4.0/src/CMD/APPEND): when a program opens a data file
+// APPEND support (MS-DOS 4.0 src/CMD/APPEND): when a program opens a data file
 // that is not found, the directories in the APPEND list are tried in turn.
 // APPEND.EXE edits `append_state`, which 52h publishes at +112:
 //   +0 flags: bit 0 a list is set, 1 /X:ON (search-first and exec too),

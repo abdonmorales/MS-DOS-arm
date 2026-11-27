@@ -81,8 +81,10 @@ $(BUILD)/sdtest.bin: tests/pi/sdtest.S tests/pi/link.ld src/sdhci.S | $(BUILD)
 	$(LD) -T tests/pi/link.ld --no-warn-rwx-segments -o $(BUILD)/sdtest.elf $(BUILD)/sdtest.o
 	$(OBJCOPY) -O binary $(BUILD)/sdtest.elf $@
 
-# COUNTRY.SYS is data: the DOS 4.0 file assembled from MKCNTRY.ASM.
-$(BUILD)/COUNTRY.SYS: ../v4.0/src/DEV/COUNTRY/MKCNTRY.ASM ../v4.0/src/DEV/COUNTRY/MKCNTRY.INC tools/mkcntry.py | $(BUILD)
+# COUNTRY.SYS is data: the DOS 4.0 file assembled from the data segment of
+# MKCNTRY.ASM (data/country).
+COUNTRY_DATA := $(wildcard data/country/*)
+$(BUILD)/COUNTRY.SYS: data/country/MKCNTRY.ASM $(COUNTRY_DATA) tools/mkcntry.py | $(BUILD)
 	$(PYTHON) tools/mkcntry.py $< $@
 
 $(BUILD)/%.o: programs/%.S programs/lib.inc programs/fatlib.inc programs/cds.inc programs/sysxfer.inc programs/diskdrv.inc programs/backup.inc | $(BUILD)

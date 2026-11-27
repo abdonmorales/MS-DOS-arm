@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 // REPLACE [d:][path]filename [d:][path] [/A] [/P] [/R] [/S] [/U] [/W]
-// (v4.0/src/CMD/REPLACE): replaces files in the target directory (and with
+// (MS-DOS 4.0 src/CMD/REPLACE): replaces files in the target directory (and with
 // /S its subdirectories) by the source files of the same name, or with /A
 // adds the source files the target lacks. /P asks first, /R also replaces
 // read-only files, /U only replaces older files, /W waits for a key.

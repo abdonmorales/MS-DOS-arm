@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-// PRINTER.SYS [/AUX | /NUL] (v4.0/src/DEV/PRINTER): the printer device. The
+// PRINTER.SYS [/AUX | /NUL] (MS-DOS 4.0 src/DEV/PRINTER): the printer device. The
 // supported boards have no parallel port, so PRN goes to the serial line
 // (/AUX, the default, the same UART as the console and AUX) or nowhere
 // (/NUL, as without the driver). Code page switching for IBM printers has

@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""Build COUNTRY.SYS from v4.0/src/DEV/COUNTRY/MKCNTRY.ASM.
+"""Build COUNTRY.SYS from data/country/MKCNTRY.ASM.
 
-MKCNTRY.ASM is an x86 program whose data segment is the COUNTRY.SYS file;
-running it wrote that segment out. This tool assembles just the data
+MKCNTRY.ASM was an x86 program in MS-DOS 4.0 whose data segment is the
+COUNTRY.SYS file; running it wrote that segment out. Only the data segment
+is kept in this repository (with MKCNTRY.INC and COPYRIGH.INC beside it). This tool assembles just the data
 segment (labels, DB/DW/DD, EQU and the CTRYSTR/CTRYDAT/CTABLE/CINFO
 structures of MKCNTRY.INC) so the image carries the same file, byte for byte
 in layout, without an x86 toolchain.
@@ -215,7 +216,7 @@ def main():
     parser.add_argument('source', type=Path)
     parser.add_argument('output', type=Path)
     args = parser.parse_args()
-    assembler = Assembler(args.source.parent.parent.parent / 'INC')
+    assembler = Assembler(args.source.parent)
     assembler.assemble(args.source, False)
     data = assembler.assemble(args.source, True)
     if data[:8] != b'\xffCOUNTRY':

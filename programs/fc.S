@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 // FC [/A] [/B] [/C] [/L] [/LBn] [/N] [/T] [/W] [/nnnn] file1 file2
-// (v4.0/src/CMD/FC). Text mode compares lines and resynchronises after a
+// (MS-DOS 4.0 src/CMD/FC). Text mode compares lines and resynchronises after a
 // difference when /nnnn (default 2) lines match again; binary mode (/B, or
 // .EXE .COM .SYS .OBJ .LIB .BIN files) lists differing bytes.
 .include "lib.inc"

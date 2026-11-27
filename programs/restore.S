@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 // RESTORE d: [d:][path]filespec [/S] [/P] [/B:date] [/A:date] [/E:time]
-//         [/L:time] [/M] [/N]  (v4.0/src/CMD/RESTORE): restores files from
+//         [/L:time] [/M] [/N]  (MS-DOS 4.0 src/CMD/RESTORE): restores files from
 // the backup set (backup.inc) on drive d:. /S includes subdirectories, /P
 // asks before replacing read-only files or files changed since the backup,
 // /B and /A only files changed on or before / on or after the date, /E and

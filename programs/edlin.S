@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-// EDLIN [d:][path]filename [/B] (v4.0/src/CMD/EDLIN): the line editor.
+// EDLIN [d:][path]filename [/B] (MS-DOS 4.0 src/CMD/EDLIN): the line editor.
 // Commands: [n] edit, [n]I insert, [r]L list, [r]P page, [r]D delete,
 // [r][?]S text search, [r][?]R old^Znew replace, r,n[,c]C copy, r,nM move,
 // [n]T file transfer, [n]A append, [n]W write, E end (keeps NAME.BAK),

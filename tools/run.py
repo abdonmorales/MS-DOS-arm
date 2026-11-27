@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Run ARM DOS in QEMU `virt`, including HVF on Apple Silicon hosts.
 
-Boot a disk image:     run.py arm64/build/msdos-arm64.img
-Boot the live ISO:     run.py --iso arm64/images/armdos.iso
-Install to a new disk: run.py --iso arm64/images/armdos.iso --disk armdos-disk.img
+Boot a disk image:     run.py build/msdos-arm64.img
+Boot the live ISO:     run.py --iso images/armdos.iso
+Install to a new disk: run.py --iso images/armdos.iso --disk armdos-disk.img
 Boot the installed disk afterwards: run.py armdos-disk.img
 
 The image argument and every --disk are writable VirtIO disks; the image is
