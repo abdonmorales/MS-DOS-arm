@@ -169,7 +169,7 @@ state and verified package hashes, and `source tools/env.sh` puts them on
 
 | Path | Contents |
 | --- | --- |
-| `src/` | The kernel: boot, platform drivers (PL011, virtio-blk, SDHCI), FAT12/16/32, DOS functions, COMMAND, `CONFIG.SYS` |
+| `src/` | The kernel: boot, platform drivers (PL011, virtio-blk, virtio-net, SDHCI), FAT12/16/32, DOS functions, COMMAND, `CONFIG.SYS` |
 | `programs/` | The utilities and ARM BASIC, one `NAME.S` per `NAME.EXE` |
 | `drivers/` | Installable drivers (`ANSI.SYS`, `RAMDRIVE.SYS`, `VDISK.SYS`, `PRINTER.SYS`, `TESTDRV.SYS`) |
 | `data/country/` | The MS-DOS 4.0 country tables (`MKCNTRY.ASM` data segment) that `COUNTRY.SYS` is built from |
@@ -190,6 +190,7 @@ state and verified package hashes, and `source tools/env.sh` puts them on
 | `make smoke-firmware` | The same checks with ACPI hidden, so the kernel stays in firmware mode |
 | `make fat-test` | Stress-tests `src/fat.S` on FAT12/16/32 images under `qemu-aarch64` (needs `gcc-aarch64-linux-gnu`, `libc6-dev-arm64-cross`, `qemu-user`) |
 | `make pi-test` | The Pi 3 SD-card and UART drivers, bare metal on QEMU `raspi3b` |
+| `make net-test` | virtio-net, the E1h packet driver and `TFTP.EXE` on QEMU user networking: GET from slirp's TFTP server (100 KiB, checked by hash), PUT, netascii and lost/duplicate packets against a small server in the test |
 | `make iso-test` | Live boot as CD and USB stick, `INSTALL` to blank disks, a boot of the installed disk, and a reproducible ISO |
 | `make validate` | Both disk images: FAT checks, payload comparison and a QEMU boot; writes `build/validation.json` |
 | `make rom-test` | Boots the ROM builds in QEMU `virt`: network boot under EDK2 (ACPI and device tree), U-Boot from NOR flash, the Pi build in firmware mode; checks that A: refuses every write, and the Pi images' contents (needs `u-boot-qemu`, `u-boot-tools`) |
@@ -416,6 +417,17 @@ small write-through sector cache, so every update is on disk before a call
 returns. It runs over the kernel's virtio-blk or SDHCI driver in native mode
 and over UEFI Block I/O in firmware mode. If the boot volume is read-only or
 not FAT, the firmware's file system is used instead.
+
+Networking: in native mode on QEMU `virt` (or any machine with a virtio-net
+PCI device) the kernel drives the NIC itself (`src/vnet.S`, polled) and
+offers whole Ethernet frames to programs through the packet driver call E1h
+([ABI](ABI.md)). `TFTP.EXE` brings its own ARP, IPv4 and UDP:
+`TFTP [-i] host[:port] GET|PUT source [destination]`, configured by the
+environment variables `IP`, `NETMASK` and `GATEWAY` (defaults suit QEMU's
+`-netdev user`: 10.0.2.15/24 via 10.0.2.2; no DHCP). Add
+`-netdev user,id=n0,tftp=DIR -device virtio-net-pci,netdev=n0` to QEMU and
+`TFTP -i 10.0.2.2 GET FILE` fetches `DIR/FILE`; QEMU's built-in server is
+read-only and binary only. Firmware mode has no network.
 
 ## Raspberry Pi 3
 

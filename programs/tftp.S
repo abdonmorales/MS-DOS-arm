@@ -939,6 +939,11 @@ tftp_recv:
     ldg x4, peer_port
     cmp x21, x4
     b.eq 2f
+    cmp x20, #2                 // never answer an ERROR with an ERROR
+    b.lo 1b
+    ld_be16 w2, x19, 0, w3
+    cmp w2, #OP_ERROR
+    b.eq 1b
     mov x0, #5                  // someone else's transfer
     address x1, msg_unknown_tid
     mov x2, x21
