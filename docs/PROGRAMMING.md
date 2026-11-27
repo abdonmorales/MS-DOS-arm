@@ -59,7 +59,8 @@ that:
 - has an entry point inside the image.
 
 Anything else fails with DOS error 11 (invalid format), so an x86 `.EXE`
-is refused cleanly. The loader copies the headers and sections into a
+is refused cleanly; an image too large for free memory fails with DOS
+error 8 (insufficient memory). The loader copies the headers and sections into a
 fresh 64 KiB-aligned block, zero-fills the rest, applies the DIR64
 relocations for the new base, synchronises the instruction cache and calls
 the entry point.
@@ -280,7 +281,7 @@ A program that is only for testing should also be listed in `TEST_ONLY` in
 
 ## Writing an installable driver
 
-A driver is built exactly like a program, from `drivers/NAME.S` to
+A driver is built exactly like a program, from `drivers/name.S` (lower case) to
 `build/NAME.SYS`, and loaded with `DEVICE=\NAME.SYS args` in `CONFIG.SYS`.
 It stays resident. Its entry point is called once with `x0` pointing to a
 96-byte init request (the full table is in

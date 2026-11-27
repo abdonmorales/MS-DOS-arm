@@ -120,7 +120,7 @@ hexadecimal number in program text.
   `-9223372036854775807-1` or `&H8000000000000000`.
 - **Strings** hold up to 255 bytes. String variables end in `$`.
 - Variable names are significant to 14 characters; up to 512 variables and
-  arrays. Arrays have one dimension and up to 1 Mi elements.
+  arrays. Arrays have one dimension. `DIM` accepts up to 1 Mi elements, but arrays share BASIC's 1 MiB heap, so in practice about 131,000 numeric elements or about 4,000 string elements (256 bytes each) fit before "Out of memory".
 - Program lines hold up to 255 bytes; the program up to 64 KiB.
 - `FOR`, `GOSUB` and `WHILE` nest up to 64 deep together.
 

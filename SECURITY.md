@@ -50,9 +50,9 @@ error, not a crash:
   lines and batch-file expansion to 255 bytes; overlong input is an error,
   not an overflow.
 - **PE32+ loader** (`src/process.S`): headers, section data, the image
-  size (at most 16 MiB), relocation blocks and every relocation target are
-  bounds-checked against the file and the image before anything is copied
-  or patched; only `DIR64` relocations are accepted, and x86 images are
+  size (at most 16 MiB), and relocation blocks and every relocation target
+  are bounds-checked against the file and the image before they are
+  patched; only `DIR64` relocations are accepted, and x86 images are
   refused with "invalid format".
 - **IOCTL, FCB and drive-table calls** check their buffer sizes, drive
   numbers and handles.
