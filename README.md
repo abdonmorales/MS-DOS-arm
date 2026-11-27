@@ -300,8 +300,9 @@ stays in firmware mode and uses UEFI for the console, memory and sectors; the
 banner's `Platform:` line says which mode is active. In native mode no UEFI
 boot service is used after startup; UEFI runtime services are used only for
 power-off. DATE and TIME settings persist in the real-time clock (the PL031
-on QEMU `virt`, UEFI `SetTime` in firmware mode); the Pi 3 has no
-battery-backed clock.
+on QEMU `virt`, UEFI `SetTime` in firmware mode). Native mode on other
+boards does not persist the clock yet, and the Pi 3 has no battery-backed
+clock.
 
 Programs call DOS through a function pointer handed to each process, using
 AAPCS64; the [ABI](ABI.md) documents every function from 00h to 6Ch

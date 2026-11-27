@@ -8,12 +8,13 @@
 // back (rtc_write_unix), so the setting survives a reboot:
 //   native mode, QEMU virt: the PL031 directly (RTCDR read, RTCLR write);
 //   firmware mode: UEFI runtime GetTime / SetTime;
-//   native mode without an RTC (Raspberry Pi 3 has no battery-backed clock):
+//   native mode on any other board (no PL031 at 09010000h; the Raspberry
+//   Pi 3 has no battery-backed clock at all):
 //   the boot-time firmware value only, and nothing is persisted.
 // The RTC counts seconds since 1970-01-01 and DOS has no time zones, so it
 // is taken as local time. Values before 1980 read as 1980-01-01 00:00; the
-// 32-bit PL031 cannot hold dates after 2106-02-07 06:28:15, so those are kept
-// for this session only.
+// 32-bit PL031 cannot hold dates after 2106-02-07 06:28:15, so in native mode
+// those are kept for this session only (firmware mode: what SetTime accepts).
 .macro day_seconds reg
     movz \reg, #0x5180
     movk \reg, #1, lsl #16
@@ -95,8 +96,30 @@ rtc_write_unix:
     ldr x1, [x1, :lo12:platform_native]
     cbnz x1, 9f
     frame
+    str x0, [sp, #-16]!
+    // Keep the firmware's TimeZone and Daylight: read them with GetTime
+    // first, so SetTime neither shifts the stored time nor drops the zone.
+    address x0, clock_efi_time
+    mov x1, #0
+    address x2, system_table
+    ldr x2, [x2]
+    ldr x2, [x2, #88]           // RuntimeServices
+    ldr x2, [x2, #24]           // GetTime
+    blr x2
+    mov x3, x0
+    ldr x0, [sp], #16
+    str x3, [sp, #-16]!
     address x1, clock_set_efi_time
     bl unix_to_efi_time
+    ldr x3, [sp], #16
+    cbnz x3, 4f                 // GetTime failed: leave unspecified zone
+    address x0, clock_efi_time
+    address x1, clock_set_efi_time
+    ldrh w2, [x0, #12]          // TimeZone
+    strh w2, [x1, #12]
+    ldrb w2, [x0, #14]          // Daylight
+    strb w2, [x1, #14]
+4:
     address x0, clock_set_efi_time
     address x2, system_table
     ldr x2, [x2]
@@ -181,7 +204,8 @@ efi_time_to_unix:
     unframe
 
 // x0 = Unix seconds (1980 or later), x1 = 16-byte EFI_TIME to fill. The
-// time zone is EFI_UNSPECIFIED_TIMEZONE (local time), no daylight flags.
+// time zone is EFI_UNSPECIFIED_TIMEZONE (local time), no daylight flags;
+// rtc_write_unix then copies the firmware's own TimeZone/Daylight over them.
 unix_to_efi_time:
     frame
     stp x19, x20, [sp, #-16]!

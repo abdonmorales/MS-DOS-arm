@@ -91,16 +91,6 @@ binary's table matches this list.
 | `2Fh` | None | `x0` DTA pointer, `x2` capacity |
 | `30h` | None | `x0=4`, minor version 0, `x2=0`, `x3=FFh` |
 
-Date and time (`src/clock.S`): the clock is loaded from the real-time clock at
-boot, and `2Bh`/`2Dh` (so also `DATE`, `TIME` and `CLOCK$` writes) store it
-back, so a setting survives a reboot. Native mode on QEMU `virt` uses the
-PL031 directly (09010000h, used only when the ACPI OEM ID is QEMU's and the
-PrimeCell ID registers match); firmware mode uses UEFI `GetTime`/`SetTime`.
-The Raspberry Pi 3 has no battery-backed RTC: native mode there keeps the
-firmware's boot-time value and nothing persists. The RTC is read as local
-time (DOS has no time zones); RTC values before 1980 read as 1980-01-01, and
-dates after 2106-02-07 06:28 (the 32-bit PL031 limit) last only until reboot.
-Hundredths come from the generic timer and are not stored.
 | `31h` | `x0` exit code, `x1` bytes to keep | Terminate and stay resident: the image and its blocks stay allocated; status type 3 |
 | `33h` | `x0` 0 get / 1 set / 2 exchange / 5 boot drive, `x1` value | `x2` BREAK state (or boot drive 1). BREAK ON checks for Ctrl-C on every call |
 | `34h` | None | `x0` InDOS byte, `x2` critical-error byte (both 0 while a program runs) |
@@ -146,6 +136,20 @@ Hundredths come from the generic timer and are not stored.
 | `69h` | `x0` 0 get / 1 set, `x1` drive, `x2` 25-byte buffer | Media ID: u16 level 0, u32 serial, 11-byte label, 8-byte file system type (from the boot record) |
 | `6Ch` | `x0` path, `x1` open mode, `x2` attributes, `x3` action | Extended open/create; `x2` 1 opened, 2 created, 3 replaced |
 | `E0h` | `x0` subfunction 0–6 | ARM DOS extension: raw disk services for INSTALL (below) |
+
+Date and time (`src/clock.S`): the clock is loaded from the real-time clock at
+boot, and `2Bh`/`2Dh` (so also `DATE`, `TIME` and `CLOCK$` writes) store it
+back, so a setting survives a reboot. Native mode on QEMU `virt` uses the
+PL031 directly (09010000h, used only when the ACPI OEM ID is QEMU's and the
+PrimeCell ID registers match); firmware mode uses UEFI `GetTime`/`SetTime`.
+Native mode on other boards (no PL031 at that address) and on the
+Raspberry Pi 3 (no battery-backed RTC) keeps the firmware's boot-time value
+and nothing persists. The RTC is read as local
+time (DOS has no time zones); RTC values before 1980 read as 1980-01-01, and
+in native mode dates after 2106-02-07 06:28 (the 32-bit PL031 limit) last
+only until reboot; in firmware mode the limit is whatever `SetTime` accepts.
+Firmware mode keeps the firmware's own TimeZone/Daylight settings.
+Hundredths come from the generic timer and are not stored.
 
 ### Disk services (E0h, ARM DOS extension)
 
