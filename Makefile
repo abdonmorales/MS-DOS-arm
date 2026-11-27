@@ -10,7 +10,7 @@ SOURCES := $(wildcard src/*.S)
 FIXTURES := $(wildcard fixtures/*)
 
 .SECONDARY:
-.PHONY: all payloads image pi-image unit smoke smoke-firmware check validate snapshot fat-test pi-test iso iso-test rom-generic rom-pi rom-test clean
+.PHONY: all payloads image pi-image unit smoke smoke-firmware check validate snapshot fat-test pi-test net-test iso iso-test rom-generic rom-pi rom-test clean
 all: $(BUILD)/BOOTAA64.EFI payloads
 image: $(BUILD)/msdos-arm64.img
 iso: $(BUILD)/armdos.iso
@@ -27,6 +27,10 @@ smoke: image
 # Same checks with ACPI hidden, so the kernel must keep using UEFI services.
 smoke-firmware: image
 	$(PYTHON) tools/smoke.py $(BUILD)/msdos-arm64.img --firmware $(FIRMWARE) --mode firmware --log $(BUILD)/smoke-firmware.log
+
+# virtio-net, the E1h packet driver and TFTP.EXE on QEMU user networking.
+net-test: image
+	$(PYTHON) tools/net_test.py $(BUILD)/msdos-arm64.img --firmware $(FIRMWARE) --log $(BUILD)/net-test.log
 
 check: unit pi-test
 	$(MAKE) smoke
