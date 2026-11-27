@@ -44,7 +44,7 @@ registers allowed by AAPCS64. All structures are little endian.
 ## Dispatched functions
 
 Every number from `00h` to `6Ch` is dispatched (DISPATCH.ASM's table, in
-[src/dispatch.S](src/dispatch.S)), plus the ARM DOS extension `E0h`; other
+[src/dispatch.S](src/dispatch.S)), plus the ARM DOS extensions `E0h` and `E1h`; other
 numbers above `6Ch` return error 1. A
 failing call (`x1=1`) is recorded for `59h`. `tools/unit.py` checks that the
 binary's table matches this list.
@@ -135,6 +135,7 @@ binary's table matches this list.
 | `69h` | `x0` 0 get / 1 set, `x1` drive, `x2` 25-byte buffer | Media ID: u16 level 0, u32 serial, 11-byte label, 8-byte file system type (from the boot record) |
 | `6Ch` | `x0` path, `x1` open mode, `x2` attributes, `x3` action | Extended open/create; `x2` 1 opened, 2 created, 3 replaced |
 | `E0h` | `x0` subfunction 0–6 | ARM DOS extension: raw disk services for INSTALL (below) |
+| `E1h` | `x0` subfunction 0–5 | ARM DOS extension: packet driver (Ethernet frames, below) |
 
 ### Disk services (E0h, ARM DOS extension)
 
@@ -162,6 +163,32 @@ fails with error 34 (invalid disk change), and a write to a now read-only one
 with error 19. Other errors: 1 bad subfunction, 15 bad disk number or no
 drive letter left, 21 device error, 87 a range outside the disk, 4 no attach
 slot or volume left, 5 the range overlaps an attached one, 8 no sector cache.
+
+### Packet driver (E1h, ARM DOS extension)
+
+A native analogue of the DOS Packet Driver Specification: whole Ethernet
+frames in and out, no protocol stack in the kernel (`TFTP.EXE` carries its
+own ARP, IPv4 and UDP). The driver is virtio-net (virtio 1.x PCI, device
+1041h or transitional 1000h) in native mode only. It is polled: nothing
+arrives unless a program calls subfunction 3, and the device keeps at most
+16 received frames, dropping newer ones until they are read. When no device
+was found, and always in firmware mode, every subfunction fails with error
+50 (network request not supported).
+
+| `x0` | Arguments | Result |
+| --- | --- | --- |
+| 0 | None | Driver information: `x0` link (1 up, 0 down), `x2` MTU (1500), `x3` interface class 1 (Ethernet DIX), `x4` receive mode |
+| 1 | `x1` 6-byte buffer | The station (MAC) address; `x0=6` |
+| 2 | `x1` frame, `x2` length 14–1514 | Send one frame: destination, source and type first, as sent on the wire (the source is not filled in), no FCS. Frames under 60 bytes are zero padded. Returns when the device has taken the frame; `x0` length |
+| 3 | `x1` buffer, `x2` capacity | Receive one frame without waiting: `x0` bytes stored (0 when none is waiting), `x2` the frame's length (longer than `x0` when it was truncated to the capacity) |
+| 4 | `x1` mode 1–6, or 0 to query | Receive mode, as in the packet driver specification: 1 off, 2 own address only, 3 own and broadcast (the default at boot), 4 and 5 also every multicast, 6 promiscuous. `x0` the mode in effect, `x2` the previous one. The filter is in software |
+| 5 | None | Counters since boot: `x0` frames received, `x2` frames sent, `x3` frames dropped by the filter or malformed |
+
+Errors: 1 bad subfunction, 50 no driver, 87 a null buffer, a length outside
+14–1514 or a mode above 6, 21 the device did not take a frame within 200 ms
+(or broke the queue protocol, after which the driver is off until reboot).
+There is one receiver for the whole system: a program that does not want
+other programs' traffic must tolerate and ignore it.
 
 ### Devices
 

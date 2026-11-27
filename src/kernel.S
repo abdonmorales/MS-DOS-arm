@@ -1250,6 +1250,7 @@ selftest_saved_cwd: .skip 256
 .include "src/disks.S"
 .include "src/platform.S"
 .include "src/sdhci.S"
+.include "src/vnet.S"
 .include "src/api_test.S"
 .include "src/search.S"
 

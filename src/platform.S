@@ -517,6 +517,7 @@ plat_rom_native:
     bl plat_find_disk
     cbnz x0, plat_fail
 12:
+    bl vnet_probe               // virtio-net, if any (src/vnet.S)
     // ExitBootServices needs the current memory map key; retry once if the
     // map changed between the two calls.
     mov x19, #2
@@ -564,6 +565,7 @@ plat_rom_native:
     // The firmware's virtio driver reset the device on exit; start ours.
     bl vio_init
     cbnz x0, plat_dead
+    bl vnet_init                // failure only means no network
     mov x0, #0
     leave
 5:
