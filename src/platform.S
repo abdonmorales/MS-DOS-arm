@@ -1280,7 +1280,7 @@ plat_exception:
 
 // x0 = ESR, x1 = FAR. Returns x0 = a one-line description of the fault.
 plat_fault_text:
-    lsr x2, x0, #26             // exception class
+    ubfx x2, x0, #26, #6        // exception class
     and x3, x0, #0x3f           // fault status code (aborts)
     cmp x2, #0x24
     b.eq 1f

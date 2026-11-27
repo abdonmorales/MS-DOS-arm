@@ -68,10 +68,15 @@ efi_main:
     address x0, plat_rom_native_end
 1:
     bl puts
+    adrp x1, platform_native
+    ldr x1, [x1, :lo12:platform_native]
+    cbz x1, 1f                  // firmware mode: nothing to report
+    address x0, mmu_banner
     adrp x1, mmu_live
     ldr x1, [x1, :lo12:mmu_live]
-    cbz x1, 1f
-    address x0, mmu_banner
+    cbnz x1, 2f
+    address x0, mmu_off_banner
+2:
     bl puts
 1:
     bl fat_print_backend

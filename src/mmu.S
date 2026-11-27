@@ -40,8 +40,8 @@
 
 .equ MMU_MAIR, 0x44ff00
 // T0SZ 16 (48-bit VA), inner/outer write-back walks, inner shareable, 4 KiB
-// granule, TTBR1 walks disabled; IPS is added at run time.
-.equ MMU_TCR, (16 | (1 << 8) | (1 << 10) | (3 << 12) | (1 << 23))
+// granule, TTBR1 walks disabled (TG1 4 KiB); IPS is added at run time.
+.equ MMU_TCR, (16 | (1 << 8) | (1 << 10) | (3 << 12) | (1 << 23) | (2 << 30))
 // RES1 bits plus M, C, SA, SA0, I, DZE, UCT, nTWI, nTWE, UCI (EL0 may use
 // DC ZVA, CTR_EL0, WFI/WFE and cache maintenance by VA).
 .equ MMU_SCTLR, 0x34d5d81d
@@ -367,11 +367,30 @@ mmu_init:
     bl mmu_set
     cbnz x0, 90f
 5:
+    // Null guard, unless something the kernel uses lives in low memory
+    // (possible on a Raspberry Pi, whose RAM starts at 0).
+    mov x3, #MMU_NULL_GUARD
+    address x0, __text_start
+    sub x0, x0, #0x1000
+    cmp x0, x3
+    b.lo 51f
+    ldv x0, mmu_pool
+    cmp x0, x3
+    b.lo 51f
+    mov x0, sp
+    cmp x0, x3
+    b.lo 51f
+    ldv x0, plat_arena
+    cbz x0, 50f
+    cmp x0, x3
+    b.lo 51f
+50:
     mov x0, #0
     mov x1, #MMU_NULL_GUARD
     mov x2, #0
     bl mmu_set
     cbnz x0, 90f
+51:
 
     // Translation registers.
     ldv x0, mmu_root
@@ -402,11 +421,15 @@ mmu_init:
 // expects. x0 = TTBR0, x1 = TCR, x2 = MAIR, x3 = SCTLR.
 .balign 64
 mmu_switch_el1:
+    mrs x6, ctr_el0
+    ubfx x6, x6, #16, #4        // DminLine (log2 words)
+    mov x7, #4
+    lsl x7, x7, x6
     address x4, mmu_switch_el1
     address x5, mmu_switch_end
 1:
     dc cvac, x4                 // the code runs uncached for a moment
-    add x4, x4, #64
+    add x4, x4, x7
     cmp x4, x5
     b.lo 1b
     dsb sy
@@ -451,8 +474,11 @@ mmu_enter_el1:
     msr cntkctl_el1, x4
     msr cnthctl_el2, x4         // EL1 physical counter and timer
     msr cntvoff_el2, xzr
-    mov x4, #0x33ff
-    msr cptr_el2, x4            // no FP/SIMD traps
+    mov x4, #0x32ff
+    msr cptr_el2, x4            // no FP/SIMD or SVE traps
+    mrs x4, pmcr_el0
+    ubfx x4, x4, #11, #5
+    msr mdcr_el2, x4            // HPMN = all counters; no debug/PMU traps
     msr vttbr_el2, xzr
     mrs x4, midr_el1
     msr vpidr_el2, x4
@@ -469,6 +495,11 @@ mmu_enter_el1:
     msr S3_4_C12_C9_5, x5
     msr S3_4_C12_C11_0, xzr     // ICH_HCR_EL2: no virtual interface
 1:
+    // Nothing should reach EL2 any more; if something does (HVC, a debug
+    // trap), halt on a stack of its own instead of running the DOS handler
+    // at EL2 on the live EL1 stack.
+    address x4, mmu_el2_vectors
+    msr vbar_el2, x4
     mov x4, sp
     msr sp_el1, x4
     mov x4, #0x3c5              // EL1h, interrupts masked
@@ -483,7 +514,25 @@ mmu_enter_el1:
 2:
     ret
 
+.balign 2048
+mmu_el2_vectors:
+.rept 16
+.balign 128
+    b mmu_el2_halt
+.endr
+mmu_el2_halt:
+    msr daifset, #0xf
+    address x0, mmu_el2_stack_top
+    mov sp, x0
+    address x0, mmu_el2_message
+    bl puts
+1:
+    wfi
+    b 1b
+
 .section .rodata
+mmu_el2_message: .asciz "\r\nUnexpected exception at EL2. System halted.\r\n"
+mmu_off_banner: .asciz "Memory protection: unavailable on this machine (firmware page tables in use)\r\n"
 mmu_banner: .asciz "Memory protection: kernel code read-only, data no-execute, null pointers trapped\r\n"
 mmu_pa_bits: .byte 32, 36, 40, 42, 44, 48
 // UEFI memory type -> 0 not RAM, 1 RAM, 2 runtime services code.
@@ -496,3 +545,6 @@ mmu_pool_used: .skip 8
 mmu_root: .skip 8
 mmu_live: .skip 8
 mmu_ips: .skip 8
+.balign 16
+mmu_el2_stack: .skip 1024
+mmu_el2_stack_top:
