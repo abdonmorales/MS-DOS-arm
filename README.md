@@ -333,6 +333,7 @@ adapter. If the card cannot be restarted after leaving the firmware, the
 kernel prints `Boot disk did not restart after leaving firmware` and halts;
 delete `NATIVE.ON` to go back to firmware mode. **This has not been tested
 on a physical board.**
+First-boot checklist, serial wiring and debug checkpoints: [docs/PI3-BRINGUP.md](docs/PI3-BRINGUP.md).
 
 ## Native Apple Silicon boot
 
