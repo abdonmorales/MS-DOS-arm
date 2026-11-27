@@ -276,7 +276,7 @@ The build finds programs by name, so adding one takes no Makefile edits:
    line is the simplest), and run `make smoke`.
 
 A program that is only for testing should also be listed in `TEST_ONLY` in
-`tools/iso.py`, which keeps it off the live ISO.
+`tools/release.py`, which keeps it off the live ISO and the ROM builds.
 
 ## Writing an installable driver
 

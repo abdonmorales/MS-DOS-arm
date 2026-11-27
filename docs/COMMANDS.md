@@ -35,7 +35,7 @@ so under **Differences**. Some general points first:
 
 As in COMMAND, a pipe runs each stage in turn through temporary files named
 `%PIPEnn.$$$` in the root of the current drive. **Pipes therefore need a
-writable current drive.** On the live ISO, where A: is read-only, change to
+writable current drive.** On the live ISO and the ROM builds, where A: is read-only, change to
 the RAM disk first (`B:`) before using a pipe.
 
 ```
