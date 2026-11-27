@@ -451,6 +451,18 @@ COMMAND, `CONFIG.SYS`, every utility, drivers, NLS) are done, and QEMU
 image and its native drivers on a real board. Until then the image manifests
 keep `complete_msdos_port` false.
 
+## Documentation
+
+- [docs/COMMANDS.md](docs/COMMANDS.md): every COMMAND internal command and
+  utility, batch files, `CONFIG.SYS` and the drivers
+- [docs/BASIC.md](docs/BASIC.md): the ARM BASIC language
+- [docs/PROGRAMMING.md](docs/PROGRAMMING.md): writing native ARM64 programs
+  and drivers
+- [ABI.md](ABI.md): the DOS function reference for programs
+- [SECURITY.md](SECURITY.md): the security model and how to report a
+  vulnerability
+- [CHANGELOG.md](CHANGELOG.md): release history
+
 ## Origin and license
 
 ARM DOS is a fork of Microsoft's [MS-DOS source
