@@ -316,8 +316,7 @@ mirroring, directory growth, VFAT long names with `~N` short aliases, and a
 small write-through sector cache, so every update is on disk before a call
 returns. It runs over the kernel's virtio-blk or SDHCI driver in native mode
 and over UEFI Block I/O in firmware mode. If the boot volume is read-only or
-not FAT, the firmware's file system is used
-instead.
+not FAT, the firmware's file system is used instead.
 
 ## Raspberry Pi 3
 
