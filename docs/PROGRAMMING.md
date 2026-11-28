@@ -6,10 +6,10 @@ function pointer instead of `INT 21h`. Every DOS function, its registers
 and its limits are listed in [ABI.md](../ABI.md); this guide explains how
 the pieces fit together and does not repeat that table.
 
-Everything in the repository is written in assembly, and the build uses
-only GNU binutils and Python. There is no C runtime or C toolchain support
-for ARM DOS programs; nothing stops you from producing a compatible image
-with another toolchain, but none is provided or tested.
+The operating system and its utilities are written in assembly, and their
+build uses only GNU binutils and Python; this guide covers that route. To
+write programs in C instead, use the [C SDK](../sdk/README.md) (`make sdk`):
+`armdos.h`, a C start-up file and a small libc, tested by `make sdk-test`.
 
 ## Toolchain
 
@@ -70,7 +70,8 @@ Because the block is 64 KiB aligned, page offsets are preserved and
 and needs no relocations; `pe.py` writes an empty relocation block. Never
 store absolute addresses in `.data` at assembly time (`.quad label`),
 because they would not be relocated; compute addresses at run time with
-`adrp`/`add` (the `address` macro in `lib.inc`).
+`adrp`/`add` (the `address` macro in `lib.inc`). (The C SDK's `sdk/tools/elf2pe.py` does
+emit DIR64 fixups, from the linker's `--emit-relocs` records.)
 
 ## Entry, exit and the process descriptor
 
