@@ -76,12 +76,12 @@ class LoaderHarness:
     STUBS = ['dos_open', 'file_handle', 'get_file_info', 'dos_allocate', 'dos_read',
              'dos_close', 'dos_free', 'fat_memcpy', 'fat_zero_bytes', 'plat_sync_code']
 
-    def __init__(self, build, nm):
+    def __init__(self, build, nm, kernel=None):
         from unit import Kernel
         from unicorn import UC_HOOK_CODE, UC_HOOK_MEM_WRITE
         from unicorn.arm64_const import UC_ARM64_REG_X0, UC_ARM64_REG_LR, UC_ARM64_REG_PC
         self.X0, self.LR, self.PC = UC_ARM64_REG_X0, UC_ARM64_REG_LR, UC_ARM64_REG_PC
-        self.kernel = Kernel(build, nm)
+        self.kernel = kernel or Kernel(build, nm)
         self.cpu = self.kernel.cpu
         self.next_address = HEAP_BASE
         for name in self.STUBS:
@@ -432,6 +432,7 @@ class Session:
     def until(self, pattern, timeout, answer=None):
         """Wait for a bytes/regex pattern after the mark; return the text."""
         deadline = time.monotonic() + timeout
+        hard_deadline = time.monotonic() + max(60, timeout)
         regex = pattern if hasattr(pattern, 'search') else re.compile(re.escape(pattern))
         quiet_since = time.monotonic()
         size = len(self.output)
@@ -449,6 +450,8 @@ class Session:
                 return text, found
             if len(self.output) != size:
                 size, quiet_since = len(self.output), time.monotonic()
+                if answer:      # interactive: the timeout counts silence
+                    deadline = min(time.monotonic() + timeout, hard_deadline)
             elif answer and time.monotonic() - quiet_since > 0.4:
                 reply = answer(text)
                 if reply:
@@ -1028,9 +1031,9 @@ def run_cmd_cases(firmware, build, cases, timeout=6.0):
                         return index, 'hang', tail_text(session)
                     return index, 'stuck', tail_text(session)
             session.advance()
-            session.send(b'selftest\r')
+            session.send(b'cd \\\rselftest\r')
             try:
-                text, _ = session.until(PROMPT, 20)
+                text, _ = session.until(re.compile(rb'SELFTEST (PASS|FAIL)[^\n]*\n'), 20)
             except (Hang, Fault):
                 return len(cases) - 1, 'selftest', tail_text(session)
             if b'SELFTEST PASS' not in text:

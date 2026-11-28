@@ -18,7 +18,7 @@ pi-image: $(BUILD)/msdos-arm64-pi3.img
 
 FIRMWARE ?= /usr/share/qemu-efi-aarch64/QEMU_EFI.fd
 PI_FIRMWARE ?=
-unit: $(BUILD)/kernel.elf $(BUILD)/kernel.bin
+unit: $(BUILD)/kernel.elf $(BUILD)/kernel.bin $(BUILD)/NATIVE.EXE
 	$(PYTHON) tools/unit.py --build $(BUILD) --nm $(NM)
 
 smoke: image
