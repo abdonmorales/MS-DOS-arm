@@ -140,8 +140,9 @@ def main():
             s.command('', b'nothing was written')
             s.send('INSTALL', b'ENTER to cancel)? ')
             s.send('2', b'(Y/N)?')
-            s.send('n', b'nothing was written', enter=False)
-            s.until(b'A:\\>')
+            # Wait for the message and the prompt together: when both arrive in
+            # one read, a separate until(prompt) would wait for a second prompt.
+            s.send('n', b'nothing was written\nA:\\>', enter=False)
             text = s.command('INSTALL 2 /Y', b'ARM DOS is installed on disk 2', timeout=300)
             letter = re.search(rb'\(drive ([C-Z]):', text).group(1)
             s.command(f'dir {letter.decode()}:\\EFI\\BOOT', b'BOOTAA64 EFI')
