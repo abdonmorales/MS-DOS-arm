@@ -1,11 +1,14 @@
 #!/usr/bin/env python3
 """Boot the actual ARM64 disk and exercise native services via its console."""
 import argparse
+import datetime
+import json
 from pathlib import Path
 import os
 import re
 import selectors
 import shutil
+import socket
 import struct
 import subprocess
 import tempfile
@@ -33,6 +36,54 @@ def check_filesystem(image):
     print('PASS: fsck.fat clean after the session; mtools reads native long names.')
 
 
+# ---- RTC persistence helpers (workstream: DATE/TIME persistence) ----
+# QEMU starts with a known RTC; DATE/TIME must show it at boot. Later the test
+# sets a new date and time, resets the guest through QMP (the PL031 keeps its
+# RTCLR offset across a reset within one QEMU process) and checks that the
+# setting persisted.
+RTC_BASE = datetime.datetime(2031, 5, 17, 10, 20, 30)
+RTC_SET = datetime.datetime(2028, 2, 29, 8, 15, 0)
+RTC_TOLERANCE = 20          # seconds of boot and console time allowed
+
+
+def qmp(path, *commands):
+    """Send QMP commands on a fresh connection; return the replies."""
+    replies = []
+    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:
+        sock.settimeout(10)
+        sock.connect(str(path))
+        stream = sock.makefile('rwb')
+
+        def receive():
+            while True:
+                message = json.loads(stream.readline())
+                if 'event' not in message:
+                    return message
+        receive()           # greeting
+        for name, arguments in (('qmp_capabilities', None),) + commands:
+            request = {'execute': name}
+            if arguments:
+                request['arguments'] = arguments
+            stream.write(json.dumps(request).encode() + b'\n')
+            stream.flush()
+            reply = receive()
+            if 'error' in reply:
+                raise RuntimeError(f'QMP {name}: {reply["error"]}')
+            replies.append(reply)
+    return replies
+
+
+def shown_clock(date_text, time_text):
+    """Parse DATE and TIME console output into a datetime."""
+    date = re.search(rb'Current date is \w\w\w (\d\d)-(\d\d)-(\d{4})', date_text)
+    clock = re.search(rb'Current time is +(\d?\d):(\d\d):(\d\d)\.\d\d', time_text)
+    if not date or not clock:
+        raise RuntimeError('DATE/TIME output not recognised')
+    month, day, year = (int(v) for v in date.groups())
+    return datetime.datetime(year, month, day, *(int(v) for v in clock.groups()))
+# ---- end RTC persistence helpers ----
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('image', type=Path)
@@ -50,6 +101,7 @@ def main():
     with tempfile.TemporaryDirectory(prefix='arm64-smoke-') as directory:
         image = Path(directory) / 'test.img'
         shutil.copyfile(args.image, image)
+        qmp_socket = Path(directory) / 'qmp.sock'
         machine = 'virt' if args.mode == 'native' else 'virt,acpi=off'
         if args.el2:
             machine += ',virtualization=on'
@@ -59,7 +111,11 @@ def main():
                '-device', 'virtio-blk-pci,drive=dos', '-nographic', '-monitor',
                'none', '-net', 'none', '-no-reboot',
                # EDK2 otherwise waits out a hidden boot-menu timeout (~5 s).
-               '-boot', 'menu=on,splash-time=0']
+               '-boot', 'menu=on,splash-time=0',
+               # RTC persistence checks: known start time, QMP for a reset.
+               '-rtc', 'base=' + RTC_BASE.strftime('%Y-%m-%dT%H:%M:%S'),
+               '-qmp', f'unix:{qmp_socket},server=on,wait=off']
+        started = time.monotonic()
         process = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                    stderr=subprocess.STDOUT)
         selector = selectors.DefaultSelector()
@@ -112,6 +168,31 @@ def main():
                         else b'Platform: UEFI firmware services')
             if platform not in text:
                 raise RuntimeError('Unexpected platform mode for ' + args.mode)
+            # ---- RTC check 1: the boot clock comes from the RTC ----
+            def read_clock(prompt=b'A:\\>'):
+                nonlocal checks
+                process.stdin.write(b'date\r')
+                process.stdin.flush()
+                date_text = until(b'(mm-dd-yy): ').replace(b'\r', b'')
+                process.stdin.write(b'\r')
+                process.stdin.flush()
+                until(prompt)
+                process.stdin.write(b'time\r')
+                process.stdin.flush()
+                time_text = until(b'Enter new time: ').replace(b'\r', b'')
+                process.stdin.write(b'\r')
+                process.stdin.flush()
+                until(prompt)
+                checks += 1
+                return shown_clock(date_text, time_text)
+
+            def expect_clock(shown, base, since, what):
+                expected = base + datetime.timedelta(seconds=time.monotonic() - since)
+                if abs((shown - expected).total_seconds()) > RTC_TOLERANCE:
+                    raise RuntimeError(f'{what}: DOS shows {shown}, RTC says {expected}')
+
+            expect_clock(read_clock(), RTC_BASE, started, 'clock at boot')
+            # ---- end RTC check 1 ----
             command('ver', b'ARM DOS Version 4.00')
             # % expansion is for batch files: EL.BAT reports ERRORLEVEL.
             command('echo @echo code:%ERRORLEVEL%>EL.BAT')
@@ -524,6 +605,19 @@ def main():
             if b'?[' in output:
                 raise RuntimeError('an ANSI sequence reached the UEFI console')
             checks += 1
+            # ---- RTC check 2: DATE/TIME persist across a guest reset ----
+            command(RTC_SET.strftime('date %m-%d-%Y'))
+            command(RTC_SET.strftime('time %H:%M:%S'))
+            set_at = time.monotonic()
+            # -no-reboot turns any reset into an exit; allow this one.
+            qmp(qmp_socket, ('set-action', {'reboot': 'reset'}), ('system_reset', None))
+            text = until(b'A:\\>')
+            if b'SELFTEST PASS' not in text:
+                raise RuntimeError('second boot did not complete')
+            qmp(qmp_socket, ('set-action', {'reboot': 'shutdown'}))
+            expect_clock(read_clock(), RTC_SET, set_at, 'clock after reset')
+            checks += 1
+            # ---- end RTC check 2 ----
             print(f'PASS: ARM64 UEFI disk boot, native API self-tests, {checks} console checks.')
         finally:
             selector.close()
