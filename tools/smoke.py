@@ -1,11 +1,14 @@
 #!/usr/bin/env python3
 """Boot the actual ARM64 disk and exercise native services via its console."""
 import argparse
+import datetime
+import json
 from pathlib import Path
 import os
 import re
 import selectors
 import shutil
+import socket
 import struct
 import subprocess
 import tempfile
@@ -33,6 +36,309 @@ def check_filesystem(image):
     print('PASS: fsck.fat clean after the session; mtools reads native long names.')
 
 
+# ---------------------------------------------------------------------------
+# Multi-disk checks (native block layer, src/blk.S): a second session boots
+# with three more virtio-blk disks: an MBR disk with two FAT partitions, a
+# GPT disk with one Basic Data FAT partition, and a blank disk for INSTALL.
+MIB = 1 << 20
+
+
+def fat_partition(path, sectors, label, files, fat=None):
+    """A FAT file system image of `sectors` 512-byte sectors holding files."""
+    path.unlink(missing_ok=True)
+    cmd = ['mkfs.fat', '-C', '-n', label, '-i', '12345678']
+    if fat:
+        cmd += ['-F', str(fat)]
+    subprocess.run(cmd + [str(path), str(sectors // 2)], check=True, capture_output=True)
+    env = dict(os.environ, MTOOLS_SKIP_CHECK='1')
+    for name, data in files.items():
+        source = path.with_name('src-' + name)
+        source.write_bytes(data)
+        subprocess.run(['mcopy', '-i', str(path), str(source), '::/' + name],
+                       check=True, env=env)
+    return path.read_bytes()
+
+
+def mbr_entry(kind, start, sectors):
+    return struct.pack('<B3sB3sII', 0, b'\xfe\xff\xff', kind, b'\xfe\xff\xff', start, sectors)
+
+
+def make_mbr_disk(path, size, partitions):
+    """partitions: (type, start sector, file system image bytes)."""
+    disk = bytearray(size)
+    table = b''.join(mbr_entry(kind, start, len(data) // 512) for kind, start, data in partitions)
+    disk[446:446 + len(table)] = table
+    disk[510:512] = b'\x55\xaa'
+    for _, start, data in partitions:
+        disk[start * 512:start * 512 + len(data)] = data
+    path.write_bytes(disk)
+
+
+def make_gpt_disk(path, size, start, data):
+    import uuid
+    import zlib
+    sectors = size // 512
+    disk = bytearray(size)
+    disk[446:462] = mbr_entry(0xee, 1, min(sectors - 1, 0xffffffff))
+    disk[510:512] = b'\x55\xaa'
+    entry = bytearray(128)
+    entry[0:16] = uuid.UUID('ebd0a0a2-b9e5-4433-87c0-68b6b72699c7').bytes_le
+    entry[16:32] = uuid.UUID('6e1c5b2a-0d6f-4c1e-9a3b-2f1d4c5b6a7e').bytes_le
+    struct.pack_into('<QQ', entry, 32, start, start + len(data) // 512 - 1)
+    entry[56:56 + 8] = 'ARMDOS'.encode('utf-16-le')[:8]
+    entries = bytes(entry) + bytes(127 * 128)
+    disk[1024:1024 + len(entries)] = entries
+    header = bytearray(92)
+    struct.pack_into('<8sIIIIQQQQ16sQIII', header, 0, b'EFI PART', 0x10000, 92, 0, 0,
+                     1, sectors - 1, 34, sectors - 34,
+                     uuid.UUID('11111111-2222-3333-4444-555555555555').bytes_le,
+                     2, 128, 128, zlib.crc32(entries))
+    struct.pack_into('<I', header, 16, zlib.crc32(header))
+    disk[512:512 + 92] = header
+    disk[start * 512:start * 512 + len(data)] = data
+    path.write_bytes(disk)
+
+
+def check_partition(image, start, sectors, label, files=()):
+    """fsck.fat a partition of a disk image and read files back with mtools."""
+    part = image.with_name(image.stem + f'-{start}.part')
+    with image.open('rb') as disk:
+        disk.seek(start * 512)
+        part.write_bytes(disk.read(sectors * 512))
+    fsck = subprocess.run(['fsck.fat', '-n', str(part)], capture_output=True, text=True)
+    if fsck.returncode:
+        raise RuntimeError(f'fsck.fat {label}:\n' + fsck.stdout + fsck.stderr)
+    env = dict(os.environ, MTOOLS_SKIP_CHECK='1')
+    for name, data in files:
+        got = subprocess.run(['mtype', '-i', str(part), '::/' + name],
+                             capture_output=True, env=env)
+        if got.returncode or got.stdout != data:
+            raise RuntimeError(f'{label}: {name} has the wrong contents')
+
+
+def make_ebr_chain(disk, base, logicals):
+    """Logical drives (type, start relative to base, image) in an extended
+    partition at sector `base`; each EBR sits one MiB before its drive."""
+    for index, (kind, start, data) in enumerate(logicals):
+        ebr = start - 2048
+        entries = mbr_entry(kind, 2048, len(data) // 512)
+        if index + 1 < len(logicals):
+            nxt = logicals[index + 1][1] - 2048
+            entries += mbr_entry(0x05, nxt, len(logicals[index + 1][2]) // 512 + 2048)
+        offset = (base + ebr) * 512
+        disk[offset + 446:offset + 446 + len(entries)] = entries
+        disk[offset + 510:offset + 512] = b'\x55\xaa'
+        disk[(base + start) * 512:(base + start) * 512 + len(data)] = data
+
+
+def multidisk_session(args, directory, image):
+    directory = Path(directory)
+    hello = b'hello from disk one\r\n'
+    second = b'second partition\r\n'
+    # The boot disk grows by 16 MiB holding a second partition (type 0Eh).
+    boot = bytearray(image.read_bytes())
+    extra = fat_partition(directory / 'b2.fs', 32768 - 2048, 'BOOTP2', {'BOOT2.TXT': b'boot two\r\n'}, 16)
+    boot_start = len(boot) // 512 + 2048
+    boot += bytes(16 * MIB)
+    boot[462:478] = mbr_entry(0x0e, boot_start, len(extra) // 512)
+    boot[boot_start * 512:boot_start * 512 + len(extra)] = extra
+    image = directory / 'boot2.img'
+    image.write_bytes(boot)
+    disk1 = directory / 'disk1.img'
+    make_mbr_disk(disk1, 64 * MIB, [
+        (0x06, 2048, fat_partition(directory / 'p1.fs', 32768, 'DISK1P1', {'HELLO.TXT': hello}, 16)),
+        (0x01, 2048 + 32768, fat_partition(directory / 'p2.fs', 8192, 'DISK1P2', {'P2.TXT': second}, 12)),
+    ])
+    ext_base = 2048 + 32768 + 8192
+    logical = fat_partition(directory / 'l5.fs', 8192, 'LOGICAL5', {'L5.TXT': b'logical\r\n'}, 12)
+    disk = bytearray(disk1.read_bytes())
+    disk[478:494] = mbr_entry(0x0f, ext_base, 64 * MIB // 512 - ext_base)
+    make_ebr_chain(disk, ext_base, [(0x0e, 2048, logical)])
+    disk1.write_bytes(disk)
+    disk2 = directory / 'disk2.img'
+    make_gpt_disk(disk2, 24 * MIB, 2048,
+                  fat_partition(directory / 'g1.fs', 20480, 'GPTDISK', {'GPT.TXT': b'gpt ok\r\n'}, 12))
+    blank = directory / 'blank.img'
+    with blank.open('wb') as f:
+        f.truncate(64 * MIB)
+    # A corrupt table must mount nothing and not hang: entries off the disk,
+    # an overflowing length, an EBR chain that links to itself.
+    corrupt = directory / 'corrupt.img'
+    bad = bytearray(8 * MIB)
+    bad[446:510] = (mbr_entry(0x06, 0xfffffff0, 0x100) + mbr_entry(0x0c, 2048, 0xffffffff) +
+                    mbr_entry(0x05, 4096, 8192) + mbr_entry(0x0b, 8192, 0))
+    bad[510:512] = b'\x55\xaa'
+    ebr = 4096 * 512
+    bad[ebr + 446:ebr + 478] = mbr_entry(0x06, 0xffffff00, 0x1000) + mbr_entry(0x05, 0, 8192)
+    bad[ebr + 510:ebr + 512] = b'\x55\xaa'
+    corrupt.write_bytes(bad)
+    # A GPT whose entry array lies past the end of the disk, with an entry
+    # count far over the 128 read.
+    badgpt = directory / 'badgpt.img'
+    bad = bytearray(8 * MIB)
+    bad[446:462] = mbr_entry(0xee, 1, 8 * MIB // 512 - 1)
+    bad[510:512] = b'\x55\xaa'
+    struct.pack_into('<8sIIIIQQQQ16sQIII', bad, 512, b'EFI PART', 0x10000, 92, 0, 0,
+                     1, 16383, 34, 16000, bytes(16), 16380, 0xffffffff, 128, 0)
+    badgpt.write_bytes(bad)
+    drives = []
+    for index, path in enumerate([image, disk1, disk2, blank, corrupt, badgpt]):
+        drives += ['-drive', f'file={path},format=raw,if=none,id=d{index}',
+                   '-device', f'virtio-blk-pci,drive=d{index}']
+    cmd = [args.qemu, '-machine', 'virt', '-cpu', 'cortex-a72', '-m', '256',
+           '-bios', str(args.firmware), *drives, '-nographic', '-monitor', 'none',
+           '-net', 'none', '-no-reboot', '-boot', 'menu=on,splash-time=0']
+    process = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                               stderr=subprocess.STDOUT)
+    output = bytearray()
+    selector = selectors.DefaultSelector()
+    selector.register(process.stdout, selectors.EVENT_READ)
+
+    def until(expected):
+        deadline = time.monotonic() + args.timeout
+        mark = len(output)
+        while time.monotonic() < deadline:
+            for key, _ in selector.select(timeout=0.1):
+                chunk = os.read(key.fileobj.fileno(), 8192)
+                if not chunk:
+                    raise RuntimeError('QEMU exited (multi-disk session)')
+                output.extend(chunk)
+            cleaned = re.sub(rb'\x1b\[[0-9;=?]*[A-Za-z]', b'', output[mark:])
+            if expected in cleaned:
+                return cleaned.replace(b'\r', b'')
+            if b'CPU exception' in cleaned or b'Synchronous Exception' in cleaned:
+                raise RuntimeError('Fault in the multi-disk session: ' +
+                                   output[-400:].decode(errors='replace'))
+        raise RuntimeError('Timed out waiting for ' + repr(expected) + ' (multi-disk session)')
+
+    checks = 0
+
+    def command(line, expected=b'', prompt=b'A:\\>'):
+        nonlocal checks
+        process.stdin.write(line.encode() + b'\r')
+        process.stdin.flush()
+        text = until(prompt)
+        if expected not in text:
+            raise RuntimeError('Incorrect output for ' + line + ' (multi-disk session)')
+        checks += 1
+        return text
+
+    try:
+        text = until(b'A:\\>')
+        for expected in [b'Drive C: is disk 0, partition 2', b'Drive D: is disk 1, partition 1',
+                         b'Drive E: is disk 1, partition 2', b'Drive F: is disk 1, partition 5',
+                         b'Drive G: is disk 2, partition 1']:
+            if expected not in text:
+                raise RuntimeError('Not mounted at boot: ' + expected.decode())
+        if b'is disk 4' in text or b'is disk 5' in text:
+            raise RuntimeError('A corrupt partition table was mounted')
+        checks += 1
+        command('type c:\\BOOT2.TXT', b'boot two')
+        command('dir d:', b'HELLO    TXT')
+        command('vol e:', b'Volume in drive E is DISK1P2')
+        command('type e:\\P2.TXT', second.replace(b'\r', b''))
+        command('type f:\\L5.TXT', b'logical')
+        command('dir g:', b'GPT      TXT')
+        command('copy d:\\HELLO.TXT g:\\', b'1 File(s) copied')
+        command('type g:\\HELLO.TXT', b'hello from disk one')
+        command('md d:\\NEWDIR')
+        command('copy ARMTEST.TXT d:\\NEWDIR\\X.TXT', b'1 File(s) copied')
+        command('copy g:\\GPT.TXT e:\\', b'1 File(s) copied')
+        command('copy f:\\L5.TXT c:\\', b'1 File(s) copied')
+        command('d:', prompt=b'D:\\>')
+        command('dir', b'NEWDIR', prompt=b'D:\\>')
+        command('a:')
+        for drive in 'cd':
+            text = command(f'chkdsk {drive}:', b'bytes total disk space')
+            if b'rror' in text or b'lost' in text:
+                raise RuntimeError(f'CHKDSK {drive.upper()}: found problems')
+        command('chkdsk g:', b'bytes total disk space')
+        # INSTALL natively: disk 3 is the blank one (E0h offers disks 1-3).
+        text = command('install 3 /y', b'ARM DOS is installed on disk 3')
+        found = re.search(rb'Formatting drive ([A-Z]):', text)
+        if not found:
+            raise RuntimeError('INSTALL did not name the new drive')
+        letter = found.group(1).decode()
+        command(f'dir {letter}:\\EFI\\BOOT', b'BOOTAA64 EFI')
+        command(f'type {letter}:\\ARMTEST.TXT', b'ARM64 FAT read')
+        # Disk 1's volumes are drives C: and D:: INSTALL must not wipe it.
+        command('install 1 /y', b'part of it is already a drive')
+    finally:
+        selector.close()
+        process.terminate()
+        try:
+            process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait()
+        if args.log:
+            args.log.with_name(args.log.stem + '-disks.log').write_bytes(output)
+    check_partition(image, boot_start, len(extra) // 512, 'boot disk partition 2',
+                    [('L5.TXT', b'logical\r\n')])
+    check_partition(disk1, ext_base + 2048, 8192, 'disk 1 logical drive', [('L5.TXT', b'logical\r\n')])
+    check_partition(disk1, 2048, 32768, 'disk 1 partition 1',
+                    [('HELLO.TXT', hello), ('NEWDIR/X.TXT', b'ARM64 FAT read\r\n')])
+    check_partition(disk1, 2048 + 32768, 8192, 'disk 1 partition 2', [('GPT.TXT', b'gpt ok\r\n')])
+    check_partition(disk2, 2048, 20480, 'GPT disk', [('HELLO.TXT', hello)])
+    mbr = blank.read_bytes()[:512]
+    kind, start, sectors = mbr[446 + 4], *struct.unpack_from('<II', mbr, 446 + 8)
+    if mbr[510:512] != b'\x55\xaa' or kind != 0xef:
+        raise RuntimeError('INSTALL wrote no MBR partition')
+    check_partition(blank, start, sectors, 'installed disk',
+                    [('ARMTEST.TXT', b'ARM64 FAT read\r\n')])
+    print(f'PASS: multi-disk session (C:-G: on the boot disk and two more disks, MBR, EBR and GPT, native INSTALL '
+          f'to drive {letter}:), {checks} checks; fsck.fat clean on every volume.')
+# End of the multi-disk checks.
+# ---------------------------------------------------------------------------
+
+# ---- RTC persistence helpers (workstream: DATE/TIME persistence) ----
+# QEMU starts with a known RTC; DATE/TIME must show it at boot. Later the test
+# sets a new date and time, resets the guest through QMP (the PL031 keeps its
+# RTCLR offset across a reset within one QEMU process) and checks that the
+# setting persisted.
+RTC_BASE = datetime.datetime(2031, 5, 17, 10, 20, 30)
+RTC_SET = datetime.datetime(2028, 2, 29, 8, 15, 0)
+RTC_TOLERANCE = 20          # seconds of boot and console time allowed
+
+
+def qmp(path, *commands):
+    """Send QMP commands on a fresh connection; return the replies."""
+    replies = []
+    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:
+        sock.settimeout(10)
+        sock.connect(str(path))
+        stream = sock.makefile('rwb')
+
+        def receive():
+            while True:
+                message = json.loads(stream.readline())
+                if 'event' not in message:
+                    return message
+        receive()           # greeting
+        for name, arguments in (('qmp_capabilities', None),) + commands:
+            request = {'execute': name}
+            if arguments:
+                request['arguments'] = arguments
+            stream.write(json.dumps(request).encode() + b'\n')
+            stream.flush()
+            reply = receive()
+            if 'error' in reply:
+                raise RuntimeError(f'QMP {name}: {reply["error"]}')
+            replies.append(reply)
+    return replies
+
+
+def shown_clock(date_text, time_text):
+    """Parse DATE and TIME console output into a datetime."""
+    date = re.search(rb'Current date is \w\w\w (\d\d)-(\d\d)-(\d{4})', date_text)
+    clock = re.search(rb'Current time is +(\d?\d):(\d\d):(\d\d)\.\d\d', time_text)
+    if not date or not clock:
+        raise RuntimeError('DATE/TIME output not recognised')
+    month, day, year = (int(v) for v in date.groups())
+    return datetime.datetime(year, month, day, *(int(v) for v in clock.groups()))
+# ---- end RTC persistence helpers ----
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('image', type=Path)
@@ -45,11 +351,14 @@ def main():
     parser.add_argument('--el2', action='store_true',
                         help='start the firmware (and so the kernel) at EL2; '
                              'native mode must drop to EL1 for its own page tables')
+    parser.add_argument('--no-disks', action='store_true',
+                        help='skip the multi-disk session (native mode)')
     args = parser.parse_args()
     output = bytearray()
     with tempfile.TemporaryDirectory(prefix='arm64-smoke-') as directory:
         image = Path(directory) / 'test.img'
         shutil.copyfile(args.image, image)
+        qmp_socket = Path(directory) / 'qmp.sock'
         machine = 'virt' if args.mode == 'native' else 'virt,acpi=off'
         if args.el2:
             machine += ',virtualization=on'
@@ -59,7 +368,11 @@ def main():
                '-device', 'virtio-blk-pci,drive=dos', '-nographic', '-monitor',
                'none', '-net', 'none', '-no-reboot',
                # EDK2 otherwise waits out a hidden boot-menu timeout (~5 s).
-               '-boot', 'menu=on,splash-time=0']
+               '-boot', 'menu=on,splash-time=0',
+               # RTC persistence checks: known start time, QMP for a reset.
+               '-rtc', 'base=' + RTC_BASE.strftime('%Y-%m-%dT%H:%M:%S'),
+               '-qmp', f'unix:{qmp_socket},server=on,wait=off']
+        started = time.monotonic()
         process = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                    stderr=subprocess.STDOUT)
         selector = selectors.DefaultSelector()
@@ -112,6 +425,31 @@ def main():
                         else b'Platform: UEFI firmware services')
             if platform not in text:
                 raise RuntimeError('Unexpected platform mode for ' + args.mode)
+            # ---- RTC check 1: the boot clock comes from the RTC ----
+            def read_clock(prompt=b'A:\\>'):
+                nonlocal checks
+                process.stdin.write(b'date\r')
+                process.stdin.flush()
+                date_text = until(b'(mm-dd-yy): ').replace(b'\r', b'')
+                process.stdin.write(b'\r')
+                process.stdin.flush()
+                until(prompt)
+                process.stdin.write(b'time\r')
+                process.stdin.flush()
+                time_text = until(b'Enter new time: ').replace(b'\r', b'')
+                process.stdin.write(b'\r')
+                process.stdin.flush()
+                until(prompt)
+                checks += 1
+                return shown_clock(date_text, time_text)
+
+            def expect_clock(shown, base, since, what):
+                expected = base + datetime.timedelta(seconds=time.monotonic() - since)
+                if abs((shown - expected).total_seconds()) > RTC_TOLERANCE:
+                    raise RuntimeError(f'{what}: DOS shows {shown}, RTC says {expected}')
+
+            expect_clock(read_clock(), RTC_BASE, started, 'clock at boot')
+            # ---- end RTC check 1 ----
             command('ver', b'ARM DOS Version 4.00')
             # % expansion is for batch files: EL.BAT reports ERRORLEVEL.
             command('echo @echo code:%ERRORLEVEL%>EL.BAT')
@@ -526,6 +864,19 @@ def main():
             if b'?[' in output:
                 raise RuntimeError('an ANSI sequence reached the UEFI console')
             checks += 1
+            # ---- RTC check 2: DATE/TIME persist across a guest reset ----
+            command(RTC_SET.strftime('date %m-%d-%Y'))
+            command(RTC_SET.strftime('time %H:%M:%S'))
+            set_at = time.monotonic()
+            # -no-reboot turns any reset into an exit; allow this one.
+            qmp(qmp_socket, ('set-action', {'reboot': 'reset'}), ('system_reset', None))
+            text = until(b'A:\\>')
+            if b'SELFTEST PASS' not in text:
+                raise RuntimeError('second boot did not complete')
+            qmp(qmp_socket, ('set-action', {'reboot': 'shutdown'}))
+            expect_clock(read_clock(), RTC_SET, set_at, 'clock after reset')
+            checks += 1
+            # ---- end RTC check 2 ----
             print(f'PASS: ARM64 UEFI disk boot, native API self-tests, {checks} console checks.')
         finally:
             selector.close()
@@ -538,6 +889,8 @@ def main():
             if args.log:
                 args.log.write_bytes(output)
         check_filesystem(image)
+        if args.mode == 'native' and not args.no_disks:
+            multidisk_session(args, directory, image)
 
 
 if __name__ == '__main__':

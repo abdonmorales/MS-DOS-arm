@@ -363,6 +363,9 @@ drive_count:
 // x0 = rw entry, x1 = sector size, x2 = total sectors. Returns x0 = the
 // drive (0-based) with x1 = 0, or x1 = 1 when no letter or volume is left.
 drive_add_block:
+    mov x3, #1
+// Same, from drive x3 (0-based) upward: fixed-disk volumes start at C:.
+drive_add_block_from:
     frame
     stp x19, x20, [sp, #-16]!
     str x21, [sp, #-16]!
@@ -370,7 +373,9 @@ drive_add_block:
     mov x20, x1
     mov x21, x2
     address x9, drive_table
-    mov x10, #1
+    mov x10, x3
+    cmp x10, #DRIVES
+    b.hs 8f
 1:
     mov x11, #DRV_SIZE
     madd x11, x10, x11, x9
@@ -413,8 +418,12 @@ drive_add_block:
 
 // Returns x0 = the first free drive letter (0-based), or 26.
 drive_next_free:
-    address x9, drive_table
     mov x0, #1
+// Same, from drive x0 upward.
+drive_next_free_from:
+    address x9, drive_table
+    cmp x0, #DRIVES
+    b.hs 2f
 1:
     mov x10, #DRV_SIZE
     madd x10, x0, x10, x9

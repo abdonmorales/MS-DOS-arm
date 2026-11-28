@@ -510,6 +510,8 @@ clock_selftest:
     frame
     stp x19, x20, [sp, #-16]!
     sub sp, sp, #32
+    mov x0, #1                  // test dates must not reach the RTC
+    stv x0, clock_no_persist, x1
     address x19, clock_epoch
     ldp x0, x1, [x19]
     stp x0, x1, [sp]
@@ -584,6 +586,7 @@ clock_test_return:
     stp x0, x1, [x19]
     ldr x0, [sp, #16]
     str x0, [x19, #16]
+    stv xzr, clock_no_persist, x1
     mov x0, x20
     add sp, sp, #32
     ldp x19, x20, [sp], #16

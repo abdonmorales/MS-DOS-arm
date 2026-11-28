@@ -32,6 +32,9 @@
 .section .text
 .global disk_services
 disk_services:
+    adrp x9, platform_native    // native kernel: the disk table (blk.S)
+    ldr x9, [x9, :lo12:platform_native]
+    cbnz x9, blk_services
     cmp x0, #0
     b.eq disk_find
     cmp x0, #6
