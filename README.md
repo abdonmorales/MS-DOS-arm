@@ -84,6 +84,7 @@ speed. This was tested on an Apple M3 Pro (macOS 27.2, Homebrew QEMU 11.1).
 | `--accel auto\|tcg\|hvf\|kvm` | `auto` (the default) picks `hvf` with the host CPU on Apple Silicon macOS, `kvm` on ARM64 Linux with `/dev/kvm`, else `tcg` with a Cortex-A72 |
 | `--memory MiB` | Guest RAM (default 256) |
 | `--qemu PATH` | The `qemu-system-aarch64` to run |
+| `--screen` | Also show the console on a screen in a QEMU window (`ramfb`); the serial console stays in the terminal |
 | `--print` | Print the QEMU command instead of running it |
 
 Some examples:
@@ -190,6 +191,7 @@ state and verified package hashes, and `source tools/env.sh` puts them on
 | `make smoke-firmware` | The same checks with ACPI hidden, so the kernel stays in firmware mode |
 | `make fat-test` | Stress-tests `src/fat.S` on FAT12/16/32 images under `qemu-aarch64` (needs `gcc-aarch64-linux-gnu`, `libc6-dev-arm64-cross`, `qemu-user`) |
 | `make pi-test` | The Pi 3 SD-card and UART drivers, bare metal on QEMU `raspi3b` |
+| `make fb-test` | The framebuffer console: QEMU `virt` with `ramfb` and the Pi mailbox framebuffer on `raspi3b`, screens read back with `screendump` and decoded against the font |
 | `make iso-test` | Live boot as CD and USB stick, `INSTALL` to blank disks, a boot of the installed disk, and a reproducible ISO |
 | `make validate` | Both disk images: FAT checks, payload comparison and a QEMU boot; writes `build/validation.json` |
 | `make rom-test` | Boots the ROM builds in QEMU `virt`: network boot under EDK2 (ACPI and device tree), U-Boot from NOR flash, the Pi build in firmware mode; checks that A: refuses every write, and the Pi images' contents (needs `u-boot-qemu`, `u-boot-tools`) |
@@ -432,6 +434,7 @@ adapter. If the card cannot be restarted after leaving the firmware, the
 kernel prints `Boot disk did not restart after leaving firmware` and halts;
 delete `NATIVE.ON` to go back to firmware mode. **This has not been tested
 on a physical board.**
+First-boot checklist, serial wiring and debug checkpoints: [docs/PI3-BRINGUP.md](docs/PI3-BRINGUP.md).
 
 ## Native Apple Silicon boot
 

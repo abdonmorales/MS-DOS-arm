@@ -10,7 +10,7 @@ SOURCES := $(wildcard src/*.S)
 FIXTURES := $(wildcard fixtures/*)
 
 .SECONDARY:
-.PHONY: all payloads image pi-image unit smoke smoke-firmware smoke-el2 check validate snapshot fat-test pi-test iso iso-test rom-generic rom-pi rom-test clean
+.PHONY: all payloads image pi-image unit smoke smoke-firmware smoke-el2 check validate snapshot fat-test pi-test fb-test iso iso-test rom-generic rom-pi rom-test clean
 all: $(BUILD)/BOOTAA64.EFI payloads
 image: $(BUILD)/msdos-arm64.img
 iso: $(BUILD)/armdos.iso
@@ -57,7 +57,7 @@ $(BUILD):
 	mkdir -p $@
 
 $(BUILD)/kernel.o: $(SOURCES) | $(BUILD)
-	$(AS) -march=armv8-a -g -o $@ src/kernel.S
+	$(AS) -march=armv8-a -g $(KERNEL_ASFLAGS) -o $@ src/kernel.S
 
 $(BUILD)/kernel.elf: $(BUILD)/kernel.o link.ld
 	$(LD) -T link.ld --no-undefined -o $@ $<
@@ -82,10 +82,20 @@ payloads: $(PAYLOADS)
 pi-test: $(BUILD)/sdtest.bin $(BUILD)/msdos-arm64.img
 	$(PYTHON) tools/pi_test.py $(BUILD)/sdtest.bin $(BUILD)/msdos-arm64.img
 
-$(BUILD)/sdtest.bin: tests/pi/sdtest.S tests/pi/link.ld src/sdhci.S | $(BUILD)
+$(BUILD)/sdtest.bin: tests/pi/sdtest.S tests/pi/link.ld src/sdhci.S src/dbguart.S | $(BUILD)
 	$(AS) -march=armv8-a -o $(BUILD)/sdtest.o $<
 	$(LD) -T tests/pi/link.ld --no-warn-rwx-segments -o $(BUILD)/sdtest.elf $(BUILD)/sdtest.o
 	$(OBJCOPY) -O binary $(BUILD)/sdtest.elf $@
+
+# The framebuffer console: QEMU virt with ramfb (EDK2 GOP) and the Pi
+# mailbox framebuffer on raspi3b, both read back with screendump.
+fb-test: $(BUILD)/fbtest.bin $(BUILD)/msdos-arm64.img
+	$(PYTHON) tools/fb_test.py $(BUILD)/msdos-arm64.img --firmware $(FIRMWARE) --pi-kernel $(BUILD)/fbtest.bin
+
+$(BUILD)/fbtest.bin: tests/pi/fbtest.S tests/pi/link.ld src/fbcon.S src/font8x16.S | $(BUILD)
+	$(AS) -march=armv8-a -o $(BUILD)/fbtest.o $<
+	$(LD) -T tests/pi/link.ld --no-warn-rwx-segments -o $(BUILD)/fbtest.elf $(BUILD)/fbtest.o
+	$(OBJCOPY) -O binary $(BUILD)/fbtest.elf $@
 
 # COUNTRY.SYS is data: the DOS 4.0 file assembled from the data segment of
 # MKCNTRY.ASM (data/country).
@@ -121,7 +131,23 @@ iso-test: $(BUILD)/armdos.iso
 	$(PYTHON) tools/iso_test.py $< --firmware $(FIRMWARE) --image $(BUILD)/msdos-arm64.img
 
 $(BUILD)/msdos-arm64-pi3.img: $(BUILD)/BOOTAA64.EFI $(PAYLOADS) $(FIXTURES) tools/pi_image.py
-	$(PYTHON) tools/pi_image.py $< $@ --replace-generated $(if $(PI_FIRMWARE),--firmware "$(PI_FIRMWARE)")
+	$(PYTHON) tools/pi_image.py $< $@ --replace-generated $(PI_IMAGE_FLAGS) $(if $(PI_FIRMWARE),--firmware "$(PI_FIRMWARE)")
+
+# Boot checkpoints for hardware bring-up (src/debug.S, docs/PI3-BRINGUP.md).
+# ARMDOS_DEBUG=1 prints them from the first instruction; use its own BUILD
+# directory (pi-image-debug does), since make does not track the flag.
+KERNEL_ASFLAGS ?=
+ifneq ($(ARMDOS_DEBUG),)
+override KERNEL_ASFLAGS += --defsym ARMDOS_DEBUG=1
+endif
+.PHONY: pi-image-debug
+pi-image-debug: | $(BUILD)
+	$(MAKE) BUILD=$(BUILD)/pi-debug ARMDOS_DEBUG=1 PI_IMAGE_FLAGS=--debug \
+		PI_FIRMWARE="$(if $(PI_FIRMWARE),$(PI_FIRMWARE),$(abspath $(BUILD))/RPi3_UEFI_Firmware_v1.53.1.zip)" pi-image
+# \DEBUG.ON on the QEMU virt image: every checkpoint appears, in order.
+.PHONY: debug-test
+debug-test: image
+	$(PYTHON) tools/debug_test.py $(BUILD)/msdos-arm64.img --firmware $(FIRMWARE) --log $(BUILD)/debug-test.log
 
 # ROM builds: one EFI application, ARMDOS.EFI, that carries a read-only
 # drive A: (tools/romdisk.py) and needs no disk. rom-generic packages it for

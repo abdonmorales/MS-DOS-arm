@@ -67,6 +67,21 @@ jobs:
           path: build/*.log
           if-no-files-found: ignore
 
+  debug-test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+      - run: make debug-test FIRMWARE="$FIRMWARE"
+      - name: Upload build logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: logs-debug-test
+          path: build/*.log
+          if-no-files-found: ignore
+
   smoke-firmware:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
@@ -106,6 +121,8 @@ jobs:
         with:
           pi-firmware: 'true'
       - run: make pi-test
+      # Framebuffer console: QEMU virt ramfb and the Pi mailbox screen.
+      - run: make fb-test FIRMWARE="$FIRMWARE"
       # The Pi 3 SD-card image (pinned UEFI firmware, cached) must also build.
       - run: make pi-image
       - name: Upload build logs

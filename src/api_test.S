@@ -37,6 +37,30 @@ api_selftest:
     test_step api_stage_clock
     bl clock_selftest
     cbnz x0, api_test_failed
+    test_step api_stage_screen
+    mov x0, #0                  // E2h subfunction 0: screen information
+    bl fbcon_dos_info
+    check_ok
+    cbz x0, 2f
+    cmp x0, #1
+    b.ne api_test_failed
+    cbz x2, api_test_failed     // a screen: 1..80 columns, 1..25 rows,
+    cbz x3, api_test_failed     // and the pixels to hold them
+    cmp x2, #80
+    b.hi api_test_failed
+    cmp x3, #25
+    b.hi api_test_failed
+    cmp x4, x2, lsl #3
+    b.lo api_test_failed
+    cmp x5, x3, lsl #4
+    b.lo api_test_failed
+    b 3f
+2:
+    orr x2, x2, x3              // no screen: every field is zero
+    orr x4, x4, x5
+    orr x2, x2, x4
+    cbnz x2, api_test_failed
+3:
     test_step api_stage_fcb
     bl fcb_selftest
     cbnz x0, api_test_failed
@@ -467,6 +491,7 @@ api_fail_message: .asciz "API SELFTEST FAIL: "
 api_stage_paths: .asciz "paths and directory creation"
 api_stage_memory: .asciz "arena ownership, in-place resize and invalid free"
 api_stage_process: .asciz "native loading, nested exec, exit code, parent handles"
+api_stage_screen: .asciz "screen information (E2h)"
 api_stage_clock: .asciz "leap years, invalid dates and clock rollover"
 api_stage_fcb: .asciz "FCB sequential/random records, EOF padding and writes"
 api_stage_disk_info: .asciz "firmware free space and drive selection"

@@ -27,6 +27,8 @@ def main():
     parser.add_argument('output', type=Path)
     parser.add_argument('--firmware', type=Path)
     parser.add_argument('--replace-generated', action='store_true')
+    parser.add_argument('--debug', action='store_true',
+                        help='put \\DEBUG.ON on the card: boot checkpoints on the serial console')
     args = parser.parse_args()
     firmware = args.firmware or args.output.parent / f'RPi3_UEFI_Firmware_v{FIRMWARE_VERSION}.zip'
     if not firmware.exists():
@@ -59,6 +61,14 @@ def main():
                 if path.is_absolute() or '..' in path.parts:
                     raise SystemExit('Unsafe firmware archive path')
             archive.extractall(source)
+        # The kernel's native console is the UART that the firmware names in
+        # ACPI SPCR, i.e. the firmware's own serial console. The upstream
+        # config.txt (enable_uart=1, no dtoverlay) puts the mini UART on
+        # GPIO 14/15 on a Pi 3B/3B+ and fixes the core clock it is timed
+        # from; keep that file as it is, and fail if a new release changes it.
+        config = (source / 'config.txt').read_text()
+        if 'enable_uart=1' not in config.splitlines():
+            raise SystemExit('Pi firmware config.txt no longer has enable_uart=1')
         boot_dir = source / 'EFI/BOOT'
         boot_dir.mkdir(parents=True)
         shutil.copyfile(args.efi, boot_dir / 'BOOTAA64.EFI')
@@ -71,6 +81,10 @@ def main():
         (source / 'ARMDOS.TXT').write_bytes(
             b'ARM DOS 4.0: MS-DOS 4.0 ported natively to AArch64.\r\n'
             b'This image has not yet been booted on a physical Raspberry Pi 3.\r\n')
+        if args.debug:
+            (source / 'DEBUG.ON').write_bytes(
+                b'Boot checkpoints on: ARM DOS prints "ARMDOS: ..." lines on the\r\n'
+                b'serial console. Delete this file to turn them off.\r\n')
         (source / 'startup.nsh').write_text('fs0:\\EFI\\BOOT\\BOOTAA64.EFI\r\n')
         # Keep third-party license notices with redistributed firmware.
         license_url = ('https://raw.githubusercontent.com/pftf/RPi3/'
@@ -115,6 +129,7 @@ def main():
         'sha256': digest, 'firmware_version': FIRMWARE_VERSION,
         'firmware_url': FIRMWARE_URL, 'firmware_sha256': FIRMWARE_SHA256,
         'complete_msdos_port': False, 'native_hardware_tested': False,
+        'debug_checkpoints': args.debug,
     }, indent=2) + '\n')
     print(f'{args.output}: 128 MiB Raspberry Pi 3 UEFI development image')
 
