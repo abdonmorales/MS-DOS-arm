@@ -6,8 +6,10 @@ PHDRS {
 }
 SECTIONS {
   . = 0x1000;
+  __text_start = .;
   .text : { *(.text .text.*) } :code
-  . = ALIGN(16);
+  . = ALIGN(4096);
+  __rodata_start = .;
   .rodata : { *(.rodata .rodata.*) } :code
   . = ALIGN(4096);
   __data_start = .;

@@ -164,6 +164,20 @@ program_print:
     ldrb w0, [x20]
     cmp w0, #'f'               // "fault": touch unmapped memory on purpose
     b.ne 3f
+    ldrb w0, [x20, #5]          // "fault" variants for memory protection:
+    cmp w0, #'w'                // faultw: write to the kernel's code
+    b.ne 4f
+    str xzr, [x19]
+4:
+    cmp w0, #'n'                // faultn: read through a null pointer
+    b.ne 5f
+    mov x0, #0x18
+    ldr x0, [x0]
+5:
+    cmp w0, #'x'                // faultx: execute kernel data (the tail)
+    b.ne 6f
+    blr x20
+6:
     mov x0, #0xdead0000
     movk x0, #0xbeef, lsl #32
     ldr x0, [x0]

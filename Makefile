@@ -10,7 +10,7 @@ SOURCES := $(wildcard src/*.S)
 FIXTURES := $(wildcard fixtures/*)
 
 .SECONDARY:
-.PHONY: all payloads image pi-image unit smoke smoke-firmware check validate snapshot fat-test pi-test fb-test iso iso-test rom-generic rom-pi rom-test clean
+.PHONY: all payloads image pi-image unit smoke smoke-firmware smoke-el2 check validate snapshot fat-test pi-test fb-test iso iso-test rom-generic rom-pi rom-test clean
 all: $(BUILD)/BOOTAA64.EFI payloads
 image: $(BUILD)/msdos-arm64.img
 iso: $(BUILD)/armdos.iso
@@ -27,6 +27,10 @@ smoke: image
 # Same checks with ACPI hidden, so the kernel must keep using UEFI services.
 smoke-firmware: image
 	$(PYTHON) tools/smoke.py $(BUILD)/msdos-arm64.img --firmware $(FIRMWARE) --mode firmware --log $(BUILD)/smoke-firmware.log
+
+# Native mode entered at EL2 (as on a Raspberry Pi): the kernel drops to EL1.
+smoke-el2: image
+	$(PYTHON) tools/smoke.py $(BUILD)/msdos-arm64.img --firmware $(FIRMWARE) --el2 --log $(BUILD)/smoke-el2.log
 
 check: unit pi-test
 	$(MAKE) smoke

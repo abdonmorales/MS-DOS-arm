@@ -7,6 +7,15 @@ privilege level (EL1) in one flat address space, like DOS programs share real
 mode. Resource ownership provides cleanup, not memory isolation. A CPU
 exception in a program terminates that program (termination type 2).
 
+In native mode the kernel uses its own page tables (`src/mmu.S`): kernel code
+and read-only data cannot be written, kernel data, the stack and other RAM
+cannot be executed, and the first 64 KiB are unmapped so null pointers fault.
+The memory arena (program images, drivers, `48h` blocks) stays readable,
+writable and executable. A fault prints a one-line description (for example
+`Protection fault: null pointer reference`), the registers, and returns to the
+parent with type 2. A kernel started at EL2 drops to EL1 first, so native mode
+always runs at EL1. Firmware mode keeps the firmware's tables.
+
 Version 2 (this document) drops UEFI from the program interface: the kernel
 loads programs itself and passes the descriptor directly.
 

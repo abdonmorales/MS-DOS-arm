@@ -760,8 +760,13 @@ fbcon_start:
     bl fbcon_mailbox
     cbnz x0, 9f
 1:
-    // The MMU work maps non-RAM as Device memory; when it lands, make the
-    // framebuffer write-combining here: mmu_map_normal_nc(base, base + size).
+    // The kernel's own tables map non-RAM as Device memory: make the
+    // framebuffer Normal non-cacheable (write-combining). No-op without them.
+    address x9, fbcon_state
+    ldr x0, [x9, #FS_BASE]
+    ldr x1, [x9, #FS_SIZE]
+    add x1, x0, x1
+    bl mmu_map_normal_nc
     bl fbcon_setup
 9:
     unframe

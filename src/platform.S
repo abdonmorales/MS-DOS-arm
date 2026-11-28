@@ -521,6 +521,7 @@ plat_rom_native:
     cbnz x0, plat_fail
 12:
     bl fbcon_capture            // the GOP framebuffer, if any (src/fbcon.S)
+    bl mmu_reserve              // the kernel's own page tables, if possible
     // ExitBootServices needs the current memory map key; retry once if the
     // map changed between the two calls.
     mov x19, #2
@@ -563,7 +564,8 @@ plat_rom_native:
     msr vbar_el2, x0
 4:
     isb
-    bl fbcon_start
+    bl mmu_init                 // own tables; drops EL2 to EL1
+    bl fbcon_start              // after mmu_init: maps the framebuffer
     ldv x2, plat_disk_kind
     cbnz x2, 5f
     // The firmware's virtio driver reset the device on exit; start ours.
@@ -1247,6 +1249,12 @@ plat_exception:
     mrs x21, elr_el2
     mrs x22, far_el2
 1:
+    address x0, newline
+    bl puts
+    mov x0, x20
+    mov x1, x22
+    bl plat_fault_text          // DOS-style description first
+    bl puts
     address x0, plat_exc_message
     bl puts
     mov x0, x20
@@ -1261,7 +1269,7 @@ plat_exception:
     bl plat_print_hex
     address x0, plat_exc_base   // lets PC be matched against kernel.elf
     bl puts
-    address x0, efi_main
+    address x0, __text_start
     sub x0, x0, #0x1000         // kernel.elf links at 0x1000
     bl plat_print_hex
     address x0, newline
@@ -1278,6 +1286,77 @@ plat_exception:
 3:
     wfi
     b 3b
+
+// x0 = ESR, x1 = FAR. Returns x0 = a one-line description of the fault.
+plat_fault_text:
+    ubfx x2, x0, #26, #6        // exception class
+    and x3, x0, #0x3f           // fault status code (aborts)
+    cmp x2, #0x24
+    b.eq 1f
+    cmp x2, #0x25
+    b.eq 1f
+    cmp x2, #0x20
+    b.eq 5f
+    cmp x2, #0x21
+    b.eq 5f
+    address x4, plat_fault_align
+    cmp x2, #0x22               // PC alignment
+    b.eq 9f
+    cmp x2, #0x26               // SP alignment
+    b.eq 9f
+    address x4, plat_fault_undef
+    cbz x2, 9f
+    address x4, plat_fault_priv
+    cmp x2, #0x18               // MSR/MRS/system instruction trapped
+    b.eq 9f
+    cmp x2, #0x01               // WFI/WFE trapped
+    b.eq 9f
+    address x4, plat_fault_brk
+    cmp x2, #0x3c
+    b.eq 9f
+    address x4, plat_fault_other
+    b 9f
+1:
+    // Data abort.
+    lsr x5, x3, #2
+    address x4, plat_fault_null
+    cmp x5, #1                  // translation fault, any level
+    b.ne 2f
+    cmp x1, #MMU_NULL_GUARD
+    b.lo 9f
+    address x4, plat_fault_unmapped
+    b 9f
+2:
+    cmp x5, #3                  // permission fault
+    b.ne 3f
+    address x4, plat_fault_write
+    tbnz x0, #6, 9f             // WnR
+    address x4, plat_fault_read
+    b 9f
+3:
+    address x4, plat_fault_align
+    cmp x3, #0x21
+    b.eq 9f
+    address x4, plat_fault_memory
+    b 9f
+5:
+    // Instruction abort.
+    lsr x5, x3, #2
+    address x4, plat_fault_nx
+    cmp x5, #3
+    b.eq 9f
+    address x4, plat_fault_jump_null
+    cmp x5, #1
+    b.ne 6f
+    cmp x1, #MMU_NULL_GUARD
+    b.lo 9f
+    address x4, plat_fault_jump
+    b 9f
+6:
+    address x4, plat_fault_memory
+9:
+    mov x0, x4
+    ret
 
 // x0 = value: print as 16 hex digits.
 plat_print_hex:
@@ -1847,7 +1926,20 @@ acpi20_guid:
     .byte 0xbc,0x22,0x00,0x80,0xc7,0x3c,0x88,0x81
 rsdp_signature: .ascii "RSD PTR "
 plat_cls_sequence: .asciz "\x1b[2J\x1b[H"
-plat_exc_message: .asciz "\r\nCPU exception: ESR="
+plat_exc_message: .asciz "CPU exception: ESR="
+plat_fault_null: .asciz "Protection fault: null pointer reference\r\n"
+plat_fault_unmapped: .asciz "Protection fault: reference to unmapped memory\r\n"
+plat_fault_write: .asciz "Protection fault: write to read-only or protected memory\r\n"
+plat_fault_read: .asciz "Protection fault: read of protected memory\r\n"
+plat_fault_nx: .asciz "Protection fault: execution of non-executable memory\r\n"
+plat_fault_jump_null: .asciz "Protection fault: jump to a null pointer\r\n"
+plat_fault_jump: .asciz "Protection fault: jump to unmapped memory\r\n"
+plat_fault_align: .asciz "Alignment fault: misaligned code, stack or data address\r\n"
+plat_fault_memory: .asciz "Memory error: the access could not be completed\r\n"
+plat_fault_undef: .asciz "Invalid instruction\r\n"
+plat_fault_priv: .asciz "Privileged instruction\r\n"
+plat_fault_brk: .asciz "Breakpoint instruction\r\n"
+plat_fault_other: .asciz "Unexpected CPU exception\r\n"
 plat_exc_pc: .asciz " PC="
 plat_exc_base: .asciz " KERNEL="
 plat_exc_far: .asciz " FAR="

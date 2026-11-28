@@ -130,4 +130,8 @@ screen_text:
 boot_services: .skip 8
 plat_uart: .skip 8
 
+.section .text
+mmu_map_normal_nc:              // the MMU is off here: nothing to map
+    ret
+
 .include "src/fbcon.S"
