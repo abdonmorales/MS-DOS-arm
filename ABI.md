@@ -4,17 +4,59 @@ This ABI adapts selected DOS 4.0 public operations to flat pointers and AAPCS64.
 It does not run x86 DOS binaries or recreate segment registers, interrupt 21h,
 the original PSP, or DOS memory-control blocks. Programs run at the kernel's
 privilege level (EL1) in one flat address space, like DOS programs share real
-mode. Resource ownership provides cleanup, not memory isolation. A CPU
+mode (in native mode, protected programs run at EL0: see below). A CPU
 exception in a program terminates that program (termination type 2).
 
 In native mode the kernel uses its own page tables (`src/mmu.S`): kernel code
 and read-only data cannot be written, kernel data, the stack and other RAM
 cannot be executed, and the first 64 KiB are unmapped so null pointers fault.
-The memory arena (program images, drivers, `48h` blocks) stays readable,
-writable and executable. A fault prints a one-line description (for example
+A fault prints a one-line description (for example
 `Protection fault: null pointer reference`), the registers, and returns to the
 parent with type 2. A kernel started at EL2 drops to EL1 first, so native mode
 always runs at EL1. Firmware mode keeps the firmware's tables.
+
+### Protected programs (EL0)
+
+In native mode a program runs at EL0, isolated from the kernel, unless it
+asks for kernel access. Nothing changes for the program: it still calls the
+descriptor's service pointer with `blr` and returns from its entry point.
+
+- The service pointer leads to a kernel-provided trampoline page (EL0
+  read-only, executable) that executes `svc #0`; the entry point returns into
+  one that executes `svc #1`. The kernel saves and restores every register
+  except the documented results, so the AAPCS64 contract above still holds.
+- The program can touch only its image, the blocks it allocates with `48h`
+  (or loads with `4Bh` modes 1/3), and a 256 KiB process block holding its
+  descriptor, copies of the command tail, environment and current directory,
+  the default DTA and its stack. Kernel memory, kernel-owned arena blocks
+  (drivers, freed blocks) and devices are inaccessible.
+- Every pointer argument is checked before the call runs (ASCIIZ strings up
+  to the kernel's limit, buffers with their length, FCBs, DTAs, IOCTL
+  buffers). A pointer the program could not use itself ends the program
+  with `Protection fault: invalid pointer passed to DOS function NNh`
+  (termination type 2).
+- Results that pointed into the kernel are copies in the process block:
+  `1Fh`/`32h` (DPB), `1Bh`/`1Ch` (`x5` media byte), `63h` (lead-byte
+  table). `52h` (list of lists) and `5D06h` (swappable data area) return
+  error 1.
+- A Ctrl-C handler set with `25h` runs at EL0 on the program's stack.
+
+**Kernel access (compatibility mode).** A program that reads or edits kernel
+tables directly, as DOS utilities did with the list of lists and the CDS,
+sets bit 0 of the PE optional header's `LoaderFlags` (with `tools/pe.py`,
+define the symbol `__armdos_kernel_access`). It then runs at EL1 as in
+version 2 of this ABI. Only a program started by COMMAND, CONFIG.SYS or
+another kernel-access program gets this mode: a protected program's children
+are always protected, so a program cannot escape by starting one. In ARM DOS
+these use it: APPEND, ASSIGN, BACKUP, CHKDSK, DISKCOMP, DISKCOPY, FORMAT,
+JOIN, LABEL, MEM, RECOVER, RESTORE, SUBST, SYS, DOSTEST. Drivers loaded by
+`DEVICE=` always run in the kernel.
+
+Trade-offs: protection is between the kernel and programs, not between
+programs (all protected programs share the user mapping, and a resident
+program's memory stays reachable, as in DOS); protected memory is readable,
+writable and executable; a DTA or vector handler that the program frees
+later is not re-checked; each DOS call costs one exception round trip.
 
 Version 2 (this document) drops UEFI from the program interface: the kernel
 loads programs itself and passes the descriptor directly.
