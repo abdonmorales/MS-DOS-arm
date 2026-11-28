@@ -128,7 +128,7 @@ $(BUILD)/msdos-arm64-pi3.img: $(BUILD)/BOOTAA64.EFI $(PAYLOADS) $(FIXTURES) tool
 # directory (pi-image-debug does), since make does not track the flag.
 KERNEL_ASFLAGS ?=
 ifneq ($(ARMDOS_DEBUG),)
-KERNEL_ASFLAGS += --defsym ARMDOS_DEBUG=1
+override KERNEL_ASFLAGS += --defsym ARMDOS_DEBUG=1
 endif
 .PHONY: pi-image-debug
 pi-image-debug: | $(BUILD)

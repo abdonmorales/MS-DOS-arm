@@ -157,6 +157,11 @@ dbg_check_flag:
 
 // After a failed sd_init (x0 = its step code): the controller's state.
 dbg_sd_failed:
+    adrp x9, plat_debug         // no MMIO reads at all when debug is off
+    ldr x9, [x9, :lo12:plat_debug]
+    cbnz x9, 3f
+    ret
+3:
     frame
     stp x19, x20, [sp, #-16]!
     mov x1, x0
@@ -197,6 +202,15 @@ dbg_exception:
     cbnz x9, 1f
     ret
 1:
+    // A fault inside the dump itself must not recurse: dump once only,
+    // later faults fall through to the normal fault report.
+    adrp x9, dbg_in_exception
+    ldrb w10, [x9, :lo12:dbg_in_exception]
+    cbz w10, 2f
+    ret
+2:
+    mov w10, #1
+    strb w10, [x9, :lo12:dbg_in_exception]
     mov x25, x30
     mov x24, sp                 // the frame (calls below keep sp balanced)
     address x0, dbg_msg_exc
@@ -261,7 +275,7 @@ dbg_msg_elr: .asciz "  ELR="
 dbg_msg_elr_elf: .asciz "  ELR in kernel.elf="
 dbg_msg_far: .asciz "  FAR="
 dbg_msg_spsr: .asciz "  SPSR="
-dbg_msg_sp: .asciz "  SP="
+dbg_msg_sp: .asciz "  handler SP+256="
 // Offset byte, then the name, 32 bytes per entry: SDHCI registers dumped on failure.
 .balign 32
 dbg_sd_regs:
@@ -294,3 +308,5 @@ dbg_reg_names:
 .section .data
 .balign 8
 plat_debug: .quad ARMDOS_DEBUG
+dbg_in_exception: .byte 0
+.balign 8

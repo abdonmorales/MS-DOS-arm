@@ -198,7 +198,7 @@ should see and, if the boot stops there, the likely cause and what to try.
 - **No serial output at all here** but HDMI works: wiring (swap TX/RX; check
   GND), wrong device or baud rate, or a 5 V/RS-232 adapter. If the serial
   text is garbage: wrong baud rate, or the mini UART clock: uncomment
-  `#core_freq=250` in `config.txt` (it is already in the file, commented out).
+  `core_freq=250` in `config.txt` (the pinned firmware is expected to ship it commented out as `#core_freq=250`; if it is missing, add the line).
 - **Stops at the logo / drops into the UEFI Shell or setup**: the firmware
   did not find or start `BOOTAA64.EFI`. In the Shell, type
   `fs0:\EFI\BOOT\BOOTAA64.EFI` (the card also has a `startup.nsh` that does

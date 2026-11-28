@@ -191,7 +191,7 @@ put_hex8:
 
 // x0 = UART base, x1 = type: one checkpoint line, as the kernel prints it.
 dbg_check_line:
-    mov x7, x30
+    mov x10, x30                // dbg_uart_* clobber x2-x8
     address x2, dbg_check_text
     bl dbg_uart_puts
     movz x2, #0xc3c3
@@ -199,7 +199,7 @@ dbg_check_line:
     bl dbg_uart_hex
     address x2, dbg_check_crlf
     bl dbg_uart_puts
-    br x7
+    br x10
 
 .include "src/sdhci.S"
 .include "src/dbguart.S"

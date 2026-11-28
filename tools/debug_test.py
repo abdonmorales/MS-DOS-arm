@@ -40,7 +40,7 @@ FAULT = [
     'ARMDOS:   ELR in kernel.elf=',
     'ARMDOS:   FAR=',
     'ARMDOS:   SPSR=',
-    'ARMDOS:   SP=',
+    'ARMDOS:   handler SP+256=',
     'ARMDOS:   x00=',
     'ARMDOS:   x30=',
     'Program terminated by CPU exception.',
