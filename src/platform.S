@@ -469,6 +469,15 @@ platform_go_native:
     b.ne plat_fail
     bl plat_find_acpi
     cbnz x0, plat_fail
+    address x0, dbg_msg_uart    // the UART used once firmware is gone
+    ldv x1, plat_uart
+    bl dbg_mark_hex
+    address x0, dbg_msg_uart_type
+    ldv x1, plat_uart_type
+    bl dbg_mark_hex
+    address x0, dbg_msg_ecam
+    ldv x1, plat_ecam
+    bl dbg_mark_hex
     ldv x2, plat_uart
     cbz x2, plat_fail
     ldv x2, plat_ecam
@@ -499,6 +508,12 @@ plat_rom_native:
     stv x0, plat_uart, x2
     stv x1, plat_uart_type, x2
 10:
+    address x0, dbg_msg_uart
+    ldv x1, plat_uart
+    bl dbg_mark_hex
+    address x0, dbg_msg_uart_type
+    ldv x1, plat_uart_type
+    bl dbg_mark_hex
     mov x2, #2                  // no disk driver: A: is the ROM disk
     stv x2, plat_disk_kind, x3
 .endif
@@ -520,6 +535,8 @@ plat_rom_native:
     bl plat_find_disk
     cbnz x0, plat_fail
 12:
+    address x0, dbg_msg_ebs     // the last line through the firmware console
+    bl dbg_mark
     bl fbcon_capture            // the GOP framebuffer, if any (src/fbcon.S)
     bl mmu_reserve              // the kernel's own page tables, if possible
     // ExitBootServices needs the current memory map key; retry once if the
@@ -564,13 +581,21 @@ plat_rom_native:
     msr vbar_el2, x0
 4:
     isb
+    address x0, dbg_msg_native  // first line written to the UART directly
+    mrs x1, CurrentEL
+    lsr x1, x1, #2
+    bl dbg_mark_hex
     bl mmu_init                 // own tables; drops EL2 to EL1
     bl fbcon_start              // after mmu_init: maps the framebuffer
     ldv x2, plat_disk_kind
     cbnz x2, 5f
     // The firmware's virtio driver reset the device on exit; start ours.
     bl vio_init
-    cbnz x0, plat_dead
+    mov x19, x0
+    address x0, dbg_msg_vio
+    mov x1, x19
+    bl dbg_mark_hex
+    cbnz x19, plat_dead
     bl plat_rtc_probe           // a PL031 RTC: reload the clock from it
     cbnz x0, 6f
     bl clock_init
@@ -584,15 +609,32 @@ plat_rom_native:
     leave
 51:
     // Raspberry Pi 3: the SD card on the Arasan controller, from scratch.
+    address x0, dbg_msg_sd
+    bl dbg_mark
     movz x0, #(PI_EMMC & 0xffff)
     movk x0, #(PI_EMMC >> 16), lsl #16
     bl sd_init
-    cbnz x0, plat_dead
+    cbz x0, 6f
+    bl dbg_sd_failed
+    b plat_dead
+6:
+    address x0, dbg_msg_sd_ok
+    ldv x1, sd_block_addressing
+    bl dbg_mark_hex
     bl plat_pi_partition
-    cbnz x0, plat_dead
+    mov x19, x0
+    address x0, dbg_msg_part
+    ldv x1, sd_part_lba
+    cbz x19, 7f
+    address x0, dbg_msg_part_err
+7:
+    bl dbg_mark_hex
+    cbnz x19, plat_dead
     mov x0, #0
     leave
 plat_fail:
+    address x0, dbg_msg_fw_mode
+    bl dbg_mark
     mov x0, #1
     leave
 
@@ -818,10 +860,15 @@ plat_pi_check:
     address x0, plat_pi_marker
     mov x1, #0
     bl dos_open
-    cbnz x1, 1f
+    cbnz x1, 2f
     bl dos_close
+    address x0, dbg_msg_pi_native
+    bl dbg_mark
     mov x0, #0
     unframe
+2:
+    address x0, dbg_msg_pi_fw
+    bl dbg_mark
 1:
     mov x0, #1
     unframe
@@ -1279,7 +1326,7 @@ vio_rw:
 plat_vectors:
 .irp n, 0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15
 .balign 128
-    sub sp, sp, #64
+    sub sp, sp, #256            // x0-x30, dumped by dbg_exception
     stp x0, x1, [sp]
     mov x0, #\n
     b plat_exception
@@ -1287,7 +1334,20 @@ plat_vectors:
 
 plat_exception:
     stp x2, x3, [sp, #16]
-    stp x29, x30, [sp, #32]
+    stp x4, x5, [sp, #32]
+    stp x6, x7, [sp, #48]
+    stp x8, x9, [sp, #64]
+    stp x10, x11, [sp, #80]
+    stp x12, x13, [sp, #96]
+    stp x14, x15, [sp, #112]
+    stp x16, x17, [sp, #128]
+    stp x18, x19, [sp, #144]
+    stp x20, x21, [sp, #160]
+    stp x22, x23, [sp, #176]
+    stp x24, x25, [sp, #192]
+    stp x26, x27, [sp, #208]
+    stp x28, x29, [sp, #224]
+    str x30, [sp, #240]
     mov x19, x0
     // Report on the UART only: if drawing on the screen faulted, mirroring
     // the report there would fault again and nest until the stack is gone.
@@ -1303,6 +1363,7 @@ plat_exception:
     mrs x21, elr_el2
     mrs x22, far_el2
 1:
+    bl dbg_exception            // registers straight to the UART, if on
     address x0, newline
     bl puts
     mov x0, x20
@@ -2005,6 +2066,19 @@ plat_disk_lost: .asciz "\r\nBoot disk did not restart after leaving firmware.\r\
 plat_native_message: .asciz "Platform: native AArch64 kernel (firmware exited; PL011 console, virtio-blk disk)\r\n"
 plat_pi_message: .asciz "Platform: native AArch64 kernel (firmware exited; Raspberry Pi 3 UART console, SD card)\r\n"
 plat_pi_marker: .asciz "A:\\NATIVE.ON"
+dbg_msg_uart: .asciz "console UART (ACPI SPCR or device tree) base="
+dbg_msg_uart_type: .asciz "  UART type (0 PL011, 1 mini UART/16550 32-bit, 2-3 16550 8-bit)="
+dbg_msg_ecam: .asciz "  PCI ECAM (0: none, Raspberry Pi path)="
+dbg_msg_pi_native: .asciz "Pi 3: \\NATIVE.ON found, going native"
+dbg_msg_pi_fw: .asciz "Pi 3: no \\NATIVE.ON, staying on UEFI"
+dbg_msg_ebs: .asciz "exit boot services"
+dbg_msg_native: .asciz "boot services exited, UART direct, vectors set, EL="
+dbg_msg_vio: .asciz "virtio-blk init (0 ok)="
+dbg_msg_sd: .asciz "sdhci init"
+dbg_msg_sd_ok: .asciz "sdhci init ok, block addressed="
+dbg_msg_part: .asciz "SD boot partition found, LBA="
+dbg_msg_part_err: .asciz "SD boot partition NOT found, LBA="
+dbg_msg_fw_mode: .asciz "firmware mode (UEFI console and disk services)"
 plat_rom_native_message: .asciz "Platform: native AArch64 kernel (firmware exited; console UART at "
 plat_rom_native_end: .asciz ", A: in ROM)\r\n"
 plat_rom_firmware_message: .asciz "Platform: UEFI firmware services (ROM build; native mode not enabled or no known UART)\r\n"
