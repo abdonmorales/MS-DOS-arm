@@ -176,6 +176,8 @@ program_print:
 5:
     cmp w0, #'x'                // faultx: execute kernel memory (a block
     b.eq 7f                     // given back with 49h is kernel-only)
+    cmp w0, #'r'                // faultr: read that block directly
+    b.eq 7f
     cmp w0, #'p'                // faultp: pass that block to DOS (09h)
     b.ne 6f
 7:
@@ -191,6 +193,10 @@ program_print:
     b.ne 8f
     blr x0
 8:
+    cmp w21, #'r'
+    b.ne 9f
+    ldr x0, [x0]
+9:
     mov w8, #0x09
     blr x19
 6:

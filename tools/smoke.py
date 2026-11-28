@@ -134,10 +134,14 @@ def main():
                 command('native fault', b'Program terminated by CPU exception.')
                 command('el', b'code:1')
                 # Memory protection: each fault is described, ends only the
-                # program (type 2) and COMMAND keeps running.
+                # program (type 2) and COMMAND keeps running. NATIVE.EXE is a
+                # protected (EL0) program: kernel memory, including a block
+                # it gave back with 49h, is out of its reach, directly or
+                # through a DOS call.
                 for tail, message in ((b'faultw', b'write to read-only or protected memory'),
                                       (b'faultn', b'null pointer reference'),
                                       (b'faultx', b'execution of non-executable memory'),
+                                      (b'faultr', b'read of protected memory'),
                                       (b'faultp', b'invalid pointer passed to DOS function 09h')):
                     out = command('native ' + tail.decode(), b'Program terminated by CPU exception.')
                     if b'Protection fault: ' + message not in out:

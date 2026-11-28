@@ -1262,7 +1262,7 @@ selftest_saved_cwd: .skip 256
 .include "src/platform.S"
 .include "src/mmu.S"
 .include "src/el0.S"
-.include "src/usercheck_stub.S"
+.include "src/usercheck.S"
 .include "src/sdhci.S"
 .include "src/api_test.S"
 .include "src/search.S"

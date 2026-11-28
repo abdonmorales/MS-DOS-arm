@@ -109,6 +109,29 @@ el0_dos_call:
     b.eq 3f
     cmp w9, #0x63
     b.eq 4f
+    cmp w9, #0x65
+    b.eq 6f
+    b el0_resume
+6:
+    // 65h table ids store a u64 table pointer at buffer + 1.
+    ldr x3, [sp, #24]           // x3 buffer (unchanged by the call)
+    ldrb w0, [x3]               // id written by the kernel
+    cmp w0, #2
+    b.lo el0_resume
+    cmp w0, #7
+    b.hi el0_resume
+    cmp w0, #3
+    b.eq el0_resume
+    ldur x0, [x3, #1]           // kernel table: u16 length, then data
+    ldrh w2, [x0]
+    add x2, x2, #2
+    mov x4, #768
+    cmp x2, x4
+    csel x2, x2, x4, ls
+    ldv x1, el0_page
+    add x1, x1, #(EL0_SCRATCH + 256)
+    stur x1, [x3, #1]
+    bl copy_bytes
     b el0_resume
 2:
     ldr x0, [sp]                // drive parameter block: 64 bytes
