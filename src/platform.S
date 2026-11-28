@@ -571,6 +571,7 @@ plat_rom_native:
 5:
     cmp x2, #2                  // ROM disk: nothing to restart
     b.ne 51f
+    bl vnet_init                // a ROM build on a PCI board may have a NIC
     mov x0, #0
     leave
 51:
