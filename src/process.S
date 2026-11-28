@@ -93,6 +93,19 @@ exec_read_image:
     ldrh w3, [x2, #24]
     cmp w3, #0x20b
     b.ne exec_free_bad_format
+    // The optional header's fixed PE32+ fields (112 bytes) and the whole
+    // section table must lie inside the file: they are read from it.
+    ldrh w4, [x2, #20]          // SizeOfOptionalHeader
+    cmp w4, #112
+    b.lo exec_free_bad_format
+    ldrh w5, [x2, #6]           // NumberOfSections
+    mov w6, #40
+    umaddl x5, w5, w6, x4       // optional header + section table bytes
+    ldr w3, [x22, #60]
+    add x5, x5, x3
+    add x5, x5, #24
+    cmp x5, x21
+    b.hi exec_free_bad_format
     // Load the PE32+ image ourselves: sections, then DIR64 relocations.
     ldr w2, [x22, #60]
     add x2, x22, x2
@@ -114,11 +127,15 @@ exec_read_image:
     cbnz x1, exec_free_error
     mov x23, x0                 // image base
 12:
+    mov x0, x23
     ldr x1, [x26, #24]
     bl fat_zero_bytes
     ldr x2, [x26, #32]
     ldr w3, [x2, #84]           // SizeOfHeaders
     cmp x3, x21
+    b.hi exec_unload_bad_format
+    ldr x4, [x26, #24]          // and they must fit in the image
+    cmp x3, x4
     b.hi exec_unload_bad_format
     mov x0, x23
     mov x1, x22
@@ -159,6 +176,9 @@ exec_read_image:
     ldr w4, [x2, #116]          // NumberOfRvaAndSizes
     cmp w4, #6
     b.lo 5f
+    ldrh w4, [x2, #20]          // the directory entry must be in the header
+    cmp w4, #160
+    b.lo 5f
     ldr w25, [x2, #176]         // base relocation directory RVA
     ldr w5, [x2, #180]          // and size
     cbz w5, 5f
@@ -181,8 +201,9 @@ exec_read_image:
     b.hi exec_unload_bad_format
     add x11, x25, #8
 4:
-    cmp x11, x10
-    b.hs 41f
+    add x12, x11, #2            // a whole entry, even if the size is odd
+    cmp x12, x10
+    b.hi 41f
     ldrh w12, [x11], #2
     lsr w13, w12, #12
     cbz w13, 4b                 // IMAGE_REL_BASED_ABSOLUTE (padding)

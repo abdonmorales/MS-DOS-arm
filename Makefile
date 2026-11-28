@@ -18,7 +18,7 @@ pi-image: $(BUILD)/msdos-arm64-pi3.img
 
 FIRMWARE ?= /usr/share/qemu-efi-aarch64/QEMU_EFI.fd
 PI_FIRMWARE ?=
-unit: $(BUILD)/kernel.elf $(BUILD)/kernel.bin
+unit: $(BUILD)/kernel.elf $(BUILD)/kernel.bin $(BUILD)/NATIVE.EXE
 	$(PYTHON) tools/unit.py --build $(BUILD) --nm $(NM)
 
 smoke: image
@@ -207,3 +207,15 @@ fuzz-fat: $(BUILD)/fat_host
 fuzz-fat-regress: $(BUILD)/fat_host
 	$(PYTHON) tools/fuzz_fat.py --host $(BUILD)/fat_host --qemu $(QEMU_USER) regress
 fat-test: fuzz-fat-regress
+
+# System fuzzing: malformed PE32+ images through the loader (Unicorn), ARM
+# BASIC programs and COMMAND lines (QEMU). FUZZ_SECONDS bounds the run and
+# FUZZ_SEED makes it reproducible; findings go to $(BUILD)/fuzz-crashes/.
+.PHONY: fuzz-sys
+fuzz-sys: $(BUILD)/kernel.elf $(BUILD)/kernel.bin image
+	FUZZ_SECONDS=$(FUZZ_SECONDS) FUZZ_SEED=$(FUZZ_SEED) $(PYTHON) tools/fuzz_sys.py \
+		--build $(BUILD) --nm $(NM) --firmware $(FIRMWARE)
+
+# Every fuzzer, sharing FUZZ_SECONDS and FUZZ_SEED (CI: 120 s; nightly: 1800 s).
+.PHONY: fuzz
+fuzz: fuzz-fat fuzz-sys
