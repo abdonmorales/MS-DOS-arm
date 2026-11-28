@@ -45,6 +45,10 @@ Arguments use `x0` onward, as listed below. Preserve AAPCS64 callee-saved
 registers and 16-byte stack alignment. All structures are little endian.
 The descriptor and its borrowed pointers are valid only during the launch.
 [programs/native.S](programs/native.S) is a standalone executable example.
+C programs use the same ABI through [sdk/include/armdos.h](sdk/include/armdos.h)
+([sdk/README.md](sdk/README.md)); unlike the assembly programs they carry
+`IMAGE_REL_BASED_DIR64` fixups for pointers in data. (Kernels before the SDK
+read `NumberOfRvaAndSizes` from the wrong offset and skipped every fixup.)
 
 Unless specified otherwise, `x1=0` means success; `x1=1` means error with a DOS
 error code in `x0`. Calls may clobber `x0`–`x18`, condition flags and vector

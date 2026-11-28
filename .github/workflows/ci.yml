@@ -44,6 +44,8 @@ jobs:
         with:
           packages: gcc-aarch64-linux-gnu libc6-dev-arm64-cross qemu-user
       - run: make fat-test
+      # The C SDK: build the examples and LIBTEST, run them in both modes.
+      - run: make sdk-test FIRMWARE="$FIRMWARE"
       - name: Upload build logs
         if: failure()
         uses: actions/upload-artifact@v4
