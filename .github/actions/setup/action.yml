@@ -1,0 +1,50 @@
+name: Set up the ARM DOS toolchain
+description: >-
+  Installs the AArch64 binutils, QEMU, UEFI firmware, mtools, dosfstools and
+  xorriso from the Ubuntu archive, plus any extra packages, and optionally
+  restores the pinned Raspberry Pi 3 UEFI firmware zip from the cache.
+inputs:
+  packages:
+    description: Extra apt packages, space separated
+    required: false
+    default: ''
+  unicorn:
+    description: Install the Unicorn emulator for `make unit`
+    required: false
+    default: 'false'
+  pi-firmware:
+    description: Restore/cache the Pi 3 UEFI firmware zip and export PI_FIRMWARE
+    required: false
+    default: 'false'
+runs:
+  using: composite
+  steps:
+    - name: Install apt packages
+      shell: bash
+      run: |
+        sudo apt-get update -qq
+        sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends \
+          make python3 binutils-aarch64-linux-gnu qemu-system-arm qemu-efi-aarch64 \
+          mtools dosfstools xorriso xz-utils ${{ inputs.packages }}
+    - name: Install Unicorn
+      if: inputs.unicorn == 'true'
+      shell: bash
+      run: python3 -m pip install --user --break-system-packages unicorn
+    - name: Read the pinned Pi 3 firmware version
+      id: pi
+      if: inputs.pi-firmware == 'true'
+      shell: bash
+      run: |
+        version=$(sed -n "s/^FIRMWARE_VERSION = '\(.*\)'$/\1/p" tools/pi_image.py)
+        test -n "$version"
+        mkdir -p "$HOME/.cache/armdos"
+        echo "version=$version" >> "$GITHUB_OUTPUT"
+        # pi_image.py downloads to this path on a cache miss and checks the
+        # pinned SHA-256 either way.
+        echo "PI_FIRMWARE=$HOME/.cache/armdos/RPi3_UEFI_Firmware_v$version.zip" >> "$GITHUB_ENV"
+    - name: Cache the Pi 3 firmware zip
+      if: inputs.pi-firmware == 'true'
+      uses: actions/cache@v4
+      with:
+        path: ~/.cache/armdos/RPi3_UEFI_Firmware_v${{ steps.pi.outputs.version }}.zip
+        key: rpi3-uefi-${{ steps.pi.outputs.version }}

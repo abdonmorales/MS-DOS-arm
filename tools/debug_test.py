@@ -22,8 +22,8 @@ ORDER = [
     'ARMDOS: EL=',
     'ARMDOS: FAT mount ok (native FAT driver)',
     'ARMDOS: debug output on (\\DEBUG.ON)',
-    'ARMDOS: ACPI SPCR console UART base=0000000009000000',
-    'ARMDOS:   UART type (0 PL011, 1 mini UART)=0000000000000000',
+    'ARMDOS: console UART (ACPI SPCR or device tree) base=0000000009000000',
+    'ARMDOS:   UART type (0 PL011, 1 mini UART/16550 32-bit, 2-3 16550 8-bit)=0000000000000000',
     'ARMDOS:   PCI ECAM (0: none, Raspberry Pi path)=',
     'ARMDOS: exit boot services',
     'ARMDOS: boot services exited, UART direct, vectors set, EL=',
@@ -51,6 +51,7 @@ class Machine:
     def __init__(self, qemu, firmware, image, timeout):
         self.timeout = timeout
         self.output = bytearray()
+        self.seen = 0           # end of the last match
         self.process = subprocess.Popen(
             [qemu, '-machine', 'virt', '-cpu', 'cortex-a72', '-m', '256',
              '-bios', str(firmware), '-drive', f'file={image},format=raw,if=none,id=dos',
@@ -62,14 +63,18 @@ class Machine:
 
     def until(self, expected):
         deadline = time.monotonic() + self.timeout
-        mark = len(self.output)
+        # Search on from the last match, not from the end of the output:
+        # the next prompt often arrives in the same read as the last match.
+        mark = self.seen
         while time.monotonic() < deadline:
             for key, _ in self.selector.select(timeout=0.1):
                 chunk = os.read(key.fileobj.fileno(), 8192)
                 if not chunk:
                     raise SystemExit('QEMU exited early:\n' + self.text())
                 self.output.extend(chunk)
-            if expected in self.output[mark:]:
+            found = self.output.find(expected, mark)
+            if found >= 0:
+                self.seen = found + len(expected)
                 return
         raise SystemExit(f'Timed out waiting for {expected!r}:\n' + self.text()[-3000:])
 

@@ -1,0 +1,193 @@
+name: CI
+
+on:
+  push:
+    branches: [main, arm]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  FIRMWARE: /usr/share/qemu-efi-aarch64/QEMU_EFI.fd
+  PYTHONUNBUFFERED: '1'
+
+jobs:
+  unit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+        with:
+          unicorn: 'true'
+      - run: make unit
+      - name: Upload build logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: logs-unit
+          path: build/*.log
+          if-no-files-found: ignore
+
+  fat-test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+        with:
+          packages: gcc-aarch64-linux-gnu libc6-dev-arm64-cross qemu-user
+      - run: make fat-test
+      - name: Upload build logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: logs-fat-test
+          path: build/*.log
+          if-no-files-found: ignore
+
+  smoke:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+      - run: make smoke FIRMWARE="$FIRMWARE"
+      - name: Upload build logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: logs-smoke
+          path: build/*.log
+          if-no-files-found: ignore
+
+  debug-test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+      - run: make debug-test FIRMWARE="$FIRMWARE"
+      - name: Upload build logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: logs-debug-test
+          path: build/*.log
+          if-no-files-found: ignore
+
+  smoke-firmware:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+      - run: make smoke-firmware FIRMWARE="$FIRMWARE"
+      - name: Upload build logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: logs-smoke-firmware
+          path: build/*.log
+          if-no-files-found: ignore
+
+  pi-test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+        with:
+          pi-firmware: 'true'
+      - run: make pi-test
+      # The Pi 3 SD-card image (pinned UEFI firmware, cached) must also build.
+      - run: make pi-image
+      - name: Upload build logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: logs-pi-test
+          path: build/*.log
+          if-no-files-found: ignore
+
+  iso-test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+      - run: make iso-test FIRMWARE="$FIRMWARE"
+      - name: Upload build logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: logs-iso-test
+          path: build/*.log
+          if-no-files-found: ignore
+
+  # Runs only once the Makefile has a rom-test target (U-Boot ROM images).
+  rom-test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check for the rom-test target
+        id: target
+        run: |
+          if make -n rom-test >/dev/null 2>&1; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::No rom-test target in the Makefile; skipping."
+          fi
+      - if: steps.target.outputs.present == 'true'
+        uses: ./.github/actions/setup
+        with:
+          packages: u-boot-tools u-boot-qemu device-tree-compiler
+      - if: steps.target.outputs.present == 'true'
+        run: make rom-test FIRMWARE="$FIRMWARE"
+      - name: Upload build logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: logs-rom-test
+          path: build/*.log
+          if-no-files-found: ignore
+
+  # Runs only once the Makefile has a fuzz target.
+  fuzz:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check for the fuzz target
+        id: target
+        run: |
+          if make -n fuzz >/dev/null 2>&1; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::No fuzz target in the Makefile; skipping."
+          fi
+      - if: steps.target.outputs.present == 'true'
+        uses: ./.github/actions/setup
+        with:
+          packages: gcc-aarch64-linux-gnu libc6-dev-arm64-cross qemu-user
+          unicorn: 'true'
+      - if: steps.target.outputs.present == 'true'
+        run: make fuzz FUZZ_SECONDS=120
+      - name: Upload fuzz crashes and build logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: logs-fuzz
+          path: |
+            build/*.log
+            build/fuzz-crashes/
+          if-no-files-found: ignore

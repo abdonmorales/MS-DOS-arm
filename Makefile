@@ -10,7 +10,7 @@ SOURCES := $(wildcard src/*.S)
 FIXTURES := $(wildcard fixtures/*)
 
 .SECONDARY:
-.PHONY: all payloads image pi-image unit smoke smoke-firmware check validate snapshot fat-test pi-test iso iso-test clean
+.PHONY: all payloads image pi-image unit smoke smoke-firmware check validate snapshot fat-test pi-test iso iso-test rom-generic rom-pi rom-test clean
 all: $(BUILD)/BOOTAA64.EFI payloads
 image: $(BUILD)/msdos-arm64.img
 iso: $(BUILD)/armdos.iso
@@ -44,8 +44,10 @@ fat-test: $(BUILD)/fat_host
 $(BUILD)/fat_host: tests/fat_host.c tests/fat_host_glue.S src/fat.S | $(BUILD)
 	$(HOST_CC) -static -O1 -Wall -Wa,-I. -o $@ tests/fat_host.c tests/fat_host_glue.S
 
+# Release assets (not committed): see .github/workflows/release.yml.
+SNAPSHOT_DIR ?= $(BUILD)/release
 snapshot: validate iso-test
-	$(PYTHON) tools/snapshot.py --build $(BUILD) --output images
+	$(PYTHON) tools/snapshot.py --build $(BUILD) --output $(SNAPSHOT_DIR)
 
 $(BUILD):
 	mkdir -p $@
@@ -109,7 +111,7 @@ $(BUILD)/msdos-arm64.img: $(BUILD)/BOOTAA64.EFI $(PAYLOADS) $(FIXTURES) tools/im
 	$(PYTHON) tools/image.py $< $@
 
 # Live ISO (UEFI El Torito) for VMs; needs xorriso. iso-test boots it as a CD.
-$(BUILD)/armdos.iso: $(BUILD)/msdos-arm64.img tools/iso.py
+$(BUILD)/armdos.iso: $(BUILD)/msdos-arm64.img tools/iso.py tools/release.py
 	$(PYTHON) tools/iso.py $< $@
 iso-test: $(BUILD)/armdos.iso
 	$(PYTHON) tools/iso_test.py $< --firmware $(FIRMWARE) --image $(BUILD)/msdos-arm64.img
@@ -132,6 +134,74 @@ pi-image-debug: | $(BUILD)
 .PHONY: debug-test
 debug-test: image
 	$(PYTHON) tools/debug_test.py $(BUILD)/msdos-arm64.img --firmware $(FIRMWARE) --log $(BUILD)/debug-test.log
+
+# ROM builds: one EFI application, ARMDOS.EFI, that carries a read-only
+# drive A: (tools/romdisk.py) and needs no disk. rom-generic packages it for
+# U-Boot (a FIT image and a NOR flash image) and any UEFI board; rom-pi puts
+# it on Raspberry Pi 3 and 4 SD/USB images with the pftf UEFI firmware.
+# GENERIC_NATIVE / PI_NATIVE = 1 put \NATIVE.ON on the ROM disk, so the
+# kernel leaves the firmware when it finds the console UART.
+GENERIC_NATIVE ?= 1
+PI_NATIVE ?= 0
+PI3_FIRMWARE ?= $(PI_FIRMWARE)
+PI4_FIRMWARE ?=
+UBOOT ?= /usr/lib/u-boot/qemu_arm64/u-boot.bin
+MKIMAGE ?= mkimage
+ROM_GENERIC := $(BUILD)/rom-generic
+ROM_PI := $(BUILD)/rom-pi
+rom-generic: $(ROM_GENERIC)/ARMDOS.EFI $(ROM_GENERIC)/armdos-rom.itb $(ROM_GENERIC)/armdos-rom-flash.bin
+rom-pi: $(ROM_PI)/armdos-rom-pi3.img $(ROM_PI)/armdos-rom-pi4.img
+
+# native.cfg holds the NATIVE setting a ROM build was made with; it is
+# rewritten (and the ROM disk rebuilt) only when the setting changes.
+GENERIC_NATIVE_FLAG := $(if $(filter 1,$(GENERIC_NATIVE)),--native)
+PI_NATIVE_FLAG := $(if $(filter 1,$(PI_NATIVE)),--native)
+$(ROM_GENERIC)/native.cfg: FORCE
+	@mkdir -p $(@D); echo '$(GENERIC_NATIVE_FLAG)' | cmp -s - $@ || echo '$(GENERIC_NATIVE_FLAG)' > $@
+$(ROM_PI)/native.cfg: FORCE
+	@mkdir -p $(@D); echo '$(PI_NATIVE_FLAG)' | cmp -s - $@ || echo '$(PI_NATIVE_FLAG)' > $@
+FORCE:
+.PHONY: FORCE
+
+$(BUILD)/rom-%/armdos-romdisk.img: $(BUILD)/msdos-arm64.img $(BUILD)/rom-%/native.cfg tools/romdisk.py tools/release.py
+	$(PYTHON) tools/romdisk.py $< $@ --target $* $(shell cat $(@D)/native.cfg 2>/dev/null)
+
+# rom-check: the generic build plus test programs (tests/rom/*.S), for
+# rom-test only.
+ROM_CHECK := $(BUILD)/rom-check
+ROM_CHECK_PROGRAMS := $(patsubst tests/rom/%.S,$(ROM_CHECK)/%.EXE,$(wildcard tests/rom/*.S))
+$(ROM_CHECK)/%.o: tests/rom/%.S programs/lib.inc programs/fatlib.inc
+	@mkdir -p $(@D)
+	$(AS) -march=armv8-a -g -I programs -o $@ $<
+$(ROM_CHECK)/%.EXE: $(ROM_CHECK)/%.o link.ld tools/pe.py
+	$(LD) -T link.ld --no-undefined -o $(ROM_CHECK)/$*.elf $<
+	$(OBJCOPY) -O binary $(ROM_CHECK)/$*.elf $(ROM_CHECK)/$*.bin
+	$(PYTHON) tools/pe.py --nm $(NM) $(ROM_CHECK)/$*.elf $(ROM_CHECK)/$*.bin $@
+$(ROM_CHECK)/armdos-romdisk.img: $(BUILD)/msdos-arm64.img $(ROM_CHECK_PROGRAMS) tools/romdisk.py tools/release.py
+	$(PYTHON) tools/romdisk.py $< $@ --target check --native --extra $(ROM_CHECK_PROGRAMS)
+
+# kernel.S embeds armdos-romdisk.img, found through -I $(@D).
+$(BUILD)/rom-%/kernel.o: $(BUILD)/rom-%/armdos-romdisk.img $(SOURCES)
+	$(AS) -march=armv8-a -g --defsym ROM_BUILD=1 -I $(@D) -o $@ src/kernel.S
+$(BUILD)/rom-%/kernel.elf: $(BUILD)/rom-%/kernel.o link.ld
+	$(LD) -T link.ld --no-undefined -o $@ $<
+$(BUILD)/rom-%/kernel.bin: $(BUILD)/rom-%/kernel.elf
+	$(OBJCOPY) -O binary $< $@
+$(BUILD)/rom-%/ARMDOS.EFI: $(BUILD)/rom-%/kernel.bin $(BUILD)/rom-%/kernel.elf tools/pe.py
+	$(PYTHON) tools/pe.py --nm $(NM) $(@D)/kernel.elf $< $@
+
+$(ROM_GENERIC)/armdos-rom.itb $(ROM_GENERIC)/armdos-rom-flash.bin &: $(ROM_GENERIC)/ARMDOS.EFI tools/rom_generic.py
+	$(PYTHON) tools/rom_generic.py $< --mkimage $(MKIMAGE) --fit $(ROM_GENERIC)/armdos-rom.itb --flash $(ROM_GENERIC)/armdos-rom-flash.bin
+
+$(ROM_PI)/armdos-rom-pi%.img: $(ROM_PI)/ARMDOS.EFI tools/rom_pi.py
+	$(PYTHON) tools/rom_pi.py $< $@ --model $* $(if $(PI$*_FIRMWARE),--firmware "$(PI$*_FIRMWARE)")
+
+# Boots the ROM builds in QEMU virt: EDK2 (network boot, native and
+# firmware mode, device tree), U-Boot from NOR flash, and the Pi image's
+# kernel; checks the Pi images' contents.
+rom-test: rom-generic rom-pi $(ROM_CHECK)/ARMDOS.EFI
+	$(PYTHON) tools/rom_test.py --build $(BUILD) --firmware $(FIRMWARE) --uboot $(UBOOT) \
+		$(if $(GENERIC_NATIVE_FLAG),,--generic-firmware-mode) $(if $(PI_NATIVE_FLAG),--pi-native)
 
 clean:
 	rm -rf -- $(BUILD)

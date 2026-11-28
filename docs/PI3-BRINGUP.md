@@ -159,7 +159,7 @@ GPIO 14/15 carry the **mini UART**, and `enable_uart=1` fixes the VPU core
 clock the mini UART's baud rate is derived from. The firmware reports that
 UART in SPCR, and ARM DOS uses whatever SPCR says (PL011 or mini UART), so
 the kernel's console is always the firmware's serial console. The
-`ACPI SPCR console UART` checkpoint shows which one: base `3f215040`, type 1
+`console UART` checkpoint shows which one: base `3f215040`, type 1
 is the mini UART; base `3f201000`, type 0 is the PL011. **(unverified: the
 expected value on a real 3B/3B+ is the mini UART.)**
 
@@ -214,8 +214,8 @@ ARMDOS: entry
 ARMDOS: EL=0000000000000002                    (QEMU virt: 1; the Pi 3 firmware: probably 2, unverified)
 ARMDOS: FAT mount ok (native FAT driver)
 ARMDOS: debug output on (\DEBUG.ON)
-ARMDOS: ACPI SPCR console UART base=000000003f215040
-ARMDOS:   UART type (0 PL011, 1 mini UART)=0000000000000001
+ARMDOS: console UART (ACPI SPCR or device tree) base=000000003f215040
+ARMDOS:   UART type (0 PL011, 1 mini UART/16550 32-bit, 2-3 16550 8-bit)=0000000000000001
 ARMDOS:   PCI ECAM (0: none, Raspberry Pi path)=0000000000000000
 ARMDOS: Pi 3: no \NATIVE.ON, staying on UEFI
 ARMDOS: firmware mode (UEFI console and disk services)
@@ -238,10 +238,10 @@ ARMDOS: platform ready, printing banner
 | --- | --- | --- |
 | No `ARMDOS:` line, but the firmware started `BOOTAA64.EFI` | `DEBUG.ON` missing or misnamed, or a hang before the volume was read | Check the file name in the card's root; use `make pi-image-debug` so `entry` prints first |
 | `FAT mount: native driver declined, firmware file system` | The FAT driver did not accept the card; native mode then cannot be used | Re-write the card with the image unchanged; report it |
-| `debug output on`, then `firmware mode` without an `ACPI SPCR` line | No ACPI tables (the firmware is in Device Tree mode) | Firmware setup (*Esc*): Device Manager, Raspberry Pi Configuration, Advanced Configuration, System Table Selection: **ACPI** or **ACPI + Devicetree**. **(unverified)** |
+| `debug output on`, then `firmware mode` without a `console UART` line | No ACPI tables (the firmware is in Device Tree mode) | Firmware setup (*Esc*): Device Manager, Raspberry Pi Configuration, Advanced Configuration, System Table Selection: **ACPI** or **ACPI + Devicetree**. **(unverified)** |
 | `UART type ... 0000000000000000` with base `3f201000` | The firmware uses the PL011 on GPIO 14/15 | Fine as long as you see serial output; report it |
 | `Pi 3: no \NATIVE.ON` | Expected without `NATIVE.ON` | Add `NATIVE.ON` for the native test |
-| `exit boot services`, then nothing | Either `ExitBootServices` hung, or the direct UART writes do not reach the pins (wrong UART, mini UART clock changed) | Uncomment `core_freq=250`; report the `ACPI SPCR` lines. Delete `NATIVE.ON` to get back to a working boot |
+| `exit boot services`, then nothing | Either `ExitBootServices` hung, or the direct UART writes do not reach the pins (wrong UART, mini UART clock changed) | Uncomment `core_freq=250`; report the `console UART` lines. Delete `NATIVE.ON` to get back to a working boot |
 | `boot services exited ...`, then nothing for over a minute | The SD driver is stuck (its waits have timeouts, so it should end in an error within seconds) | Report it; try another card |
 | `sdhci init err step=N` plus register dump, then `Boot disk did not restart after leaving firmware.` | The card did not initialise on the Arasan controller. Steps: 1 controller reset, 2 clock, 3 CMD0, 4 ACMD41 (card power-up), 5 CMD2/CMD3, 6 CMD7, 7 CMD16, 8 data clock | Try another card brand/size (an SDHC card of 4-32 GB is the safest); send the dump. Delete `NATIVE.ON` to boot in firmware mode |
 | `SD boot partition NOT found` | The driver reads the card but not the expected boot sector (wrong addressing or bad data) | Send the log; this points at the driver's read path |
