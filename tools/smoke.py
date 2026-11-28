@@ -137,7 +137,8 @@ def main():
                 # program (type 2) and COMMAND keeps running.
                 for tail, message in ((b'faultw', b'write to read-only or protected memory'),
                                       (b'faultn', b'null pointer reference'),
-                                      (b'faultx', b'execution of non-executable memory')):
+                                      (b'faultx', b'execution of non-executable memory'),
+                                      (b'faultp', b'invalid pointer passed to DOS function 09h')):
                     out = command('native ' + tail.decode(), b'Program terminated by CPU exception.')
                     if b'Protection fault: ' + message not in out:
                         raise RuntimeError('Wrong fault report for native ' + tail.decode())

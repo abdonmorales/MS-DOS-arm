@@ -9,6 +9,9 @@ SECTIONS {
   __text_start = .;
   .text : { *(.text .text.*) } :code
   . = ALIGN(4096);
+  __user_text_start = .;
+  .user_text : { *(.user_text) } :code
+  . = ALIGN(4096);
   __rodata_start = .;
   .rodata : { *(.rodata .rodata.*) } :code
   . = ALIGN(4096);

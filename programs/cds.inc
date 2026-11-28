@@ -1,4 +1,9 @@
 // SPDX-License-Identifier: MIT
+
+// ARM DOS kernel access: this program reads or edits kernel tables (list of
+// lists, drive table, block drivers), so it runs at EL1 (ABI.md).
+.globl __armdos_kernel_access
+.set __armdos_kernel_access, 1
 // The kernel's drive table (current directory structure), as 52h publishes
 // it at +128 (entries at +136). Used by SUBST, JOIN and ASSIGN, which edit
 // it directly as their DOS counterparts edited the CDS. Layout: ABI.md.

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 // Native PE32+ AArch64 process ABI. The kernel loads and relocates images
 // itself; a program's entry point receives x0 = ARMDOS64 process descriptor.
-.equ PROCESS_FRAME_SIZE, 880    // +704: proc_call context, +816: saved state
+.equ PROCESS_FRAME_SIZE, 896    // +704: proc_call context, +816: saved state
 .section .text
 
 // 4Bh: x0 = path, x1 = command tail, x2 = mode.
@@ -279,7 +279,7 @@ pe_return:
 // Frame: 0 parent frame, 8 parent owner, 16 parent DTA, 24 parent exit code,
 // 40 parent handles+modes (288), 328 descriptor, 392 DTA, 672 DTA capacity,
 // 704 context, 816 PSP override, 824 vectors 22h-24h, 848 TSR flag,
-// 856 InDOS, 864 image base.
+// 856 InDOS, 864 image base, 872 image size, 880 parent's EL0 process block.
 dos_exec:
     frame
     stp x19, x20, [sp, #-16]!
@@ -298,6 +298,30 @@ dos_exec:
     mov x25, x2                 // entry point
     mov x19, x0                 // the image base is the process owner id
     str x0, [x26, #864]
+    str x3, [x26, #872]
+    // Protected (EL0) unless the image asks for kernel access; a protected
+    // parent can only start protected children.
+    mov x21, #0
+    ldv x0, mmu_live
+    cbz x0, 2f
+    ldv x0, cur_el0
+    cbnz x0, 1f
+    mov x0, x22
+    bl el0_image_wants_el1
+    cbnz x0, 2f
+1:
+    address x2, active_owner    // the process block belongs to the child
+    ldr x23, [x2]
+    str x19, [x2]
+    mov x0, #EL0_BLOCK
+    bl dos_allocate
+    address x2, active_owner
+    str x23, [x2]
+    cbnz x1, exec_el0_no_memory
+    mov x21, x0
+2:
+    ldv x0, el0_page
+    str x0, [x26, #880]
     str xzr, [x26, #848]
     add x28, x26, #328
     // All descriptor pointers are installed at runtime: no absolute fixups.
@@ -371,11 +395,27 @@ dos_exec:
     ldrb w1, [x0, #SDA_INDOS]
     str x1, [x26, #856]
     strb wzr, [x0, #SDA_INDOS]  // the child runs outside DOS
+    mov x3, #0
+    cbz x21, 3f
+    ldr x1, [x26, #872]         // the image, rounded to its arena granules
+    mov x0, #0xffff
+    add x1, x1, x0
+    bic x1, x1, x0
+    mov x0, x22
+    bl el0_grant
+    mov x0, x21
+    mov x1, x28
+    bl el0_build_block
+    mov x28, x0                 // the program's own descriptor
+    mov x3, x1                  // and stack
+3:
     mov x0, x25
     mov x1, x28
     add x2, x26, #704
     bl proc_call
     mov x24, x0
+    ldr x0, [x26, #880]
+    stv x0, el0_page, x1
     ldr x27, [x26, #848]        // 1 Ctrl-C, 3 stay resident
     cmp x27, #3
     b.eq 6f                     // 31h: the program and its memory stay
@@ -461,6 +501,13 @@ exec_return:
 
 // 31h: x0 = exit code, x1 = bytes to keep (the whole image stays resident
 // with every block the program allocated; open files are still closed).
+exec_el0_no_memory:
+    mov x0, x22
+    bl dos_free
+    mov x0, #8
+    mov x1, #1
+    b exec_return
+
 dos_keep_process:
     frame
     address x2, process_frames
@@ -495,8 +542,9 @@ dos_get_exit_code:
     mov x1, #0
     ret
 
-// x0 = entry, x1 = descriptor, x2 = 112-byte context. Calls the program;
-// returns its x0, or the value given to proc_resume when it terminates early.
+// x0 = entry, x1 = descriptor, x2 = 112-byte context, x3 = EL0 stack
+// pointer (0 runs the program at EL1). Calls the program; returns its x0,
+// or the value given to proc_resume when it terminates early.
 proc_call:
     stp x19, x20, [x2]
     stp x21, x22, [x2, #16]
@@ -504,8 +552,14 @@ proc_call:
     stp x25, x26, [x2, #48]
     stp x27, x28, [x2, #64]
     stp x29, x30, [x2, #80]
-    mov x3, sp
-    str x3, [x2, #96]
+    mov x4, sp
+    str x4, [x2, #96]
+    ldv x4, el0_ctx             // restored by proc_restore
+    ldv x5, cur_el0
+    orr x4, x4, x5
+    str x4, [x2, #104]
+    cbnz x3, proc_call_el0
+    stv xzr, cur_el0, x4
     mov x19, x2                 // preserved by the callee (AAPCS64)
     mov x9, x0
     mov x0, x1
@@ -520,6 +574,11 @@ proc_resume:
     ldr x2, [x2]
     add x2, x2, #704
 proc_restore:
+    ldr x4, [x2, #104]
+    and x5, x4, #1
+    stv x5, cur_el0, x6
+    bic x4, x4, #1
+    stv x4, el0_ctx, x6
     ldp x19, x20, [x2]
     ldp x21, x22, [x2, #16]
     ldp x23, x24, [x2, #32]
@@ -529,6 +588,24 @@ proc_restore:
     ldr x3, [x2, #96]
     mov sp, x3
     ret
+
+// Enter a protected program: x0 = entry, x1 = argument, x2 = context,
+// x3 = stack. Its SVC #1 (return) resumes at proc_restore.
+proc_call_el0:
+    stv x2, el0_ctx, x4
+    mov x4, #1
+    stv x4, cur_el0, x5
+    msr sp_el0, x3
+    msr elr_el1, x0
+    mrs x4, daif                // EL0t with the current interrupt mask
+    and x4, x4, #0x3c0
+    msr spsr_el1, x4
+    mov x0, x1
+    address x30, user_return
+    .irp r, 1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29
+    mov x\r, #0                 // no kernel values leak to the program
+    .endr
+    eret
 
 // CPU exception inside a program: terminate it abnormally.
 proc_abort:

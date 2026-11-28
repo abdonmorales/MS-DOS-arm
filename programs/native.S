@@ -174,9 +174,25 @@ program_print:
     mov x0, #0x18
     ldr x0, [x0]
 5:
-    cmp w0, #'x'                // faultx: execute kernel data (the tail)
+    cmp w0, #'x'                // faultx: execute kernel memory (a block
+    b.eq 7f                     // given back with 49h is kernel-only)
+    cmp w0, #'p'                // faultp: pass that block to DOS (09h)
     b.ne 6f
-    blr x20
+7:
+    mov w21, w0
+    mov x0, #4096
+    mov w8, #0x48
+    blr x19
+    mov x22, x0
+    mov w8, #0x49
+    blr x19
+    mov x0, x22
+    cmp w21, #'x'
+    b.ne 8f
+    blr x0
+8:
+    mov w8, #0x09
+    blr x19
 6:
     mov x0, #0xdead0000
     movk x0, #0xbeef, lsl #32

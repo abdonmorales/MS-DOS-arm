@@ -34,6 +34,13 @@ dos_allocate:
     bl plat_alloc
     cbz x0, arena_no_memory
     str x0, [x20]
+    adrp x1, cur_el0            // a protected program's own block
+    ldr x1, [x1, :lo12:cur_el0]
+    cbz x1, 3f
+    mov x1, x21
+    bl el0_grant
+    ldr x0, [x20]
+3:
     str x19, [x20, #8]
     str x21, [x20, #16]
     address x2, active_owner
@@ -80,7 +87,15 @@ dos_free:
     bl arena_lookup
     cbz x2, arena_invalid
     mov x19, x2
+    ldv x1, mmu_live
+    cbz x1, 1f
     ldr x1, [x2, #16]
+    mov x2, #0
+    stp x0, xzr, [sp, #-16]!
+    bl mmu_user_range           // back to kernel-only
+    ldp x0, xzr, [sp], #16
+1:
+    ldr x1, [x19, #16]
     bl plat_free
     cbnz x0, arena_invalid
     stp xzr, xzr, [x19]
