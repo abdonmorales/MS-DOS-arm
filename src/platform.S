@@ -535,6 +535,7 @@ plat_rom_native:
     bl plat_find_disk
     cbnz x0, plat_fail
 12:
+    bl vnet_probe               // virtio-net, if any (src/vnet.S)
     address x0, dbg_msg_ebs     // the last line through the firmware console
     bl dbg_mark
     bl fbcon_capture            // the GOP framebuffer, if any (src/fbcon.S)
@@ -600,11 +601,13 @@ plat_rom_native:
     cbnz x0, 6f
     bl clock_init
 6:
+    bl vnet_init                // failure only means no network
     mov x0, #0
     leave
 5:
     cmp x2, #2                  // ROM disk: nothing to restart
     b.ne 51f
+    bl vnet_init                // a ROM build on a PCI board may have a NIC
     mov x0, #0
     leave
 51:
