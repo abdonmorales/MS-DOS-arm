@@ -1233,6 +1233,10 @@ plat_exception:
     stp x2, x3, [sp, #16]
     stp x29, x30, [sp, #32]
     mov x19, x0
+    // Report on the UART only: if drawing on the screen faulted, mirroring
+    // the report there would fault again and nest until the stack is gone.
+    address x2, fbcon_state
+    str xzr, [x2]               // FS_ACTIVE
     mrs x20, esr_el1
     mrs x21, elr_el1
     mrs x22, far_el1

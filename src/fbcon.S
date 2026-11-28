@@ -786,7 +786,7 @@ fbcon_setup:
     str x6, [x19, #FS_ROWS]
     sub x7, x2, x4, lsl #3      // spare pixels across
     lsr x7, x7, #1
-    bic x7, x7, #1              // even, so cells start 8-byte aligned
+    bic x7, x7, #1              // even pixel offset (stores stay 4-byte aligned)
     sub x8, x3, x6, lsl #4
     lsr x8, x8, #1
     ldr x0, [x19, #FS_BASE]
@@ -872,7 +872,7 @@ fbcon_mailbox:
     orr w21, w21, #8
     mov x3, #0x100000
 2:
-    ldr w2, [x19, #0x18]        // status: wait while full
+    ldr w2, [x19, #0x38]        // write mailbox status: wait while full
     tbz w2, #31, 3f
     subs x3, x3, #1
     b.ne 2b

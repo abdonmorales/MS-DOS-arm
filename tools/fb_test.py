@@ -220,17 +220,29 @@ def test_virt(args, directory):
         process.stdin.write(line.encode() + b'\r')
         process.stdin.flush()
         until(prompt)
-        time.sleep(0.2)             # the prompt's last byte reaches the screen too
-        screen = qmp.screen(directory / f'shot{next(shot)}.ppm')
+        return settled(f'shot{next(shot)}')
+
+    def settled(name):
+        # The serial prompt can arrive before the guest has drawn it: poll
+        # until two consecutive screendumps agree and show the cursor.
+        previous = None
+        deadline = time.monotonic() + 20
+        while True:
+            time.sleep(0.1)
+            screen = qmp.screen(directory / f'{name}.ppm')
+            state = (screen.lines(), screen.cursor)
+            if state == previous and screen.cursor is not None:
+                break
+            if time.monotonic() > deadline:
+                break
+            previous = state
         check_clean(screen)
         return screen
 
     checks = 0
     try:
         until(b'A:\\>')
-        time.sleep(0.2)
-        screen = qmp.screen(directory / 'boot.ppm')
-        check_clean(screen)
+        screen = settled('boot')
         expect((screen.cols, screen.rows) == (80, 25), 'expected an 80x25 grid', screen)
         lines = screen.lines()
         expect('AUTOEXEC.BAT ran' in lines, 'boot output missing on the screen', screen)
