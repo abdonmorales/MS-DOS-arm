@@ -34,6 +34,11 @@ def run(qemu, kernel, card, directory):
         raise SystemExit('Pi driver test failed:\n' + text)
     if 'MU OK' not in mini.read_text(errors='replace'):
         raise SystemExit('Pi mini UART output missing')
+    marker = 'ARMDOS: sdhci init ok, raw UART check=00000000a5a5c3c3'
+    if marker not in text:
+        raise SystemExit('Raw checkpoint output (src/dbguart.S) missing on the PL011')
+    if marker not in mini.read_text(errors='replace'):
+        raise SystemExit('Raw checkpoint output (src/dbguart.S) missing on the mini UART')
     check_card(card)
     return text
 
@@ -75,7 +80,8 @@ def main():
         text = run(args.qemu, args.kernel, big, directory)
         if 'block addressed' not in text:
             raise SystemExit('4 GiB card not block addressed')
-    print('PASS: Pi 3 SDHCI driver (SDSC and SDHC cards) and mini UART on QEMU raspi3b.')
+    print('PASS: Pi 3 SDHCI driver (SDSC and SDHC cards), mini UART and raw checkpoint '
+          'output on PL011 and mini UART, on QEMU raspi3b.')
 
 
 if __name__ == '__main__':
