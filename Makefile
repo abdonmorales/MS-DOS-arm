@@ -10,7 +10,7 @@ SOURCES := $(wildcard src/*.S)
 FIXTURES := $(wildcard fixtures/*)
 
 .SECONDARY:
-.PHONY: all payloads image pi-image unit smoke smoke-firmware smoke-el2 check validate snapshot fat-test pi-test iso iso-test rom-generic rom-pi rom-test clean
+.PHONY: all payloads image pi-image unit smoke smoke-firmware smoke-el2 check validate snapshot fat-test pi-test fb-test iso iso-test rom-generic rom-pi rom-test clean
 all: $(BUILD)/BOOTAA64.EFI payloads
 image: $(BUILD)/msdos-arm64.img
 iso: $(BUILD)/armdos.iso
@@ -86,6 +86,16 @@ $(BUILD)/sdtest.bin: tests/pi/sdtest.S tests/pi/link.ld src/sdhci.S | $(BUILD)
 	$(AS) -march=armv8-a -o $(BUILD)/sdtest.o $<
 	$(LD) -T tests/pi/link.ld --no-warn-rwx-segments -o $(BUILD)/sdtest.elf $(BUILD)/sdtest.o
 	$(OBJCOPY) -O binary $(BUILD)/sdtest.elf $@
+
+# The framebuffer console: QEMU virt with ramfb (EDK2 GOP) and the Pi
+# mailbox framebuffer on raspi3b, both read back with screendump.
+fb-test: $(BUILD)/fbtest.bin $(BUILD)/msdos-arm64.img
+	$(PYTHON) tools/fb_test.py $(BUILD)/msdos-arm64.img --firmware $(FIRMWARE) --pi-kernel $(BUILD)/fbtest.bin
+
+$(BUILD)/fbtest.bin: tests/pi/fbtest.S tests/pi/link.ld src/fbcon.S src/font8x16.S | $(BUILD)
+	$(AS) -march=armv8-a -o $(BUILD)/fbtest.o $<
+	$(LD) -T tests/pi/link.ld --no-warn-rwx-segments -o $(BUILD)/fbtest.elf $(BUILD)/fbtest.o
+	$(OBJCOPY) -O binary $(BUILD)/fbtest.elf $@
 
 # COUNTRY.SYS is data: the DOS 4.0 file assembled from the data segment of
 # MKCNTRY.ASM (data/country).

@@ -53,7 +53,7 @@ registers allowed by AAPCS64. All structures are little endian.
 ## Dispatched functions
 
 Every number from `00h` to `6Ch` is dispatched (DISPATCH.ASM's table, in
-[src/dispatch.S](src/dispatch.S)), plus the ARM DOS extension `E0h`; other
+[src/dispatch.S](src/dispatch.S)), plus the ARM DOS extensions `E0h` and `E2h`; other
 numbers above `6Ch` return error 1. A
 failing call (`x1=1`) is recorded for `59h`. `tools/unit.py` checks that the
 binary's table matches this list.
@@ -145,6 +145,7 @@ binary's table matches this list.
 | `69h` | `x0` 0 get / 1 set, `x1` drive, `x2` 25-byte buffer | Media ID: u16 level 0, u32 serial, 11-byte label, 8-byte file system type (from the boot record) |
 | `6Ch` | `x0` path, `x1` open mode, `x2` attributes, `x3` action | Extended open/create; `x2` 1 opened, 2 created, 3 replaced |
 | `E0h` | `x0` subfunction 0–6 | ARM DOS extension: raw disk services for INSTALL (below) |
+| `E2h` | `x0` subfunction 0 | ARM DOS extension: screen information (below) |
 
 Date and time (`src/clock.S`): the clock is loaded from the real-time clock at
 boot, and `2Bh`/`2Dh` (so also `DATE`, `TIME` and `CLOCK$` writes) store it
@@ -237,6 +238,14 @@ disks. As for block drivers, letters go past LASTDRIVE when needed. Up to
 16 ranges and 16 FAT volumes in all. Each mounted volume is reported at
 boot as `Drive C: is disk 1, partition 2` (disk 0 is the boot disk; logical
 drives count from 5, GPT entries from 1).
+
+### Screen information (E2h, ARM DOS extension)
+
+Subfunction 0 (`x0` = 0) returns `x0` = 1 when the native kernel draws the
+console on a framebuffer as well as the serial line (0 when it is serial
+only, and always 0 in firmware mode), `x2` text columns, `x3` text rows,
+`x4` and `x5` the screen's width and height in pixels (all 0 without a
+screen). Other subfunctions fail with error 1.
 
 ### Devices
 
