@@ -15,7 +15,7 @@ a CPU emulator and is tracked separately as an optional milestone.
 | # | Milestone | Status |
 |---|-----------|--------|
 | 1 | Native FAT12/16/32 filesystem (`src/fat.S`) | Done |
-| 2 | Standalone kernel: leave UEFI (`ExitBootServices`), own exception vectors, PL011 console, virtio-blk disk, own PE32+ program loader and memory arena; firmware mode kept only as a fallback for boards without native drivers | Done (QEMU `virt`; `make smoke`, `make smoke-firmware`) |
+| 2 | Standalone kernel: leave UEFI (`ExitBootServices`), own exception vectors, PL011 console, virtio-blk disk, own PE32+ program loader and memory arena; firmware mode kept only as a fallback for boards without native drivers | Done (QEMU `virt`; `make smoke`, `make smoke-firmware`). Multi-disk block layer (`src/blk.S`): further FAT partitions on the boot disk and on every other virtio-blk disk (MBR, extended, GPT) mount as C:, D:, ...; `disk_register` takes other backends; E0h disk services and `INSTALL` work natively (multi-disk session in `make smoke`) |
 | 3 | Complete DOS function set (INT 21h equivalents 00h–6Ch in the native ABI, including FCB, IOCTL, sharing/locking, extended open, NLS queries) | Done (`DOSTEST.EXE` in `make smoke`; dispatch table checked by `make unit`) |
 | 4 | COMMAND parity: pipes, `FOR`, `SET`, `SHIFT`, `PATH`, `PROMPT`, `VOL`, `VERIFY`, `BREAK`, `CTTY`, wildcard `COPY`/`DEL`/`REN`, `DIR` switches, environment, `AUTOEXEC.BAT` | Done (`FEATURES.BAT`, `AUTOEXEC.BAT` and COMMAND checks in `make smoke`) |
 | 5 | `CONFIG.SYS`: `FILES`, `BUFFERS`, `SHELL`, `DEVICE` (native drivers), `BREAK`, `COUNTRY`, `LASTDRIVE` | Done (`CONFIG.SYS` fixture with `TESTDRV.SYS` in `make smoke`; also `INSTALL`, `FCBS`, `STACKS`) |
@@ -36,4 +36,4 @@ listed with what replaces it.
 | XMA2EMS, XMAEM, SMARTDRV EMS paths | x86 expanded/extended memory | Flat 64-bit memory |
 | GRAFTABL, GRAPHICS, DISPLAY, KEYB, MODE (video/keyboard parts) | CGA/EGA/VGA and PC keyboard hardware | Serial/ANSI console; MODE keeps serial settings |
 | FASTOPEN, IFSFUNC, NLSFUNC, SHARE as TSRs | x86 resident programs hooking INT 21h | Built into the kernel where the behaviour is kept |
-| FDISK (MBR CHS editing), SELECT (the DOS 4 installer) | BIOS geometry and INT 13h; x86 menus | `INSTALL.EXE` partitions (one MBR partition, type EFh), formats and copies ARM DOS to a disk the firmware offers |
+| FDISK (MBR CHS editing), SELECT (the DOS 4 installer) | BIOS geometry and INT 13h; x86 menus | `INSTALL.EXE` partitions (one MBR partition, type EFh), formats and copies ARM DOS to another disk (firmware or native mode) |
