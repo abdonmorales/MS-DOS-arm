@@ -1071,6 +1071,10 @@ fat_dir_entry:
     sub x22, x22, x4
 21:
     ldv x24, fat_clusters
+    cmp x27, x24                // a directory never spans more clusters
+    b.lo 3f                     // than the volume has: a looping chain
+    efierr x0, 10               // still ends with error 10, as before
+    b 9f
 3:
     cbz x22, 5f
     mov x0, x19
