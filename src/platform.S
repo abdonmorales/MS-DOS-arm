@@ -1279,6 +1279,9 @@ plat_vectors:
 .endr
 
 plat_exception:
+    cmp x0, #8                  // synchronous from EL0: SVC or fault
+    b.eq el0_sync
+plat_exception_fault:
     stp x2, x3, [sp, #16]
     stp x4, x5, [sp, #32]
     stp x6, x7, [sp, #48]

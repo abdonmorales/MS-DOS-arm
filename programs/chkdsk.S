@@ -1,4 +1,9 @@
 // SPDX-License-Identifier: MIT
+
+// ARM DOS kernel access: this program reads or edits kernel tables (list of
+// lists, drive table, block drivers), so it runs at EL1 (ABI.md).
+.globl __armdos_kernel_access
+.set __armdos_kernel_access, 1
 // CHKDSK [d:][path][filename] [/F] [/V] (MS-DOS 4.0 src/CMD/CHKDSK): walks every
 // directory and FAT chain, reports cross-links, allocation errors and lost
 // chains (converted to FILEnnnn.CHK or freed with /F), the disk and memory

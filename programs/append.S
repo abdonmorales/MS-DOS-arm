@@ -1,4 +1,9 @@
 // SPDX-License-Identifier: MIT
+
+// ARM DOS kernel access: this program reads or edits kernel tables (list of
+// lists, drive table, block drivers), so it runs at EL1 (ABI.md).
+.globl __armdos_kernel_access
+.set __armdos_kernel_access, 1
 // APPEND [d:]path[;[d:]path...] | APPEND ; | APPEND [/X[:ON|:OFF]]
 // [/PATH:ON|/PATH:OFF] [/E] (MS-DOS 4.0 src/CMD/APPEND): the directories searched
 // for data files that are not found. /X:ON extends it to search-first and

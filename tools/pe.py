@@ -43,8 +43,11 @@ def main():
     struct.pack_into('<HHHHHH', headers, optional + 40, 0, 0, 0, 0, 2, 0)
     struct.pack_into('<IIIIHH', headers, optional + 52,
                      0, reloc_rva + 4096, 512, 0, 10, 0x0040)
+    # LoaderFlags bit 0 (ARM DOS): the program needs kernel access and runs
+    # at EL1 instead of as a protected EL0 program (see ABI.md).
+    loader_flags = 1 if '__armdos_kernel_access' in symbols else 0
     struct.pack_into('<QQQQII', headers, optional + 72,
-                     0x100000, 0x1000, 0x100000, 0x1000, 0, 16)
+                     0x100000, 0x1000, 0x100000, 0x1000, loader_flags, 16)
     # A relocation block of IMAGE_REL_BASED_ABSOLUTE entries. Code/data are
     # position-independent; advertising relocation permits any firmware base.
     struct.pack_into('<II', headers, optional + 112 + 5 * 8, reloc_rva, 12)

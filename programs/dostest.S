@@ -1,4 +1,9 @@
 // SPDX-License-Identifier: MIT
+
+// ARM DOS kernel access: this program reads or edits kernel tables (list of
+// lists, drive table, block drivers), so it runs at EL1 (ABI.md).
+.globl __armdos_kernel_access
+.set __armdos_kernel_access, 1
 // DOSTEST.EXE: exercises the DOS function set from a separately loaded
 // native program. Prints "DOSTEST PASS" or "DOSTEST FAIL <step>".
 // Arguments: (none) full test; "tsr" stays resident with code 5;

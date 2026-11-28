@@ -571,8 +571,17 @@ ctrl_c_raise:
     address x0, dos_vectors
     ldr x9, [x0, #0x23 * 8]
     cbz x9, 1f
+    adrp x10, cur_el0
+    ldr x10, [x10, :lo12:cur_el0]
+    cbnz x10, 3f
     mov x0, #0
     blr x9
+    cbz x0, 2f
+    b 1f
+3:
+    mov x0, x9                  // a protected program's handler runs at EL0
+    mov x1, #0
+    bl el0_upcall
     cbz x0, 2f
 1:
     address x0, process_frames

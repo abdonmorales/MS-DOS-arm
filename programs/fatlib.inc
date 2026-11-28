@@ -1,4 +1,9 @@
 // SPDX-License-Identifier: MIT
+
+// ARM DOS kernel access: this program reads or edits kernel tables (list of
+// lists, drive table, block drivers), so it runs at EL1 (ABI.md).
+.globl __armdos_kernel_access
+.set __armdos_kernel_access, 1
 // Raw FAT access for the disk utilities (CHKDSK, LABEL, RECOVER), through
 // IOCTL 440Dh 0860h/0861h/0841h, the native form of INT 25h/26h.
 // Include after lib.inc.

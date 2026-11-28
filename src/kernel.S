@@ -1274,6 +1274,8 @@ selftest_saved_cwd: .skip 256
 .include "src/disks.S"
 .include "src/platform.S"
 .include "src/mmu.S"
+.include "src/el0.S"
+.include "src/usercheck.S"
 .include "src/sdhci.S"
 .include "src/dbguart.S"
 .include "src/debug.S"

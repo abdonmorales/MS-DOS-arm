@@ -37,6 +37,9 @@
 .equ MMU_RODATA, (MMU_DATA | PTE_RO)
 .equ MMU_TEXT, (PTE_AF | PTE_SH_INNER | PTE_ATTR_NORMAL | PTE_RO | PTE_UXN)
 .equ MMU_RWX, (PTE_AF | PTE_SH_INNER | PTE_ATTR_NORMAL | PTE_UXN)
+// Protected programs' memory and the user trampolines (EL0 may execute).
+.equ MMU_USER_RWX, (PTE_AF | PTE_SH_INNER | PTE_ATTR_NORMAL | PTE_EL0 | PTE_PXN)
+.equ MMU_USER_RX, (MMU_USER_RWX | PTE_RO)
 
 .equ MMU_MAIR, 0x44ff00
 // T0SZ 16 (48-bit VA), inner/outer write-back walks, inner shareable, 4 KiB
@@ -257,6 +260,16 @@ mmu_map_normal_nc:
     mov x0, #0
     ret
 
+// x0 = start, x1 = bytes, x2 = 1 to grant EL0 access (protected programs),
+// 0 to make the range kernel-only again. Arena ranges only (already pages).
+mmu_user_range:
+    add x1, x0, x1
+    mov64 x3, MMU_USER_RWX
+    mov64 x4, MMU_RWX
+    cmp x2, #0
+    csel x2, x3, x4, ne
+    b mmu_set
+
 // After ExitBootServices, with the final memory map in plat_memory_map.
 // Returns x0 = 0 when the kernel's tables are live, 1 when protection is
 // unavailable (the firmware's tables and exception level stay in use).
@@ -366,7 +379,26 @@ mmu_init:
     mov64 x2, MMU_RWX
     bl mmu_set
     cbnz x0, 90f
+    // Split it into pages now, so granting a block to a protected program
+    // later changes only permission bits (no break-before-make).
+    ldv x21, plat_arena
+    mov x22, #PLAT_ARENA_BYTES
+    add x22, x21, x22
+52:
+    mov x0, x21
+    add x1, x21, #4096
+    mov64 x2, MMU_RWX
+    bl mmu_set
+    cbnz x0, 90f
+    add x21, x21, #0x200000
+    cmp x21, x22
+    b.lo 52b
 5:
+    address x0, __user_text_start
+    address x1, __rodata_start
+    mov64 x2, MMU_USER_RX
+    bl mmu_set
+    cbnz x0, 90f
     // Null guard, unless something the kernel uses lives in low memory
     // (possible on a Raspberry Pi, whose RAM starts at 0).
     mov x3, #MMU_NULL_GUARD
@@ -407,6 +439,11 @@ mmu_init:
 6:
     bl mmu_enter_el1
 7:
+    mrs x0, id_aa64mmfr1_el1
+    ubfx x0, x0, #20, #4        // PAN implemented?
+    cbz x0, 8f
+    .inst 0xd500409f            // msr pan, #0: the kernel reads user buffers
+8:
     mov x0, #1
     stv x0, mmu_live, x1
     mov x0, #0
