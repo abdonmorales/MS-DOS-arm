@@ -7,6 +7,7 @@
 // the DOS error code in x0. Every failing call is recorded for 59h.
 .equ DOS_MAX_FUNCTION, 0x6c
 .equ ARMDOS_DISK_FUNCTION, 0xe0  // ARM DOS extension: table slot 6Dh
+.equ ARMDOS_SCREEN_FUNCTION, 0xe2 // ARM DOS extension: fbcon_dos_info
 .equ SDA_CRITICAL, 0
 .equ SDA_INDOS, 1
 .equ SDA_EXPLICIT, 2
@@ -54,6 +55,8 @@ dos_call_dispatch:
     ldp x29, x30, [sp], #16
     ret
 dos_call_extension:
+    cmp w8, #ARMDOS_SCREEN_FUNCTION
+    b.eq fbcon_dos_info
     cmp w8, #ARMDOS_DISK_FUNCTION
     b.ne dos_call_invalid
     mov w8, #(DOS_MAX_FUNCTION + 1)

@@ -1277,6 +1277,7 @@ selftest_saved_cwd: .skip 256
 .include "src/sdhci.S"
 .include "src/dbguart.S"
 .include "src/debug.S"
+.include "src/fbcon.S"
 .include "src/api_test.S"
 .include "src/search.S"
 

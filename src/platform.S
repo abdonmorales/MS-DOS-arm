@@ -22,6 +22,9 @@ plat_putc:
     adrp x1, platform_native
     ldr x1, [x1, :lo12:platform_native]
     cbz x1, 2f
+    ldv x1, fbcon_active        // a screen mirrors the UART (src/fbcon.S)
+    cbnz x1, fbcon_mirror
+plat_putc_uart:
     ldv x1, plat_uart
     adrp x2, plat_uart_type
     ldr x2, [x2, :lo12:plat_uart_type]
@@ -534,6 +537,7 @@ plat_rom_native:
 12:
     address x0, dbg_msg_ebs     // the last line through the firmware console
     bl dbg_mark
+    bl fbcon_capture            // the GOP framebuffer, if any (src/fbcon.S)
     bl mmu_reserve              // the kernel's own page tables, if possible
     // ExitBootServices needs the current memory map key; retry once if the
     // map changed between the two calls.
@@ -582,6 +586,7 @@ plat_rom_native:
     lsr x1, x1, #2
     bl dbg_mark_hex
     bl mmu_init                 // own tables; drops EL2 to EL1
+    bl fbcon_start              // after mmu_init: maps the framebuffer
     ldv x2, plat_disk_kind
     cbnz x2, 5f
     // The firmware's virtio driver reset the device on exit; start ours.
@@ -1290,6 +1295,10 @@ plat_exception:
     stp x28, x29, [sp, #224]
     str x30, [sp, #240]
     mov x19, x0
+    // Report on the UART only: if drawing on the screen faulted, mirroring
+    // the report there would fault again and nest until the stack is gone.
+    address x2, fbcon_state
+    str xzr, [x2]               // FS_ACTIVE
     mrs x20, esr_el1
     mrs x21, elr_el1
     mrs x22, far_el1
