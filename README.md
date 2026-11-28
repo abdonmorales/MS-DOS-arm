@@ -84,6 +84,7 @@ speed. This was tested on an Apple M3 Pro (macOS 27.2, Homebrew QEMU 11.1).
 | `--accel auto\|tcg\|hvf\|kvm` | `auto` (the default) picks `hvf` with the host CPU on Apple Silicon macOS, `kvm` on ARM64 Linux with `/dev/kvm`, else `tcg` with a Cortex-A72 |
 | `--memory MiB` | Guest RAM (default 256) |
 | `--qemu PATH` | The `qemu-system-aarch64` to run |
+| `--screen` | Also show the console on a screen in a QEMU window (`ramfb`); the serial console stays in the terminal |
 | `--print` | Print the QEMU command instead of running it |
 
 Some examples:
@@ -191,6 +192,7 @@ state and verified package hashes, and `source tools/env.sh` puts them on
 | `make fat-test` | Stress-tests `src/fat.S` on FAT12/16/32 images under `qemu-aarch64` (needs `gcc-aarch64-linux-gnu`, `libc6-dev-arm64-cross`, `qemu-user`) |
 | `make pi-test` | The Pi 3 SD-card and UART drivers, bare metal on QEMU `raspi3b` |
 | `make net-test` | virtio-net, the E1h packet driver and `TFTP.EXE` on QEMU user networking: GET from slirp's TFTP server (100 KiB, checked by hash), PUT, netascii and lost/duplicate packets against a small server in the test |
+| `make fb-test` | The framebuffer console: QEMU `virt` with `ramfb` and the Pi mailbox framebuffer on `raspi3b`, screens read back with `screendump` and decoded against the font |
 | `make iso-test` | Live boot as CD and USB stick, `INSTALL` to blank disks, a boot of the installed disk, and a reproducible ISO |
 | `make validate` | Both disk images: FAT checks, payload comparison and a QEMU boot; writes `build/validation.json` |
 | `make rom-test` | Boots the ROM builds in QEMU `virt`: network boot under EDK2 (ACPI and device tree), U-Boot from NOR flash, the Pi build in firmware mode; checks that A: refuses every write, and the Pi images' contents (needs `u-boot-qemu`, `u-boot-tools`) |
@@ -462,6 +464,18 @@ COMMAND, `CONFIG.SYS`, every utility, drivers, NLS) are done, and QEMU
 `virt` runs fully native. What remains is milestone 8: booting the Pi 3
 image and its native drivers on a real board. Until then the image manifests
 keep `complete_msdos_port` false.
+
+## Documentation
+
+- [docs/COMMANDS.md](docs/COMMANDS.md): every COMMAND internal command and
+  utility, batch files, `CONFIG.SYS` and the drivers
+- [docs/BASIC.md](docs/BASIC.md): the ARM BASIC language
+- [docs/PROGRAMMING.md](docs/PROGRAMMING.md): writing native ARM64 programs
+  and drivers
+- [ABI.md](ABI.md): the DOS function reference for programs
+- [SECURITY.md](SECURITY.md): the security model and how to report a
+  vulnerability
+- [CHANGELOG.md](CHANGELOG.md): release history
 
 ## Origin and license
 

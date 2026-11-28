@@ -7,6 +7,15 @@ privilege level (EL1) in one flat address space, like DOS programs share real
 mode. Resource ownership provides cleanup, not memory isolation. A CPU
 exception in a program terminates that program (termination type 2).
 
+In native mode the kernel uses its own page tables (`src/mmu.S`): kernel code
+and read-only data cannot be written, kernel data, the stack and other RAM
+cannot be executed, and the first 64 KiB are unmapped so null pointers fault.
+The memory arena (program images, drivers, `48h` blocks) stays readable,
+writable and executable. A fault prints a one-line description (for example
+`Protection fault: null pointer reference`), the registers, and returns to the
+parent with type 2. A kernel started at EL2 drops to EL1 first, so native mode
+always runs at EL1. Firmware mode keeps the firmware's tables.
+
 Version 2 (this document) drops UEFI from the program interface: the kernel
 loads programs itself and passes the descriptor directly.
 
@@ -44,7 +53,7 @@ registers allowed by AAPCS64. All structures are little endian.
 ## Dispatched functions
 
 Every number from `00h` to `6Ch` is dispatched (DISPATCH.ASM's table, in
-[src/dispatch.S](src/dispatch.S)), plus the ARM DOS extensions `E0h` and `E1h`; other
+[src/dispatch.S](src/dispatch.S)), plus the ARM DOS extensions `E0h`, `E1h` and `E2h`; other
 numbers above `6Ch` return error 1. A
 failing call (`x1=1`) is recorded for `59h`. `tools/unit.py` checks that the
 binary's table matches this list.
@@ -136,6 +145,7 @@ binary's table matches this list.
 | `6Ch` | `x0` path, `x1` open mode, `x2` attributes, `x3` action | Extended open/create; `x2` 1 opened, 2 created, 3 replaced |
 | `E0h` | `x0` subfunction 0–6 | ARM DOS extension: raw disk services for INSTALL (below) |
 | `E1h` | `x0` subfunction 0–5 | ARM DOS extension: packet driver (Ethernet frames, below) |
+| `E2h` | `x0` subfunction 0 | ARM DOS extension: screen information (below) |
 
 ### Disk services (E0h, ARM DOS extension)
 
@@ -189,6 +199,13 @@ Errors: 1 bad subfunction, 50 no driver, 87 a null buffer, a length outside
 (or broke the queue protocol, after which the driver is off until reboot).
 There is one receiver for the whole system: a program that does not want
 other programs' traffic must tolerate and ignore it.
+### Screen information (E2h, ARM DOS extension)
+
+Subfunction 0 (`x0` = 0) returns `x0` = 1 when the native kernel draws the
+console on a framebuffer as well as the serial line (0 when it is serial
+only, and always 0 in firmware mode), `x2` text columns, `x3` text rows,
+`x4` and `x5` the screen's width and height in pixels (all 0 without a
+screen). Other subfunctions fail with error 1.
 
 ### Devices
 
