@@ -299,7 +299,7 @@ DISPATCH = {
     0x65: 'dos_ext_country', 0x66: 'dos_code_page', 0x67: 'dos_handle_count',
     0x68: 'dos_commit', 0x69: 'dos_media_id', 0x6a: 'dos_commit',
     0x6b: 'dos_null_function', 0x6c: 'dos_extended_open',
-    0xe0: 'disk_services', 0xe2: 'fbcon_dos_info',
+    0xe0: 'disk_services', 0xe1: 'net_services', 0xe2: 'fbcon_dos_info',
 }
 
 

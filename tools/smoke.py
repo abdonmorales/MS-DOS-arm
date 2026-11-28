@@ -188,6 +188,8 @@ def main():
             command('del CAT2.TXT')
             # 0Dh/68h with read-only handles; DOS error codes 2 vs 3.
             command('native disk', b'Native AArch64 program OK')
+            # No NIC here (-net none), and none in firmware mode: E1h says so.
+            command('tftp -i 10.0.2.2 GET X', b'No network: the packet driver (E1h)')
             command('echo 50% done', b'\n50% done\n')
             command('cd NOSUCH', b'File/device error.')
             command('el', b'code:3')

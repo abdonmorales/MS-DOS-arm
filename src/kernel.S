@@ -1275,6 +1275,7 @@ selftest_saved_cwd: .skip 256
 .include "src/platform.S"
 .include "src/mmu.S"
 .include "src/sdhci.S"
+.include "src/vnet.S"
 .include "src/dbguart.S"
 .include "src/debug.S"
 .include "src/fbcon.S"
