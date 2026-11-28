@@ -42,6 +42,7 @@ CALL_TIMEOUT = 2.0           # seconds; any single routine call is microseconds
 
 class Kernel:
     def __init__(self, build, nm):
+        self.build = build
         self.symbols = {}
         listing = subprocess.check_output([nm, str(build / 'kernel.elf')], text=True)
         for line in listing.splitlines():
@@ -456,8 +457,55 @@ def test_fdt_console(kernel):
     return calls + 1
 
 
+
+def test_pe_loader(kernel):
+    """pe_load with the file, allocator and copies stubbed (tools/fuzz_sys.py):
+    a real program loads; regression images from fuzz-sys are rejected
+    without touching memory outside their blocks."""
+    import struct
+    from fuzz_sys import LoaderHarness
+    build = Path(kernel.build)
+    harness = LoaderHarness(build, None, kernel)
+    good = (build / 'NATIVE.EXE').read_bytes()
+    pe = struct.unpack_from('<I', good, 60)[0]
+    opt = pe + 24
+
+    def patched(offset, fmt, value, data=good):
+        data = bytearray(data)
+        struct.pack_into(fmt, data, offset, value)
+        return bytes(data)
+
+    calls = 0
+    for mode in (1, 3):
+        problems = harness.load(good, mode, overlay=0x20000)
+        calls += 1
+        if problems:
+            raise AssertionError(f'NATIVE.EXE mode {mode}: {problems}')
+    padded = good + bytes(0x20000)
+    bad = {
+        # SizeOfHeaders above SizeOfImage overflowed the image block.
+        'SizeOfHeaders > SizeOfImage': patched(opt + 60, '<I', 0x20000, padded),
+        # The section table was read past the end of the file.
+        'section table past EOF': patched(pe + 6, '<H', 0xffff),
+        'optional header past EOF': patched(pe + 20, '<H', 0xfff0),
+        'optional header too small': patched(pe + 20, '<H', 16),
+        'e_lfanew at EOF': patched(60, '<I', len(good) - 26),
+        'relocations outside image': patched(opt + 152, '<I', 0xfffffff0),
+        'entry outside image': patched(opt + 16, '<I', 0x7fffffff),
+    }
+    for name, data in bad.items():
+        for mode in (1, 3):
+            problems = harness.load(data, mode, overlay=0x20000)
+            calls += 1
+            if problems:
+                raise AssertionError(f'{name}, mode {mode}: {problems}')
+    # Overlay mode zeroed SizeOfImage bytes at address SizeOfImage: the
+    # write hook on kernel memory catches that in the good-image case above.
+    return calls
+
+
 TESTS = [test_wildcard_strings, test_dates, test_pack_efi_time, test_wildcard_bytes,
-         test_dispatcher, test_fdt_console]
+         test_dispatcher, test_fdt_console, test_pe_loader]
 
 
 def run_test(build, nm, test):
