@@ -68,6 +68,17 @@ efi_main:
     address x0, plat_rom_native_end
 1:
     bl puts
+    adrp x1, platform_native
+    ldr x1, [x1, :lo12:platform_native]
+    cbz x1, 1f                  // firmware mode: nothing to report
+    address x0, mmu_banner
+    adrp x1, mmu_live
+    ldr x1, [x1, :lo12:mmu_live]
+    cbnz x1, 2f
+    address x0, mmu_off_banner
+2:
+    bl puts
+1:
     bl fat_print_backend
     adrp x0, boot_read_only     // live system (CD/ISO): A: cannot be written,
     ldr x0, [x0, :lo12:boot_read_only]  // so the write self-test is skipped
@@ -1249,6 +1260,7 @@ selftest_saved_cwd: .skip 256
 .include "src/fat.S"
 .include "src/disks.S"
 .include "src/platform.S"
+.include "src/mmu.S"
 .include "src/sdhci.S"
 .include "src/api_test.S"
 .include "src/search.S"
