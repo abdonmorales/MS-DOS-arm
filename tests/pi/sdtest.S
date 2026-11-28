@@ -115,6 +115,15 @@ _start:
     bl mini_putc
     mov x0, #'\n'
     bl mini_putc
+    // The kernel's raw checkpoint output (src/dbguart.S) on both UARTs.
+    movz x0, #(PL011 & 0xffff)
+    movk x0, #(PL011 >> 16), lsl #16
+    mov x1, #0
+    bl dbg_check_line
+    movz x0, #(MINI_UART & 0xffff)
+    movk x0, #(MINI_UART >> 16), lsl #16
+    mov x1, #1
+    bl dbg_check_line
     say "SDTEST PASS\r\n"
 halt:
     wfe
@@ -180,7 +189,24 @@ put_hex8:
     csel x0, x1, x2, lo
     b putc
 
+// x0 = UART base, x1 = type: one checkpoint line, as the kernel prints it.
+dbg_check_line:
+    mov x7, x30
+    address x2, dbg_check_text
+    bl dbg_uart_puts
+    movz x2, #0xc3c3
+    movk x2, #0xa5a5, lsl #16
+    bl dbg_uart_hex
+    address x2, dbg_check_crlf
+    bl dbg_uart_puts
+    br x7
+
 .include "src/sdhci.S"
+.include "src/dbguart.S"
+
+.section .rodata
+dbg_check_text: .asciz "ARMDOS: sdhci init ok, raw UART check="
+dbg_check_crlf: .asciz "\r\n"
 
 .section .bss
 .balign 16
