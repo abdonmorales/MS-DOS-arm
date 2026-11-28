@@ -267,6 +267,11 @@ vnet_init:
     mov w6, #VNET_QSIZE
     strh w6, [x5, #2]           // avail.idx
     stv xzr, vnet_rx_seen, x2
+    mov w6, #1                  // VIRTQ_AVAIL_F_NO_INTERRUPT: we poll
+    strh w6, [x5]
+    add x6, x20, #VNET_TX_AVAIL
+    mov w7, #1
+    strh w7, [x6]
     stv xzr, vnet_tx_next, x2
     // The MAC address: from the device, or a locally administered one.
     bl vnet_read_mac
@@ -300,11 +305,19 @@ vnet_queue:
     b.lo 9f
     mov w2, #VNET_QSIZE
     strh w2, [x19, #24]
-    str x1, [x19, #32]          // queue_desc
+    // 64-bit fields as two 32-bit writes: the transport only promises
+    // 32-bit accesses.
+    str w1, [x19, #32]          // queue_desc
+    lsr x2, x1, #32
+    str w2, [x19, #36]
     add x2, x1, #0x100
-    str x2, [x19, #40]          // queue_driver (avail)
+    str w2, [x19, #40]          // queue_driver (avail)
+    lsr x2, x2, #32
+    str w2, [x19, #44]
     add x2, x1, #0x200
-    str x2, [x19, #48]          // queue_device (used)
+    str w2, [x19, #48]          // queue_device (used)
+    lsr x2, x2, #32
+    str w2, [x19, #52]
     ldrh w2, [x19, #30]         // queue_notify_off
     ldv x3, vnet_notify_mul
     mul x2, x2, x3
@@ -318,7 +331,8 @@ vnet_queue:
     ret
 
 // Copies the MAC from device config (stable across config_generation),
-// or makes up a locally administered one if the device offers none.
+// or makes up a locally administered one if the device offers none or
+// never gives a stable read.
 vnet_read_mac:
     address x9, vnet_mac
     ldv x10, vnet_features
@@ -336,11 +350,11 @@ vnet_read_mac:
     b.lo 2b
     ldrb w14, [x19, #21]
     cmp w13, w14
-    b.eq 4f
-    subs x12, x12, #1
-    b.ne 1b
-4:
+    b.ne 5f
     ret
+5:
+    subs x12, x12, #1
+    b.ne 1b                     // never stable: fall back, no torn MAC
 3:
     isb
     mrs x2, cntvct_el0
@@ -514,6 +528,7 @@ net_send:
 // frame is waiting), x2 = the frame's full length.
 net_receive:
     cbz x1, net_bad_parameter
+    cbz x2, net_bad_parameter
     ldv x9, vnet_mem
     mov x17, #(2 * VNET_QSIZE)  // at most this many frames inspected
 1:

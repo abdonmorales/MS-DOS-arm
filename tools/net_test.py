@@ -48,12 +48,16 @@ class TftpServer(threading.Thread):
         self.log = []
         self.retransmissions = 0
         self.duplicates_seen = 0
+        self.client_errors = []     # ERROR packets sent to the main port
 
     def run(self):
         while not self.stop:
             try:
                 data, peer = self.sock.recvfrom(2048)
             except socket.timeout:
+                continue
+            if data[:2] == b'\0\5':
+                self.client_errors.append(data)
                 continue
             threading.Thread(target=self.transfer, args=(data, peer), daemon=True).start()
 
@@ -78,6 +82,8 @@ class TftpServer(threading.Thread):
                 blksize = min(int(options['blksize']), 1024)
                 oack = struct.pack('!H', 6) + b'blksize\0' + str(blksize).encode() + b'\0'
             path = self.root / Path(name).name
+            if name == 'SLOW.BIN':
+                return                      # never answers: Ctrl-C test
             if opcode == 1:
                 if not path.exists():
                     self.error(sock, peer, 1, 'File not found')
@@ -281,12 +287,29 @@ def main():
             command('tftp -i 10.0.2.2 GET NOSUCH.BIN', b'Error from server:')
             command('dir ASCII.BIN', b'File not found')
             command('dir NOSUCH.BIN', b'File not found')
+            # A failed GET leaves an existing destination alone.
+            command('echo keep-me>KEEP.TXT')
+            command('tftp -i 10.0.2.2 GET NOSUCH.BIN KEEP.TXT', b'Error from server:')
+            command('type KEEP.TXT', b'keep-me')
+            command('dir TFTP$$$.TMP', b'File not found')
             # Our server: a lost DATA 3 (timeout and retransmission) and a
             # duplicate DATA 5 (re-acknowledged, written once).
             command(f'tftp -i 10.0.2.2:{port} GET RAND.BIN COPY.BIN',
                     f'Transfer successful: {len(random_data)} bytes'.encode())
+            # Ctrl-C while waiting: an ERROR to the server, temp file gone,
+            # destination untouched.
+            process.stdin.write(f'tftp -i 10.0.2.2:{port} GET SLOW.BIN KEEP.TXT\r'.encode())
+            process.stdin.flush()
+            time.sleep(1.5)
+            process.stdin.write(b'\x03')
+            process.stdin.flush()
+            if b'Transfer cancelled.' not in until(b'A:\\>'):
+                raise RuntimeError('Ctrl-C did not cancel the transfer')
+            checks += 1
+            command('type KEEP.TXT', b'keep-me')
+            command('dir TFTP$$$.TMP', b'File not found')
             command(f'tftp 10.0.2.2:{port} GET NETASCII.TXT TEXTIN.TXT',
-                    b'Transfer successful: 16 bytes')
+                    b'Transfer successful: 14 bytes')
             # PUT with a lost ACK 2 and a duplicate ACK 4.
             command(f'tftp -i 10.0.2.2:{port} PUT PUTDATA.BIN UP.BIN',
                     f'Transfer successful: {len(put_data)} bytes'.encode())
@@ -322,6 +345,11 @@ def main():
         net_text = b'line one\r\nbare cr\r\0bare lf\r\nend\r\n'
         if not (own_root / 'TEXT.NET').exists() or (own_root / 'TEXT.NET').read_bytes() != net_text:
             failures.append('TEXT.NET (netascii PUT) differs')
+        if not any(packet[2:4] == b'\0\0' and b'Cancelled' in packet
+                   for packet in server.client_errors):
+            failures.append('no ERROR packet reached the server after Ctrl-C')
+        if mread(partition, 'KEEP.TXT') != b'keep-me\r\n':
+            failures.append('KEEP.TXT changed')
         if server.retransmissions < 2:
             failures.append(f'fault injection did not trigger retransmissions '
                             f'({server.retransmissions})')

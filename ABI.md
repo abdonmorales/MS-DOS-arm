@@ -194,8 +194,8 @@ was found, and always in firmware mode, every subfunction fails with error
 | 4 | `x1` mode 1–6, or 0 to query | Receive mode, as in the packet driver specification: 1 off, 2 own address only, 3 own and broadcast (the default at boot), 4 and 5 also every multicast, 6 promiscuous. `x0` the mode in effect, `x2` the previous one. The filter is in software |
 | 5 | None | Counters since boot: `x0` frames received, `x2` frames sent, `x3` frames dropped by the filter or malformed |
 
-Errors: 1 bad subfunction, 50 no driver, 87 a null buffer, a length outside
-14–1514 or a mode above 6, 21 the device did not take a frame within 200 ms
+Errors: 1 bad subfunction, 50 no driver, 87 a null buffer, a receive
+capacity of 0, a send length outside 14–1514 or a mode above 6, 21 the device did not take a frame within 200 ms
 (or broke the queue protocol, after which the driver is off until reboot).
 There is one receiver for the whole system: a program that does not want
 other programs' traffic must tolerate and ignore it.

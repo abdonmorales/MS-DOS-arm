@@ -173,6 +173,10 @@ main:
     stg x25, local_name, x2
     bl net_setup
     cbnz x0, 9f
+    mov x0, #0x23               // Ctrl-C: clean up instead of dying
+    address x1, ctrl_c_handler
+    mov w8, #0x25
+    bl dos_entry
     bl arp_resolve
     cbnz x0, 9f
     isb
@@ -737,6 +741,12 @@ arp_resolve:
     ldg x2, arp_done
     cbnz x2, 8f
     bl console_check
+    ldg x2, aborted
+    cbz x2, 31f
+    say "Cancelled.\r\n"
+    mov x0, #1
+    leave
+31:
     isb
     mrs x2, cntvct_el0
     cmp x2, x22
@@ -854,18 +864,29 @@ wait_server:
     cbz x0, 2f
     ldg x4, server_ip
     cmp w3, w4
-    b.ne 1b
+    b.ne 2f
     ldp x19, x20, [sp], #16
     unframe
 2:
     bl console_check
+    ldg x2, aborted
+    cbnz x2, 3f
     isb
     mrs x2, cntvct_el0
     cmp x2, x19
     b.lo 1b
+3:
     mov x0, #0
     ldp x19, x20, [sp], #16
     unframe
+
+// Vector 23h while TFTP runs: Ctrl-C only sets a flag (x0 = 0 continues),
+// so the transfer ends through its normal failure path.
+ctrl_c_handler:
+    mov x0, #1
+    stg x0, aborted, x1
+    mov x0, #0
+    ret
 
 // ---------------------------------------------------------------------------
 // TFTP.
@@ -930,7 +951,7 @@ tftp_recv:
 1:
     ldg x0, deadline
     bl wait_server
-    cbz x0, 5f
+    cbz x0, 4f
     mov x19, x0
     mov x20, x1
     mov x21, x2
@@ -966,6 +987,17 @@ tftp_recv:
     mov x1, x19
     mov x2, x20
     mov x3, x22
+    leave
+4:
+    ldg x2, aborted
+    cbz x2, 5f
+    say "Transfer cancelled.\r\n"
+    bl dest_port
+    mov x2, x0
+    mov x0, #0
+    address x1, msg_cancelled
+    bl send_error
+    mov x0, #1
     leave
 5:
     ldg x2, tries
@@ -1142,13 +1174,23 @@ report_success:
 // GET: remote_name from the server into local_name. Returns x0 = exit code.
 do_get:
     enter
+    // Receive into TFTP$$$.TMP in the destination's directory; the
+    // destination is replaced only when the whole file has arrived.
     ldg x0, local_name
+    address x1, temp_path
+    bl strcpy
+    address x0, temp_path
+    bl last_component
+    mov x1, x0
+    address x0, temp_name
+    bl strcpy
+    address x0, temp_path
     mov x1, #0
     bl fcreate
     cbz x1, 1f
     mov x19, x0
     say "Cannot create "
-    ldg x0, local_name
+    address x0, temp_path
     bl puts
     say ": "
     mov x0, x19
@@ -1242,7 +1284,7 @@ do_get:
     cmp x0, x27
     b.ne 42f
 43:
-    add x21, x21, x26
+    add x21, x21, x27            // bytes written (after netascii)
     mov x0, #OP_ACK
     mov x1, x20
     bl put_header
@@ -1282,6 +1324,21 @@ do_get:
 52:
     mov x0, x19
     bl fclose
+    ldg x0, local_name          // replace the destination
+    mov w8, #0x41
+    bl dos_entry
+    address x0, temp_path
+    ldg x1, local_name
+    mov w8, #0x56
+    bl dos_entry
+    cbz x1, 53f
+    say "Cannot rename "
+    address x0, temp_path
+    bl puts
+    say "; the file was kept under that name.\r\n"
+    mov x0, #1
+    leave
+53:
     mov x0, x21
     bl report_success
     mov x0, #0
@@ -1294,9 +1351,9 @@ do_get:
     address x1, msg_illegal
     bl send_error
 90:
-    mov x0, x19                 // remove the partial file
+    mov x0, x19                 // remove the partial file only
     bl fclose
-    ldg x0, local_name
+    address x0, temp_path
     mov w8, #0x41
     bl dos_entry
     mov x0, #1
@@ -1560,6 +1617,8 @@ msg_bad_option: .asciz "Option not accepted"
 msg_illegal: .asciz "Illegal TFTP operation"
 msg_disk_full: .asciz "Disk full"
 msg_read_error: .asciz "Read error"
+msg_cancelled: .asciz "Cancelled by user"
+temp_name: .asciz "TFTP$$$.TMP"
 msg_no_text: .asciz "(no message)"
 link_up_text: .asciz ", link up\r\n"
 link_down_text: .asciz ", link down\r\n"
@@ -1618,3 +1677,5 @@ fpos: .skip 8
 flen: .skip 8
 enc_pending: .skip 8
 enc_back: .skip 8
+aborted: .skip 8
+temp_path: .skip 512
