@@ -10,7 +10,7 @@ SOURCES := $(wildcard src/*.S)
 FIXTURES := $(wildcard fixtures/*)
 
 .SECONDARY:
-.PHONY: all payloads image pi-image unit smoke smoke-firmware smoke-el2 check validate snapshot fat-test pi-test iso iso-test rom-generic rom-pi rom-test clean
+.PHONY: all payloads image pi-image unit smoke smoke-firmware smoke-el2 check validate snapshot fat-test pi-test iso iso-test rom-generic rom-pi rom-test sdk sdk-test clean
 all: $(BUILD)/BOOTAA64.EFI payloads
 image: $(BUILD)/msdos-arm64.img
 iso: $(BUILD)/armdos.iso
@@ -190,6 +190,14 @@ $(ROM_PI)/armdos-rom-pi%.img: $(ROM_PI)/ARMDOS.EFI tools/rom_pi.py
 rom-test: rom-generic rom-pi $(ROM_CHECK)/ARMDOS.EFI
 	$(PYTHON) tools/rom_test.py --build $(BUILD) --firmware $(FIRMWARE) --uboot $(UBOOT) \
 		$(if $(GENERIC_NATIVE_FLAG),,--generic-firmware-mode) $(if $(PI_NATIVE_FLAG),--pi-native)
+
+# C SDK for native programs (sdk/README.md): libarmdos.a, crt0.o and the
+# examples, then an end-to-end run of them under QEMU.
+sdk:
+	$(MAKE) -C sdk BUILD=$(abspath $(BUILD))/sdk
+sdk-test: sdk image
+	$(PYTHON) tools/sdk_test.py $(BUILD)/msdos-arm64.img --sdk-build $(BUILD)/sdk \
+		--firmware $(FIRMWARE) --log $(BUILD)/sdk-test.log
 
 clean:
 	rm -rf -- $(BUILD)

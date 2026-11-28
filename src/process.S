@@ -156,7 +156,7 @@ exec_read_image:
     ldr x2, [x26, #32]
     ldr x3, [x2, #48]           // ImageBase
     sub x24, x23, x3            // relocation delta
-    ldr w4, [x2, #116]          // NumberOfRvaAndSizes
+    ldr w4, [x2, #132]          // NumberOfRvaAndSizes (optional header + 108)
     cmp w4, #6
     b.lo 5f
     ldr w25, [x2, #176]         // base relocation directory RVA

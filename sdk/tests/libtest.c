@@ -266,7 +266,7 @@ int main(int argc, char **argv)
 {
     CHECK(argc == 3 && !strcmp(argv[0], "LIBTEST") && !strcmp(argv[1], "quoted arg") &&
           !strcmp(argv[2], "x\"y"));
-    CHECK(!strcmp(names[2], "two") && fns[0] == cmp_int);
+    CHECK(!strcmp(names[argc - 1], "two") && fns[argc - 3] == cmp_int);
     test_printf();
     test_string_stdlib();
     test_malloc();
