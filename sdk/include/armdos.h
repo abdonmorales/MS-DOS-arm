@@ -96,8 +96,10 @@ armdos_regs armdos_call4(unsigned fn, uint64_t a0, uint64_t a1, uint64_t a2,
 
 /* x1 == 1 means failure with the DOS error code in x0. */
 #define ARMDOS_FAILED(r) ((r).x1 == 1)
-/* The usual "value or -error" result. */
-#define ARMDOS_RESULT(r) (ARMDOS_FAILED(r) ? -(long)(r).x0 : (long)(r).x0)
+/* The usual "value or -error" result (a function, so a call passed as its
+ * argument runs once). */
+static inline long ARMDOS_RESULT(armdos_regs r)
+{ return r.x1 == 1 ? -(long)r.x0 : (long)r.x0; }
 
 /* ---- DOS error codes (subset) ----------------------------------------- */
 enum {

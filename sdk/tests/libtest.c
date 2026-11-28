@@ -146,7 +146,7 @@ static void test_files(void)
         return;
     for (int i = 1; i <= 50; i++)
         fprintf(f, "line %02d: %s\n", i, i % 2 ? "odd" : "even");
-    CHECK(ftell(f) == 50 * 16L);     /* 14 or 15 characters + CR LF */
+    CHECK(ftell(f) == 25 * 14L + 25 * 15L);   /* odd/even lines + CR LF */
     CHECK(fclose(f) == 0);
 
     f = fopen("LIBTEST.OUT", "r");
@@ -164,11 +164,11 @@ static void test_files(void)
     CHECK(lines == 50 && good);
     CHECK(feof(f) && !ferror(f));
     /* Seek back to a position ftell reported and read again. */
-    CHECK(fseek(f, 16 * 9, SEEK_SET) == 0);
+    CHECK(fseek(f, 5 * 14 + 4 * 15, SEEK_SET) == 0);
     long here = ftell(f);
     CHECK(fgets(line, sizeof line, f) && !strcmp(line, "line 10: even\n"));
-    CHECK(here == 144 && ftell(f) == 160);
-    CHECK(fseek(f, -16, SEEK_END) == 0 && fgets(line, sizeof line, f) &&
+    CHECK(here == 130 && ftell(f) == 145);
+    CHECK(fseek(f, -15, SEEK_END) == 0 && fgets(line, sizeof line, f) &&
           !strcmp(line, "line 50: even\n"));
     rewind(f);
     CHECK(fgetc(f) == 'l' && ungetc('L', f) == 'L' && fgetc(f) == 'L');

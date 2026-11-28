@@ -14,8 +14,9 @@ char **environ;
 static char *empty_environ[1];
 
 /* The descriptor carries no program name. A program may define
- * `const char *__armdos_progname = "NAME";` to give argv[0] a value. */
-extern const char *__armdos_progname __attribute__((weak));
+ * `const char *__armdos_progname = "NAME";` to give argv[0] a value. (A weak
+ * definition, not a weak reference: those go through GOT slots.) */
+__attribute__((weak)) const char *__armdos_progname = "";
 
 #define MAX_ARGS 64
 
@@ -91,8 +92,7 @@ __attribute__((noreturn)) void __armdos_start(const armdos_descriptor *d)
     size_t len = strnlen(tail, 1024);
     char *copy = malloc(len + 1);
     int argc = 0;
-    argv_store[argc++] = (char *)(&__armdos_progname && __armdos_progname
-                                  ? __armdos_progname : "");
+    argv_store[argc++] = (char *)(__armdos_progname ? __armdos_progname : "");
     if (copy) {
         memcpy(copy, tail, len);
         copy[len] = '\0';

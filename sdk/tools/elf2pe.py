@@ -134,6 +134,14 @@ def main():
         raise SystemExit(f'{args.elf}: not loadable at an arbitrary address:\n  ' +
                          '\n  '.join(problems[:20]) +
                          '\n(compile with -fno-pic -mcmodel=small; no -mcmodel=large)')
+    # GOT slots the linker filled in itself (weak references in non-PIC
+    # code) carry no output relocation: every nonzero slot is an address.
+    for s in elf.sections:
+        if s['name'] in ('.got', '.got.plt') and s['type'] != SHT_NOBITS:
+            for slot in range(0, s['size'] - 7, 8):
+                rva = s['addr'] + slot
+                if struct.unpack_from('<Q', image, rva - TEXT_RVA)[0]:
+                    fixups.append(rva)
     fixups = sorted(set(fixups))
 
     # .reloc: one block per 4 KiB page, DIR64 entries, padded to 4 bytes.
