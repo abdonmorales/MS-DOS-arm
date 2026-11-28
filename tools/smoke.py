@@ -42,12 +42,17 @@ def main():
     parser.add_argument('--log', type=Path)
     parser.add_argument('--mode', choices=['native', 'firmware'], default='native',
                         help='firmware: boot without ACPI so the kernel must stay on UEFI')
+    parser.add_argument('--el2', action='store_true',
+                        help='start the firmware (and so the kernel) at EL2; '
+                             'native mode must drop to EL1 for its own page tables')
     args = parser.parse_args()
     output = bytearray()
     with tempfile.TemporaryDirectory(prefix='arm64-smoke-') as directory:
         image = Path(directory) / 'test.img'
         shutil.copyfile(args.image, image)
         machine = 'virt' if args.mode == 'native' else 'virt,acpi=off'
+        if args.el2:
+            machine += ',virtualization=on'
         cmd = [args.qemu, '-machine', machine, '-cpu', 'cortex-a72', '-m', '256',
                '-bios', str(args.firmware), '-drive',
                f'file={image},format=raw,if=none,id=dos',
@@ -124,8 +129,19 @@ def main():
                 raise RuntimeError('Buffered DOS console input/editing failed')
             checks += 1
             if args.mode == 'native':   # firmware mode keeps UEFI's vectors
+                if b'Memory protection: kernel code read-only' not in text:
+                    raise RuntimeError('Native mode did not enable memory protection')
                 command('native fault', b'Program terminated by CPU exception.')
                 command('el', b'code:1')
+                # Memory protection: each fault is described, ends only the
+                # program (type 2) and COMMAND keeps running.
+                for tail, message in ((b'faultw', b'write to read-only or protected memory'),
+                                      (b'faultn', b'null pointer reference'),
+                                      (b'faultx', b'execution of non-executable memory')):
+                    out = command('native ' + tail.decode(), b'Program terminated by CPU exception.')
+                    if b'Protection fault: ' + message not in out:
+                        raise RuntimeError('Wrong fault report for native ' + tail.decode())
+                    command('el', b'code:1')
             command('dostest', b'DOSTEST PASS')
             process.stdin.write(b'dostest ctrlc\r')
             process.stdin.flush()

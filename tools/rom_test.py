@@ -92,6 +92,9 @@ def boot_checks(s, platform):
                      b'ARM DOS Version 4.00'):       # AUTOEXEC.BAT runs VER
         if expected not in banner:
             raise RuntimeError(f'boot: expected {expected!r} in {banner!r}')
+    if b'native AArch64 kernel' in platform and \
+            b'Memory protection: kernel code read-only' not in banner:
+        raise RuntimeError('native boot did not enable memory protection')
     if b'SELFTEST' in banner:
         raise RuntimeError('the write self-test ran on the read-only ROM disk')
     listing = s.command('dir', b'BASIC    EXE')

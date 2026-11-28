@@ -97,6 +97,21 @@ jobs:
           path: build/*.log
           if-no-files-found: ignore
 
+  smoke-el2:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+      - run: make smoke-el2 FIRMWARE="$FIRMWARE"
+      - name: Upload build logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: logs-smoke-el2
+          path: build/*.log
+          if-no-files-found: ignore
+
   pi-test:
     runs-on: ubuntu-24.04
     timeout-minutes: 20
