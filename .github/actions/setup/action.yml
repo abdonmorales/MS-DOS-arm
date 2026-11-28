@@ -22,7 +22,15 @@ runs:
     - name: Install apt packages
       shell: bash
       run: |
-        sudo apt-get update -qq
+        # Only Ubuntu's own archive is needed; third-party lists on the
+        # runner image (packages.microsoft.com etc.) sometimes return 403
+        # and would fail apt-get update.
+        sudo find /etc/apt/sources.list.d -type f ! -name 'ubuntu*' -delete
+        for attempt in 1 2 3; do
+          sudo apt-get update -qq && break
+          [ "$attempt" = 3 ] && exit 1
+          sleep $((attempt * 10))
+        done
         sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends \
           make python3 binutils-aarch64-linux-gnu qemu-system-arm qemu-efi-aarch64 \
           mtools dosfstools xorriso xz-utils ${{ inputs.packages }}
