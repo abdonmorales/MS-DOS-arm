@@ -106,6 +106,8 @@ jobs:
         with:
           pi-firmware: 'true'
       - run: make pi-test
+      # Framebuffer console: QEMU virt ramfb and the Pi mailbox screen.
+      - run: make fb-test FIRMWARE="$FIRMWARE"
       # The Pi 3 SD-card image (pinned UEFI firmware, cached) must also build.
       - run: make pi-image
       - name: Upload build logs
