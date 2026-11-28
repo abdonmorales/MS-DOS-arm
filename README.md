@@ -186,7 +186,7 @@ state and verified package hashes, and `source tools/env.sh` puts them on
 | Command | Checks |
 | --- | --- |
 | `make unit` | Host-side unit tests in about 6 seconds: kernel routines run in the Unicorn emulator (`pip install unicorn`) against Python references, and the device tree parser against trees built by `dtc` (device-tree-compiler; skipped without it) |
-| `make smoke` | Boots the test image in QEMU and checks about 330 console commands in native mode, then `fsck.fat` on the disk |
+| `make smoke` | Boots the test image in QEMU and checks about 330 console commands in native mode, then `fsck.fat` on the disk; then a second boot with five more virtio-blk disks (MBR with an extended partition, GPT, corrupt tables, a blank disk) checks `DIR`, `COPY` across drives, `CHKDSK` and a native `INSTALL`, and runs `fsck.fat` on every volume |
 | `make smoke-firmware` | The same checks with ACPI hidden, so the kernel stays in firmware mode |
 | `make fat-test` | Stress-tests `src/fat.S` on FAT12/16/32 images under `qemu-aarch64` (needs `gcc-aarch64-linux-gnu`, `libc6-dev-arm64-cross`, `qemu-user`) |
 | `make pi-test` | The Pi 3 SD-card and UART drivers, bare metal on QEMU `raspi3b` |
@@ -220,8 +220,22 @@ it with `FORMAT d: /SELECT /V:ARMDOS` and copies every file from A: with
   or N at the confirmation, leaves the disks untouched.
 - `INSTALL n /Y` picks disk n without asking, for scripts; `/Y` without a
   disk number is refused.
-- INSTALL needs UEFI boot services, so it runs from the live ISO (or any
-  firmware-mode boot). Under the native kernel it finds no disks.
+- From the live ISO (firmware mode) it offers the disks the firmware
+  offers. Under the native kernel it offers the other virtio-blk disks from
+  the kernel's disk table; a disk whose volumes are already drive letters is
+  refused.
+
+## Fixed disks and drive letters
+
+In native mode the kernel mounts every FAT volume it finds on the boot disk
+(besides A:) and on every other virtio-blk disk: MBR partitions of type 01h,
+04h, 06h, 0Bh, 0Ch, 0Eh and EFh, logical drives in an extended partition,
+GPT EFI System and Basic Data partitions, and unpartitioned FAT disks. They
+take C:, D:, ... at boot, before `CONFIG.SYS`; B: stays free for the first
+RAM disk, and `RAMDRIVE`/`VDISK` drives take the letters after the disks.
+The boot banner lists them (`Drive C: is disk 1, partition 1`). The disk
+table also takes other block backends; see [ABI.md](ABI.md), "Native disk
+table".
 
 The ISO boots on any ARM64 UEFI machine or VM, from a virtual CD or written
 to a USB stick. A Raspberry Pi does not boot it; use the SD-card image or a ROM build

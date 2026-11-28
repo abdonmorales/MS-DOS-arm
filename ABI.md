@@ -172,12 +172,20 @@ cannot be read, no disk is offered. `INSTALL.EXE` is the user.
 
 | `x0` | Arguments | Result |
 | --- | --- | --- |
-| 0 | None | Finds the disks; `x0` their count (0 under the native kernel) |
+| 0 | None | Finds the disks; `x0` their count |
 | 1 | `x1` disk, `x2` 32-byte buffer | u64 block size, u64 blocks, u64 flags (1 removable), u64 0 |
 | 2, 3 | `x1` disk, `x2` first block, `x3` blocks, `x4` buffer | Read / write (any alignment; 64 KiB at a time through a kernel buffer). The range must lie on the disk. These bypass the FAT sector cache |
 | 4 | `x1` disk, `x2` first block, `x3` blocks | Attaches that range (a partition) as a drive letter, as a block device driver's unit; `x0` the drive (0 = A:). The same range attached again returns its drive (re-reading its boot record); a range overlapping an attached one fails. Up to 4 per boot. The drive cannot reach outside the range, and a boot record claiming more sectors than the range is not mounted. FORMAT then works on it |
 | 5 | `x1` disk | Flush the disk's write cache |
 | 6 | As 4 | Probe: changes nothing; `x0` the drive 4 would return, or the error it would give |
+
+Under the native kernel the same calls work over the kernel's disk table
+(below): the disks are the registered ones other than the boot disk, in
+registration order; attached ranges share the table of fixed-disk volumes
+mounted at boot (so a disk whose volumes are drive letters cannot be
+repartitioned: error 5), drives start at C:, a disk needs no minimum size,
+subfunction 5 does nothing (writes are complete when they return) and there
+is no MediaId check.
 
 Disk numbers count from 0 in the order of the last subfunction 0 (the
 firmware's order). Each disk's MediaId is recorded by subfunction 0 and each
@@ -186,6 +194,49 @@ fails with error 34 (invalid disk change), and a write to a now read-only one
 with error 19. Other errors: 1 bad subfunction, 15 bad disk number or no
 drive letter left, 21 device error, 87 a range outside the disk, 4 no attach
 slot or volume left, 5 the range overlaps an attached one, 8 no sector cache.
+
+### Native disk table and fixed-disk drive letters
+
+After `ExitBootServices` the kernel keeps a table of whole disks
+([src/blk.S](src/blk.S)). `blk_init` registers the boot disk (virtio-blk)
+and every other virtio-blk PCI device; other kernel backends (USB mass
+storage) register theirs with `disk_register`, a kernel-internal call:
+
+| Register | `disk_register` argument |
+| --- | --- |
+| `x0` | `rw` function (below) |
+| `x1` | Sector count |
+| `x2` | Context, passed back to `rw` in `x4` |
+| `x3` | Sector size: 0 (512), or 512–4096, a power of two |
+| `x4` | Flags: bit 1 removable (reported by E0h subfunction 1); bit 0 is the boot disk's |
+
+It returns `x0` = the disk number with `x1=0`, or `x1=1` with `x0` 4 (table
+full, 8 disks) or 87 (bad argument). Before returning it scans the disk and
+mounts its FAT volumes. `rw` is called as `rw(x0 first sector, x1 count,
+x2 buffer, w3 0 read / 1 write, x4 context)` and returns `x0=0` or nonzero on
+a device error, under AAPCS64 (`x0`–`x18` may be clobbered). The layer
+guarantees `count >= 1`, a range on the disk, a 4 KiB-aligned buffer and at
+most 64 KiB per call. A write must be complete when `rw` returns; nothing
+flushes later.
+
+Scan rules: an MBR's primary partitions of type 01h, 04h, 06h, 0Bh, 0Ch,
+0Eh or EFh and the logical drives of an extended partition (05h, 0Fh); with
+a protective MBR (EEh), the GPT's EFI System and Basic Data partitions; a
+disk whose sector 0 is a FAT boot record is mounted whole. A partition is
+mounted only when it lies on the disk and starts with a FAT boot record; on
+the boot disk the boot volume itself is skipped. Every field is checked
+against the disk size; an EBR chain must move forward and stops after 16
+links; at most 128 GPT entries are read (CRCs are not checked).
+
+Drive letters: A: is the boot volume. Fixed-disk volumes take the first free
+letter from C: upward, at boot before `CONFIG.SYS`: the boot disk's other
+partitions, then each further disk in PCI order, partitions in table order.
+B: stays free for the first `CONFIG.SYS` block driver (DOS kept it for the
+second floppy); RAMDRIVE and VDISK then take the letters left after the
+disks. As for block drivers, letters go past LASTDRIVE when needed. Up to
+16 ranges and 16 FAT volumes in all. Each mounted volume is reported at
+boot as `Drive C: is disk 1, partition 2` (disk 0 is the boot disk; logical
+drives count from 5, GPT entries from 1).
 
 ### Devices
 

@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: MIT
 // INSTALL [disk] [/Y]: puts ARM DOS on a writable disk, as DOS 4's SELECT
-// did. Run from the live ISO's prompt (or any firmware-mode boot): it lists
-// the disks the firmware offers (ARM DOS extension E0h, see ABI.md), then
+// did. Run from the live ISO's prompt (firmware mode: the disks the firmware
+// offers) or under the native kernel (the virtio-blk disks other than the
+// boot disk, from the kernel's disk table): it lists the disks (ARM DOS
+// extension E0h, see ABI.md), then
 // writes an MBR with one partition of type EFh, attaches it as a drive
 // letter, runs FORMAT d: /SELECT /V:ARMDOS and XCOPY of the boot drive,
 // \EFI\BOOT\BOOTAA64.EFI included. The disk then boots ARM DOS on any ARM64
@@ -321,7 +323,7 @@ store32:
 
 no_disks:
     say "No disk to install on. INSTALL needs a writable disk other than\r\n"
-    say "the one ARM DOS started from, and a UEFI boot (the live ISO).\r\n"
+    say "the one ARM DOS started from.\r\n"
     say "Add a blank disk of at least 8 MB to the machine or VM and restart.\r\n"
     mov x0, #2
     leave

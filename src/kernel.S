@@ -80,6 +80,7 @@ efi_main:
     bl puts
 1:
     bl fat_print_backend
+    bl blk_init                 // native: further disks and partitions
     adrp x0, boot_read_only     // live system (CD/ISO): A: cannot be written,
     ldr x0, [x0, :lo12:boot_read_only]  // so the write self-test is skipped
     cbz x0, 2f
@@ -1259,6 +1260,7 @@ selftest_saved_cwd: .skip 256
 .include "src/drives.S"
 .include "src/fat.S"
 .include "src/disks.S"
+.include "src/blk.S"
 .include "src/platform.S"
 .include "src/mmu.S"
 .include "src/sdhci.S"
