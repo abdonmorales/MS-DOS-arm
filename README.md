@@ -171,6 +171,7 @@ state and verified package hashes, and `source tools/env.sh` puts them on
 | --- | --- |
 | `src/` | The kernel: boot, platform drivers (PL011, virtio-blk, SDHCI), FAT12/16/32, DOS functions, COMMAND, `CONFIG.SYS` |
 | `programs/` | The utilities and ARM BASIC, one `NAME.S` per `NAME.EXE` |
+| `sdk/` | The C SDK for writing native programs: `armdos.h`, a C runtime and a small libc ([sdk/README.md](sdk/README.md)) |
 | `drivers/` | Installable drivers (`ANSI.SYS`, `RAMDRIVE.SYS`, `VDISK.SYS`, `PRINTER.SYS`, `TESTDRV.SYS`) |
 | `data/country/` | The MS-DOS 4.0 country tables (`MKCNTRY.ASM` data segment) that `COUNTRY.SYS` is built from |
 | `fixtures/` | Files copied onto the test disk image (batch files, `CONFIG.SYS`, `PRIMES.BAS`, ...) |
@@ -193,6 +194,7 @@ state and verified package hashes, and `source tools/env.sh` puts them on
 | `make iso-test` | Live boot as CD and USB stick, `INSTALL` to blank disks, a boot of the installed disk, and a reproducible ISO |
 | `make validate` | Both disk images: FAT checks, payload comparison and a QEMU boot; writes `build/validation.json` |
 | `make rom-test` | Boots the ROM builds in QEMU `virt`: network boot under EDK2 (ACPI and device tree), U-Boot from NOR flash, the Pi build in firmware mode; checks that A: refuses every write, and the Pi images' contents (needs `u-boot-qemu`, `u-boot-tools`) |
+| `make sdk-test` | Builds the C SDK and its example programs (needs `gcc-aarch64-linux-gnu`), runs them under QEMU in both modes and checks the files they write |
 | `make check` | `unit`, `pi-test`, then `smoke` |
 | `make snapshot` | `validate` and `iso-test`, then packages the validated images, ISO and `SHA256SUMS` into `build/release/` (`SNAPSHOT_DIR=`), the asset set of a GitHub Release |
 
@@ -408,7 +410,9 @@ standard 37-byte layout. These adapt the public contracts of the MS-DOS 4.0
 kernel sources (`CPMIO.ASM`, `HANDLE.ASM`, `FILE.ASM`, `PATH.ASM`,
 `FCBIO.ASM`, `ALLOC.ASM`, `PROC.ASM`, `LOCK.ASM`, `IOCTL.ASM`, `DOSMES.ASM`
 and others) and COMMAND; their internal algorithms were not translated line
-for line.
+for line. Programs can also be written in C with the [SDK](sdk/README.md)
+(`make sdk`): a header for every common function, a start-up file that
+builds `argc`/`argv` and a freestanding libc with `printf` and `FILE *`.
 
 `src/fat.S` implements FAT12, FAT16 and FAT32: cluster chains, FAT
 mirroring, directory growth, VFAT long names with `~N` short aliases, and a

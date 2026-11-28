@@ -23,6 +23,8 @@ a CPU emulator and is tracked separately as an optional milestone.
 | 7 | Portable drivers from MS-DOS 4.0 `src/DEV`: ANSI (console escape handling), RAMDRIVE/VDISK, COUNTRY data, PRINTER as a serial/null device | Done (`ANSI.SYS`, `RAMDRIVE.SYS`, `VDISK.SYS`, `PRINTER.SYS`; `COUNTRY.SYS` built from `MKCNTRY.ASM` with `CHCP`/`66h` code page switching; all loaded by the `CONFIG.SYS` fixture and checked in `make smoke`) |
 | 8 | Hardware: QEMU `virt` fully native; Raspberry Pi 3 native console and SD drivers (needs a physical board to validate) | QEMU `virt` done. Pi 3: PL011/mini UART console and SDHCI SD driver written and passing `make pi-test` on QEMU `raspi3b` (SDSC and SDHC cards); the kernel uses them on a Pi whose card has `\NATIVE.ON`. Booting on a physical Pi 3 is not yet verified (no board available) |
 
+| — | C SDK for application developers (`sdk/`): `armdos.h` with the ABI and typed wrappers, `crt0` (argc/argv, environ, private stack, `4Ch` exit), a freestanding libc subset (string, ctype, stdlib with a `48h` heap, stdio with `printf` and `FILE *`, errno), examples `HELLO.EXE` and `WC.EXE` | Done (`make sdk-test`: `LIBTEST.EXE` and the examples under QEMU in native and firmware modes, files verified on the host). No floating point in the libc; not on the release image |
+
 ## Not applicable to AArch64
 
 These components exist only to drive IBM PC hardware or x86 binaries. Each is

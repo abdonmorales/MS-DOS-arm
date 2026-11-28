@@ -70,6 +70,8 @@ def main():
     parser.add_argument('--host-cc', default='cc')
     parser.add_argument('--timeout', type=float, default=30)
     parser.add_argument('--log', type=Path)
+    parser.add_argument('--mode', choices=['native', 'firmware'], default='native',
+                        help='firmware: boot without ACPI so the kernel stays on UEFI')
     args = parser.parse_args()
     host_printf_check(args.host_cc)
     output = bytearray()
@@ -87,7 +89,8 @@ def main():
                                  text=True, env=MTOOLS_ENV, check=True).stdout.split()
         texts = {Path(p).name.upper(): mtype(spec, Path(p).name) for p in listing}
 
-        cmd = [args.qemu, '-machine', 'virt', '-cpu', 'cortex-a72', '-m', '256',
+        machine = 'virt' if args.mode == 'native' else 'virt,acpi=off'
+        cmd = [args.qemu, '-machine', machine, '-cpu', 'cortex-a72', '-m', '256',
                '-bios', str(args.firmware), '-drive', f'file={image},format=raw,if=none,id=dos',
                '-device', 'virtio-blk-pci,drive=dos', '-nographic', '-monitor', 'none',
                '-net', 'none', '-no-reboot', '-boot', 'menu=on,splash-time=0']
@@ -189,7 +192,7 @@ def main():
         fsck = subprocess.run(['fsck.fat', '-n', str(partition)], capture_output=True, text=True)
         if fsck.returncode:
             raise RuntimeError('fsck.fat after the SDK programs:\n' + fsck.stdout + fsck.stderr)
-    print(f'PASS: C SDK programs under ARM DOS: LIBTEST {passed} library checks, '
+    print(f'PASS: C SDK programs under ARM DOS ({args.mode} mode): LIBTEST {passed} library checks, '
           f'{checks} console checks; files verified on the host, fsck.fat clean.')
 
 

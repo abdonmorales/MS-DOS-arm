@@ -198,6 +198,8 @@ sdk:
 sdk-test: sdk image
 	$(PYTHON) tools/sdk_test.py $(BUILD)/msdos-arm64.img --sdk-build $(BUILD)/sdk \
 		--firmware $(FIRMWARE) --log $(BUILD)/sdk-test.log
+	$(PYTHON) tools/sdk_test.py $(BUILD)/msdos-arm64.img --sdk-build $(BUILD)/sdk \
+		--firmware $(FIRMWARE) --mode firmware --log $(BUILD)/sdk-test-firmware.log
 
 clean:
 	rm -rf -- $(BUILD)
