@@ -26,6 +26,9 @@ efi_main:
     str x0, [x2]
     address x2, system_table
     str x1, [x2]
+    bl dbg_entry                // boot checkpoints (src/debug.S), if on
+    address x1, system_table
+    ldr x1, [x1]
     ldr x0, [x1, #96]            // EFI_BOOT_SERVICES
     address x2, boot_services
     str x0, [x2]
@@ -37,13 +40,17 @@ efi_main:
     mov x3, #0
     blr x4
     bl filesystem_init
+    bl dbg_mount
     bl drives_init
     bl search_init
     bl memory_init
     bl clock_init
     bl dos2_init
     bl env_init
+    bl dbg_check_flag           // \DEBUG.ON turns boot checkpoints on
     bl platform_go_native
+    address x0, dbg_msg_banner
+    bl dbg_mark
     address x0, banner
     bl puts
     address x0, plat_firmware_message
@@ -90,10 +97,16 @@ efi_main:
     bl puts
     b 3f
 2:
+    address x0, dbg_msg_selftest
+    bl dbg_mark
     bl selftest
     cbnz x0, boot_failed
 3:
+    address x0, dbg_msg_config
+    bl dbg_mark
     bl config_process
+    address x0, dbg_msg_command
+    bl dbg_mark
     address x0, config_shell_program
     ldr x0, [x0]
     cbz x0, 1f
@@ -1262,6 +1275,10 @@ selftest_saved_cwd: .skip 256
 .include "src/platform.S"
 .include "src/mmu.S"
 .include "src/sdhci.S"
+.include "src/vnet.S"
+.include "src/dbguart.S"
+.include "src/debug.S"
+.include "src/fbcon.S"
 .include "src/api_test.S"
 .include "src/search.S"
 

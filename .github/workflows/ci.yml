@@ -44,6 +44,8 @@ jobs:
         with:
           packages: gcc-aarch64-linux-gnu libc6-dev-arm64-cross qemu-user
       - run: make fat-test
+      # The C SDK: build the examples and LIBTEST, run them in both modes.
+      - run: make sdk-test FIRMWARE="$FIRMWARE"
       - name: Upload build logs
         if: failure()
         uses: actions/upload-artifact@v4
@@ -59,11 +61,28 @@ jobs:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/setup
       - run: make smoke FIRMWARE="$FIRMWARE"
+      # virtio-net, the E1h packet driver and TFTP.EXE on QEMU user networking.
+      - run: make net-test FIRMWARE="$FIRMWARE"
       - name: Upload build logs
         if: failure()
         uses: actions/upload-artifact@v4
         with:
           name: logs-smoke
+          path: build/*.log
+          if-no-files-found: ignore
+
+  debug-test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+      - run: make debug-test FIRMWARE="$FIRMWARE"
+      - name: Upload build logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: logs-debug-test
           path: build/*.log
           if-no-files-found: ignore
 
@@ -106,6 +125,8 @@ jobs:
         with:
           pi-firmware: 'true'
       - run: make pi-test
+      # Framebuffer console: QEMU virt ramfb and the Pi mailbox screen.
+      - run: make fb-test FIRMWARE="$FIRMWARE"
       # The Pi 3 SD-card image (pinned UEFI firmware, cached) must also build.
       - run: make pi-image
       - name: Upload build logs

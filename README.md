@@ -84,6 +84,7 @@ speed. This was tested on an Apple M3 Pro (macOS 27.2, Homebrew QEMU 11.1).
 | `--accel auto\|tcg\|hvf\|kvm` | `auto` (the default) picks `hvf` with the host CPU on Apple Silicon macOS, `kvm` on ARM64 Linux with `/dev/kvm`, else `tcg` with a Cortex-A72 |
 | `--memory MiB` | Guest RAM (default 256) |
 | `--qemu PATH` | The `qemu-system-aarch64` to run |
+| `--screen` | Also show the console on a screen in a QEMU window (`ramfb`); the serial console stays in the terminal |
 | `--print` | Print the QEMU command instead of running it |
 
 Some examples:
@@ -169,7 +170,7 @@ state and verified package hashes, and `source tools/env.sh` puts them on
 
 | Path | Contents |
 | --- | --- |
-| `src/` | The kernel: boot, platform drivers (PL011, virtio-blk, SDHCI), FAT12/16/32, DOS functions, COMMAND, `CONFIG.SYS` |
+| `src/` | The kernel: boot, platform drivers (PL011, virtio-blk, virtio-net, SDHCI), FAT12/16/32, DOS functions, COMMAND, `CONFIG.SYS` |
 | `programs/` | The utilities and ARM BASIC, one `NAME.S` per `NAME.EXE` |
 | `sdk/` | The C SDK for writing native programs: `armdos.h`, a C runtime and a small libc ([sdk/README.md](sdk/README.md)) |
 | `drivers/` | Installable drivers (`ANSI.SYS`, `RAMDRIVE.SYS`, `VDISK.SYS`, `PRINTER.SYS`, `TESTDRV.SYS`) |
@@ -191,6 +192,8 @@ state and verified package hashes, and `source tools/env.sh` puts them on
 | `make smoke-firmware` | The same checks with ACPI hidden, so the kernel stays in firmware mode |
 | `make fat-test` | Stress-tests `src/fat.S` on FAT12/16/32 images under `qemu-aarch64` (needs `gcc-aarch64-linux-gnu`, `libc6-dev-arm64-cross`, `qemu-user`) |
 | `make pi-test` | The Pi 3 SD-card and UART drivers, bare metal on QEMU `raspi3b` |
+| `make net-test` | virtio-net, the E1h packet driver and `TFTP.EXE` on QEMU user networking: GET from slirp's TFTP server (100 KiB, checked by hash), PUT, netascii and lost/duplicate packets against a small server in the test |
+| `make fb-test` | The framebuffer console: QEMU `virt` with `ramfb` and the Pi mailbox framebuffer on `raspi3b`, screens read back with `screendump` and decoded against the font |
 | `make iso-test` | Live boot as CD and USB stick, `INSTALL` to blank disks, a boot of the installed disk, and a reproducible ISO |
 | `make validate` | Both disk images: FAT checks, payload comparison and a QEMU boot; writes `build/validation.json` |
 | `make rom-test` | Boots the ROM builds in QEMU `virt`: network boot under EDK2 (ACPI and device tree), U-Boot from NOR flash, the Pi build in firmware mode; checks that A: refuses every write, and the Pi images' contents (needs `u-boot-qemu`, `u-boot-tools`) |
@@ -421,6 +424,17 @@ returns. It runs over the kernel's virtio-blk or SDHCI driver in native mode
 and over UEFI Block I/O in firmware mode. If the boot volume is read-only or
 not FAT, the firmware's file system is used instead.
 
+Networking: in native mode on QEMU `virt` (or any machine with a virtio-net
+PCI device) the kernel drives the NIC itself (`src/vnet.S`, polled) and
+offers whole Ethernet frames to programs through the packet driver call E1h
+([ABI](ABI.md)). `TFTP.EXE` brings its own ARP, IPv4 and UDP:
+`TFTP [-i] host[:port] GET|PUT source [destination]`, configured by the
+environment variables `IP`, `NETMASK` and `GATEWAY` (defaults suit QEMU's
+`-netdev user`: 10.0.2.15/24 via 10.0.2.2; no DHCP). Add
+`-netdev user,id=n0,tftp=DIR -device virtio-net-pci,netdev=n0` to QEMU and
+`TFTP -i 10.0.2.2 GET FILE` fetches `DIR/FILE`; QEMU's built-in server is
+read-only and binary only. Firmware mode has no network.
+
 ## Raspberry Pi 3
 
 `make pi-image` builds a 128 MiB SD-card image for the Pi 3B/3B+ (not
@@ -436,6 +450,7 @@ adapter. If the card cannot be restarted after leaving the firmware, the
 kernel prints `Boot disk did not restart after leaving firmware` and halts;
 delete `NATIVE.ON` to go back to firmware mode. **This has not been tested
 on a physical board.**
+First-boot checklist, serial wiring and debug checkpoints: [docs/PI3-BRINGUP.md](docs/PI3-BRINGUP.md).
 
 ## Native Apple Silicon boot
 
